@@ -186,4 +186,18 @@ impl SnakeCNNInference {
             .map(|(idx, _)| idx)
             .unwrap()
     }
+
+    /// Save model to JSON file
+    pub fn save_json(&self, path: &str) -> anyhow::Result<()> {
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(path, json)?;
+        Ok(())
+    }
+
+    /// Load model from JSON file
+    pub fn load_json(path: &str) -> anyhow::Result<Self> {
+        let json = std::fs::read_to_string(path)?;
+        let model = serde_json::from_str(&json)?;
+        Ok(model)
+    }
 }
