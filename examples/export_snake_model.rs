@@ -89,7 +89,8 @@ fn main() -> Result<()> {
     // Helper function to convert a 1D tensor to Vec<f32>
     fn tensor_to_1d(tensor: &Tensor) -> Vec<f32> {
         let cpu_tensor = tensor.to_device(Device::Cpu).to_kind(Kind::Float).contiguous();
-        Vec::try_from(&cpu_tensor).unwrap()
+        let flat_tensor = cpu_tensor.view([-1]); // Flatten to 1D
+        Vec::try_from(&flat_tensor).unwrap()
     }
 
     println!("🔄 Extracting weights...");
