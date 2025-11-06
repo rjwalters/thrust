@@ -27,10 +27,7 @@ pub struct PolicyLearner {
     /// Agent ID this learner is training
     pub agent_id: AgentId,
 
-    /// Policy network (GPU copy)
-    policy: MlpPolicy,
-
-    /// PPO trainer
+    /// PPO trainer (owns the policy network)
     trainer: PPOTrainer<MlpPolicy>,
 
     /// Receive experiences from simulator
@@ -63,8 +60,15 @@ impl PolicyLearner {
         config: LearnerConfig,
         model_save_dir: String,
     ) -> Result<Self> {
-        let trainer = PPOTrainer::new(config.clone().into())?;
-        // TODO: Fix RolloutBuffer API - current signature is different
+        // Create optimizer from policy before moving it to trainer
+        use tch::nn::{self, OptimizerConfig};
+        let vs = &policy.var_store();
+        let optimizer = nn::Adam::default().build(vs, config.learning_rate)?;
+
+        // Create trainer with policy
+        let mut trainer = PPOTrainer::new(config.clone().into(), policy)?;
+        trainer.set_optimizer(optimizer);
+
         let buffer = RolloutBuffer::new(
             config.buffer_size,
             1, // num_envs
@@ -73,7 +77,6 @@ impl PolicyLearner {
 
         Ok(Self {
             agent_id,
-            policy,
             trainer,
             experience_receiver,
             policy_sender,
@@ -114,14 +117,7 @@ impl PolicyLearner {
 
             self.step += 1;
 
-            // 6. Periodically send policy update to simulator
-            if self.step % self.config.update_interval == 0 {
-                if let Err(e) = self.send_policy_update(stats) {
-                    tracing::warn!("Agent {} failed to send policy update: {}", self.agent_id, e);
-                }
-            }
-
-            // 7. Log progress
+            // 6. Log progress
             if self.step % 10 == 0 {
                 tracing::info!(
                     "Agent {} | Step {} | Loss: {:.3} | Policy: {:.3} | Entropy: {:.3}",
@@ -131,6 +127,13 @@ impl PolicyLearner {
                     stats.policy_loss,
                     stats.entropy,
                 );
+            }
+
+            // 7. Periodically send policy update to simulator
+            if self.step % self.config.update_interval == 0 {
+                if let Err(e) = self.send_policy_update(stats) {
+                    tracing::warn!("Agent {} failed to send policy update: {}", self.agent_id, e);
+                }
             }
         }
     }
@@ -166,22 +169,47 @@ impl PolicyLearner {
     /// Run PPO training step
     fn train_step(&mut self) -> Result<TrainingStats> {
         // Get batch from buffer
-        // TODO: Fix API - use get_batch() instead of get()
         let batch = self.buffer.get_batch();
 
+        // Convert Vec data to Tensors
+        let device = self.trainer.policy().device();
+        let batch_size = batch.observations.len() as i64;
+        let obs_dim = batch.observations[0].len() as i64;
+
+        // Flatten observations: Vec<Vec<f32>> -> Tensor [batch_size, obs_dim]
+        let obs_flat: Vec<f32> = batch.observations.iter().flatten().copied().collect();
+        let observations = Tensor::from_slice(&obs_flat)
+            .view([batch_size, obs_dim])
+            .to_device(device);
+
+        let actions = Tensor::from_slice(&batch.actions).to_device(device);
+        let old_log_probs = Tensor::from_slice(&batch.log_probs).to_device(device);
+        let old_values = Tensor::from_slice(&batch.values).to_device(device);
+        let advantages = Tensor::from_slice(&batch.advantages).to_device(device);
+        let returns = Tensor::from_slice(&batch.returns).to_device(device);
+
         // Train for multiple epochs
+        // Note: We can't use train_step() because it requires both &self.policy and &mut self.trainer
+        // Instead, we'll use a workaround by calling the trainer directly with its own policy
         let mut total_stats = TrainingStats::default();
         for _ in 0..self.config.n_epochs {
-            let stats = self.trainer.train_step_with_policy(
-                &self.policy,
-                &batch.observations,
-                &batch.actions,
-                &batch.old_log_probs,
-                &batch.old_values,
-                &batch.advantages,
-                &batch.returns,
-                |policy, obs, acts| policy.evaluate_actions(obs, acts),
-            )?;
+            // Safety: The trainer owns the policy, so this is safe as long as we don't
+            // call any methods that would try to borrow trainer mutably during policy access
+            let trainer_ptr: *mut PPOTrainer<MlpPolicy> = &mut self.trainer;
+            let policy_ptr: *const MlpPolicy = unsafe { &*trainer_ptr }.policy();
+
+            let stats = unsafe {
+                (*trainer_ptr).train_step_with_policy(
+                    &*policy_ptr,
+                    &observations,
+                    &actions,
+                    &old_log_probs,
+                    &old_values,
+                    &advantages,
+                    &returns,
+                    |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| policy.evaluate_actions(obs, acts),
+                )?
+            };
 
             // Accumulate stats
             total_stats.total_loss += stats.total_loss;
@@ -208,7 +236,7 @@ impl PolicyLearner {
             "{}/agent_{}_step_{}.pt",
             self.model_save_dir, self.agent_id, self.step
         );
-        self.policy.save(&model_path)?;
+        self.trainer.policy().save(&model_path)?;
 
         // Create update message
         let update = PolicyUpdate {

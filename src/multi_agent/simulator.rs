@@ -3,7 +3,7 @@
 //! Manages parallel environment execution, matchmaking, and experience routing.
 
 use super::{
-    environment::{MultiAgentEnvironment, MultiAgentResult},
+    environment::MultiAgentEnvironment,
     matchmaking::Matchmaker,
     messages::{Experience, PolicyUpdate},
     population::{AgentId, Population},
@@ -46,7 +46,10 @@ pub struct GameSimulator<E: MultiAgentEnvironment> {
     device: Device,
 }
 
-impl<E: MultiAgentEnvironment> GameSimulator<E> {
+impl<E> GameSimulator<E>
+where
+    E: MultiAgentEnvironment<Action = i64>,
+{
     /// Create a new game simulator
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -123,6 +126,7 @@ impl<E: MultiAgentEnvironment> GameSimulator<E> {
     fn run_episodes(&mut self) -> Result<usize> {
         let mut total_steps = 0;
         let mut env_done = vec![false; self.env_pool.len()];
+        let device = self.device; // Extract device to avoid borrow conflicts
 
         while !env_done.iter().all(|&done| done) {
             for (env_id, env) in self.env_pool.iter_mut().enumerate() {
@@ -144,8 +148,8 @@ impl<E: MultiAgentEnvironment> GameSimulator<E> {
                 let mut log_probs = Vec::new();
 
                 for (i, &agent_id) in agent_ids.iter().enumerate() {
-                    // Get observation as tensor
-                    let obs_tensor = self.observation_to_tensor(&observations[i])?;
+                    // Get observation as tensor (use extracted device)
+                    let obs_tensor = Self::obs_to_tensor(&observations[i], device)?;
 
                     // Get action from agent's policy (with no_grad)
                     let (action, log_prob, value) = no_grad(|| {
@@ -165,12 +169,14 @@ impl<E: MultiAgentEnvironment> GameSimulator<E> {
                 }
 
                 // Step environment with all actions
-                let result = env.step_multi(&actions)?;
+                // Convert Vec<i64> to Vec<E::Action> if needed
+                // For now, assume E::Action = i64 (discrete action spaces)
+                let result = env.step_multi(&actions);
 
                 // Send experiences to learners
                 for (i, &agent_id) in agent_ids.iter().enumerate() {
-                    let obs_tensor = self.observation_to_tensor(&observations[i])?;
-                    let next_obs_tensor = self.observation_to_tensor(&result.observations[i])?;
+                    let obs_tensor = Self::obs_to_tensor(&observations[i], device)?;
+                    let next_obs_tensor = Self::obs_to_tensor(&result.observations[i], device)?;
 
                     let exp = Experience::new(
                         agent_id,
@@ -238,14 +244,14 @@ impl<E: MultiAgentEnvironment> GameSimulator<E> {
 
     /// Convert observation to tensor
     /// This is a placeholder - real implementation depends on observation type
-    fn observation_to_tensor(&self, _obs: &E::Observation) -> Result<Tensor> {
+    fn obs_to_tensor(_obs: &E::Observation, device: Device) -> Result<Tensor> {
         // TODO: This needs to be generic over observation types
         // For now, assume observations are already Vec<f32>-like
         // In real implementation, we'd need trait bounds or conversion logic
 
         // Placeholder: create a dummy tensor
         // Real implementation would extract data from obs
-        Ok(Tensor::zeros(&[4], (Kind::Float, self.device)))
+        Ok(Tensor::zeros(&[4], (Kind::Float, device)))
     }
 }
 
@@ -254,7 +260,10 @@ mod tests {
     use super::*;
     use crate::{
         env::{Environment, SpaceInfo, StepResult, SpaceType, StepInfo},
-        multi_agent::population::PopulationConfig,
+        multi_agent::{
+            environment::MultiAgentResult,
+            population::PopulationConfig,
+        },
     };
 
     #[derive(Clone)]

@@ -32,7 +32,21 @@
       "Bash(rsync:*)",
       "Bash(git add:*)",
       "WebFetch(domain:github.com)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(LIBTORCH=/Users/rwalters/GitHub/thrust/libtorch DYLD_LIBRARY_PATH=/Users/rwalters/GitHub/thrust/libtorch/lib cargo +nightly check:*)",
+      "Bash(wasm-pack build:*)",
+      "Bash(ls:*)",
+      "Bash(npm create:*)",
+      "Bash(npm install:*)",
+      "Bash(pnpm install)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpx tailwindcss:*)",
+      "Bash(pnpx @biomejs/biome:*)",
+      "Bash(pnpm biome:*)",
+      "Bash(pnpm dev)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm ls:*)",
+      "Bash(gh repo create:*)"
     ],
     "deny": [],
     "ask": []

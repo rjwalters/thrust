@@ -19,13 +19,16 @@
 /// Environment traits and implementations
 pub mod env;
 
-/// Policy and neural network wrappers
+/// Policy and neural network wrappers (requires training feature)
+#[cfg(feature = "training")]
 pub mod policy;
 
-/// Experience buffers and replay management
+/// Experience buffers and replay management (requires training feature)
+#[cfg(feature = "training")]
 pub mod buffer;
 
-/// Training algorithms (PPO, etc.)
+/// Training algorithms (PPO, etc.) (requires training feature)
+#[cfg(feature = "training")]
 pub mod train;
 
 /// Utility functions and helpers
@@ -34,8 +37,13 @@ pub mod utils;
 /// Pure Rust inference for WASM compilation
 pub mod inference;
 
-/// Multi-agent training infrastructure
+/// Multi-agent training infrastructure (requires training feature)
+#[cfg(feature = "training")]
 pub mod multi_agent;
+
+/// WebAssembly bindings for browser visualization
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 /// Prelude module for convenient imports
 ///

@@ -76,5 +76,6 @@ pub struct StepInfo {
 
 // Built-in environments will go in submodules
 pub mod cartpole;
+#[cfg(feature = "training")]
 pub mod pool;
-// pub mod snake;
+pub mod snake;

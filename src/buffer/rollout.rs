@@ -275,6 +275,16 @@ impl RolloutBuffer {
     pub fn shape(&self) -> (usize, usize, usize) {
         (self.num_steps, self.num_envs, self.obs_dim)
     }
+
+    /// Get number of samples currently in buffer
+    pub fn len(&self) -> usize {
+        self.pos * self.num_envs
+    }
+
+    /// Check if buffer is empty
+    pub fn is_empty(&self) -> bool {
+        self.pos == 0
+    }
 }
 
 /// A batch of rollout data ready for training

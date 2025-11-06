@@ -86,10 +86,11 @@ impl MlpPolicy {
         let log_probs_all = logits.log_softmax(-1, Kind::Float);
         let probs = log_probs_all.exp();
 
-        // Clamp probabilities to avoid numerical issues
+        // Clamp probabilities to avoid numerical issues and renormalize
         let probs_clamped = probs.clamp(1e-8, 1.0);
+        let probs_normalized = &probs_clamped / probs_clamped.sum_dim_intlist(-1, true, Kind::Float);
 
-        let actions = probs_clamped.multinomial(1, true).squeeze_dim(-1);
+        let actions = probs_normalized.multinomial(1, true).squeeze_dim(-1);
         let log_probs = log_probs_all.gather(-1, &actions.unsqueeze(-1), false).squeeze_dim(-1);
         (actions, log_probs, values)
     }

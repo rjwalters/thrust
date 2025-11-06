@@ -168,6 +168,11 @@ impl CartPole {
     fn get_observation(&self) -> Vec<f32> {
         vec![self.x, self.x_dot, self.theta, self.theta_dot]
     }
+
+    /// Get the current state for rendering (public for WASM)
+    pub fn get_state(&self) -> [f32; 4] {
+        [self.x, self.x_dot, self.theta, self.theta_dot]
+    }
 }
 
 impl Default for CartPole {

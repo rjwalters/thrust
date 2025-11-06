@@ -3,9 +3,8 @@
 //! Extends the base Environment trait to support multiple agents playing
 //! simultaneously in the same game instance.
 
-use crate::env::{Environment, SpaceInfo, StepInfo};
+use crate::env::Environment;
 use std::collections::HashMap;
-use anyhow::Result;
 
 /// Multi-agent environment trait
 ///
@@ -95,6 +94,8 @@ impl<E: MultiAgentEnvironment + ?Sized> MultiAgentResult<E> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::env::{SpaceInfo, StepInfo};
+    use anyhow::Result;
 
     // Mock types for testing
     #[derive(Clone)]

@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thrust RL - Multi-Agent Snake Demo</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            max-width: 900px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 8px;
+            font-size: 28px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 24px;
+            font-size: 14px;
+        }
+
+        .back-link {
+            display: inline-block;
+            color: #667eea;
+            text-decoration: none;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .game-container {
+            display: flex;
+            gap: 24px;
+            margin-top: 24px;
+        }
+
+        .canvas-wrapper {
+            flex: 1;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 16px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            border: 2px solid #dee2e6;
+            border-radius: 4px;
+            background: #ffffff;
+        }
+
+        .sidebar {
+            width: 220px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .stats-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .stats-card h3 {
+            font-size: 14px;
+            color: #495057;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .stat-label {
+            color: #6c757d;
+        }
+
+        .stat-value {
+            color: #212529;
+            font-weight: 600;
+        }
+
+        .controls-card {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 16px;
+        }
+
+        .controls-card h3 {
+            font-size: 14px;
+            color: #495057;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        button {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .start-btn {
+            background: #28a745;
+            color: white;
+        }
+
+        .pause-btn {
+            background: #ffc107;
+            color: #212529;
+        }
+
+        .reset-btn {
+            background: #dc3545;
+            color: white;
+        }
+
+        .speed-control {
+            margin-top: 12px;
+        }
+
+        .speed-control label {
+            display: block;
+            font-size: 12px;
+            color: #6c757d;
+            margin-bottom: 8px;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: #dee2e6;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: #667eea;
+            cursor: pointer;
+            border: none;
+        }
+
+        .speed-value {
+            font-size: 14px;
+            color: #212529;
+            font-weight: 600;
+        }
+
+        .agent-colors {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .agent-color {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .color-box {
+            width: 16px;
+            height: 16px;
+            border-radius: 3px;
+            border: 1px solid #dee2e6;
+        }
+
+        @media (max-width: 768px) {
+            .game-container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+            }
+
+            canvas {
+                max-width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="index.html" class="back-link">← Back to Demos</a>
+        <h1>Multi-Agent Snake</h1>
+        <p class="subtitle">4 AI agents competing for food in real-time</p>
+
+        <div class="game-container">
+            <div class="canvas-wrapper">
+                <canvas id="snake-canvas" width="600" height="600"></canvas>
+            </div>
+
+            <div class="sidebar">
+                <div class="stats-card">
+                    <h3>Statistics</h3>
+                    <div class="stat">
+                        <span class="stat-label">Episode</span>
+                        <span class="stat-value" id="episode">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Steps</span>
+                        <span class="stat-value" id="steps">0</span>
+                    </div>
+                    <div class="stat">
+                        <span class="stat-label">Alive</span>
+                        <span class="stat-value" id="alive">4/4</span>
+                    </div>
+                    <div class="agent-colors">
+                        <div class="agent-color">
+                            <div class="color-box" style="background: #e74c3c;"></div>
+                            <span>Agent 1</span>
+                        </div>
+                        <div class="agent-color">
+                            <div class="color-box" style="background: #3498db;"></div>
+                            <span>Agent 2</span>
+                        </div>
+                        <div class="agent-color">
+                            <div class="color-box" style="background: #2ecc71;"></div>
+                            <span>Agent 3</span>
+                        </div>
+                        <div class="agent-color">
+                            <div class="color-box" style="background: #f39c12;"></div>
+                            <span>Agent 4</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="controls-card">
+                    <h3>Controls</h3>
+                    <div class="button-group">
+                        <button id="start-btn" class="start-btn">Start</button>
+                        <button id="pause-btn" class="pause-btn" disabled>Pause</button>
+                    </div>
+                    <button id="reset-btn" class="reset-btn" style="width: 100%;">Reset</button>
+
+                    <div class="speed-control">
+                        <label>
+                            Speed: <span class="speed-value" id="speed-value">1x</span>
+                        </label>
+                        <input type="range" id="speed-slider" min="1" max="10" value="1" step="1">
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="snake.js"></script>
+</body>
+</html>

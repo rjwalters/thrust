@@ -1,6 +1,6 @@
 //! Weight export/import utilities for trained models
 
-use super::{ExportedModel, LayerWeights};
+use super::ExportedModel;
 use anyhow::Result;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -25,6 +25,8 @@ impl ExportedModel {
     }
 
     /// Save model to binary format (bincode)
+    /// Only available with the "training" feature
+    #[cfg(feature = "training")]
     pub fn save_bincode<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let encoded = bincode::serialize(self)?;
         let mut file = File::create(path)?;
@@ -33,6 +35,8 @@ impl ExportedModel {
     }
 
     /// Load model from binary format (bincode)
+    /// Only available with the "training" feature
+    #[cfg(feature = "training")]
     pub fn load_bincode<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();
@@ -69,6 +73,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "training")]
     fn test_bincode_roundtrip() -> Result<()> {
         let model = create_test_model();
         let temp_file = NamedTempFile::new()?;
