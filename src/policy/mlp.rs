@@ -168,15 +168,17 @@ impl MlpPolicy {
             let rows = size[0] as usize;
             let cols = size[1] as usize;
 
-            // Move tensor to CPU and convert to f32, make contiguous
+            // Move tensor to CPU and convert to f32, make contiguous, then flatten to 1D
             let cpu_tensor = tensor.to_device(Device::Cpu).to_kind(Kind::Float).contiguous();
+            let flat_tensor = cpu_tensor.view([-1]); // Flatten to 1D
 
-            // Try to extract as Vec<f32>
-            let flat: Vec<f32> = match Vec::try_from(&cpu_tensor) {
+            // Extract as Vec<f32>
+            let flat: Vec<f32> = match Vec::try_from(flat_tensor) {
                 Ok(v) => v,
                 Err(e) => panic!("Failed to convert tensor to Vec: {:?}. Tensor shape: {:?}, device: {:?}", e, cpu_tensor.size(), cpu_tensor.device()),
             };
 
+            // Reshape into 2D Vec<Vec<f32>>
             let mut result = Vec::with_capacity(rows);
             for i in 0..rows {
                 result.push(flat[i * cols..(i + 1) * cols].to_vec());
@@ -187,7 +189,9 @@ impl MlpPolicy {
         // Helper function to convert a 1D tensor to Vec<f32>
         fn tensor_to_1d(tensor: &Tensor) -> Vec<f32> {
             let cpu_tensor = tensor.to_device(Device::Cpu).to_kind(Kind::Float).contiguous();
-            match Vec::try_from(&cpu_tensor) {
+            // Ensure it's 1D by flattening
+            let flat_tensor = cpu_tensor.view([-1]);
+            match Vec::try_from(flat_tensor) {
                 Ok(v) => v,
                 Err(e) => panic!("Failed to convert tensor to Vec: {:?}. Tensor shape: {:?}, device: {:?}", e, cpu_tensor.size(), cpu_tensor.device()),
             }
