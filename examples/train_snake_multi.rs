@@ -51,7 +51,7 @@ impl Default for Args {
             minibatch_size: 64,
             output: PathBuf::from("models/snake_policy.pt"),
             save_interval: 100,
-            cuda: false,
+            cuda: true,
         }
     }
 }
