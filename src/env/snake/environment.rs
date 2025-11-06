@@ -194,6 +194,10 @@ impl Environment for SnakeEnv {
         self.reset();
     }
 
+    fn get_observation(&self) -> Vec<f32> {
+        self.get_observation()
+    }
+
     fn step(&mut self, action: i64) -> StepResult {
         self.step(action)
     }

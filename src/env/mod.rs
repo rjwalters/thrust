@@ -10,6 +10,9 @@ pub trait Environment {
     /// Reset the environment and return initial observation
     fn reset(&mut self);
 
+    /// Get the current observation
+    fn get_observation(&self) -> Vec<f32>;
+
     /// Step the environment with an action
     fn step(&mut self, action: i64) -> StepResult;
 

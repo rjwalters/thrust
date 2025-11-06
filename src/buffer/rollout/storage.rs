@@ -156,7 +156,7 @@ impl RolloutBuffer {
     }
 
     /// Get observations tensor shape for neural network input
-    pub fn obs_shape(&self) -> (usize, usize, usize) {
+    pub fn obs_shape(&self) -> (usize, usize) {
         (self.num_steps * self.num_envs, self.obs_dim)
     }
 
@@ -174,6 +174,12 @@ impl RolloutBuffer {
     // Mutable getters for advantage/return computation
     pub fn advantages_mut(&mut self) -> &mut [Vec<f32>] { &mut self.advantages }
     pub fn returns_mut(&mut self) -> &mut [Vec<f32>] { &mut self.returns }
+
+    /// Get mutable references to both advantages and returns
+    /// This is needed to avoid double mutable borrow in GAE computation
+    pub fn advantages_and_returns_mut(&mut self) -> (&mut [Vec<f32>], &mut [Vec<f32>]) {
+        (&mut self.advantages, &mut self.returns)
+    }
 }
 
 /// Batch of rollout data for training

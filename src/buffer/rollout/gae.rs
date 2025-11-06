@@ -49,9 +49,8 @@ pub fn compute_advantages(
         .map(|step| step.to_vec())
         .collect();
 
-    // Now we can get mutable access
-    let advantages = buffer.advantages_mut();
-    let returns = buffer.returns_mut();
+    // Now we can get mutable access to both advantages and returns
+    let (advantages, returns) = buffer.advantages_and_returns_mut();
 
     // Compute advantages and returns for each environment
     for env_id in 0..num_envs {

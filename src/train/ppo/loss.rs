@@ -3,7 +3,7 @@
 //! This module contains the core loss computation functions used
 //! in PPO training including policy loss, value loss, and entropy loss.
 
-use tch::Tensor;
+use tch::{Kind, Tensor};
 
 /// Compute PPO policy loss with clipping
 ///
@@ -25,15 +25,15 @@ pub fn compute_policy_loss(
 
     // Compute clipped surrogate objective
     let clipped_ratio = ratio.clamp(1.0 - clip_range, 1.0 + clip_range);
-    let policy_loss_1 = advantages * ratio;
+    let policy_loss_1 = advantages * &ratio;
     let policy_loss_2 = advantages * clipped_ratio;
-    let policy_loss = -policy_loss_1.minimum(&policy_loss_2).mean(0);
+    let policy_loss = -policy_loss_1.minimum(&policy_loss_2).mean(Kind::Float);
 
     // Compute fraction of clipped updates
-    let clip_fraction = (ratio - 1.0).abs().greater(&clip_range).to_kind(tch::Kind::Float).mean(0);
+    let clip_fraction = (&ratio - 1.0).abs().greater(clip_range).to_kind(tch::Kind::Float).mean(Kind::Float);
 
     // Approximate KL divergence for early stopping
-    let approx_kl = (old_log_probs - log_probs).mean(0);
+    let approx_kl = (old_log_probs - log_probs).mean(Kind::Float);
 
     (
         policy_loss,
@@ -60,19 +60,22 @@ pub fn compute_value_loss(
     let values_clipped = old_values + (values - old_values).clamp(-clip_range_vf, clip_range_vf);
     let vf_loss_1 = (values - returns).square();
     let vf_loss_2 = (values_clipped - returns).square();
-    let value_loss = vf_loss_1.minimum(&vf_loss_2).mean(0);
+    let value_loss = vf_loss_1.minimum(&vf_loss_2).mean(Kind::Float);
 
     // Compute explained variance
     let var_returns = returns.var(false);
-    let explained_var = if var_returns.equal(0.0) {
+    let var_returns_val: f64 = f64::try_from(&var_returns).unwrap_or(0.0);
+    let explained_var = if var_returns_val == 0.0 {
         1.0 // Perfect prediction if no variance in returns
     } else {
-        1.0 - (returns - values).var(false) / var_returns
+        let residual_var = (returns - values).var(false);
+        let residual_var_val: f64 = f64::try_from(&residual_var).unwrap_or(0.0);
+        1.0 - residual_var_val / var_returns_val
     };
 
     (
         value_loss,
-        f64::try_from(&explained_var).unwrap_or(0.0),
+        explained_var,
     )
 }
 
@@ -81,7 +84,7 @@ pub fn compute_value_loss(
 /// # Arguments
 /// * `entropy` - Entropy tensor from policy distribution
 pub fn compute_entropy_loss(entropy: &Tensor) -> Tensor {
-    -entropy.mean(0)
+    -entropy.mean(Kind::Float)
 }
 
 /// Generate minibatch indices for PPO training
@@ -170,12 +173,12 @@ fn compute_gae_single_env(
 ) -> (Tensor, Tensor) {
     let mut advantages = Vec::new();
     let mut returns = Vec::new();
-    let mut last_gae = 0.0;
+    let mut last_gae = 0.0_f32;
 
-    let rewards_vec: Vec<f32> = rewards.into();
-    let values_vec: Vec<f32> = values.into();
-    let dones_vec: Vec<f32> = dones.into();
-    let next_value_scalar: f32 = next_value.into();
+    let rewards_vec: Vec<f32> = Vec::try_from(rewards).unwrap_or_default();
+    let values_vec: Vec<f32> = Vec::try_from(values).unwrap_or_default();
+    let dones_vec: Vec<f32> = Vec::try_from(dones).unwrap_or_default();
+    let next_value_scalar: f32 = f32::try_from(next_value).unwrap_or(0.0);
 
     // Iterate backwards through the trajectory
     for t in (0..rewards_vec.len()).rev() {
@@ -186,13 +189,13 @@ fn compute_gae_single_env(
         if t == rewards_vec.len() - 1 {
             // Last step
             let next_value = if done == 1.0 { 0.0 } else { next_value_scalar };
-            let delta = reward + gamma * next_value - value;
+            let delta = reward + (gamma as f32) * next_value - value;
             last_gae = delta;
         } else {
             // Bootstrap from next advantage
             let next_value = if done == 1.0 { 0.0 } else { values_vec[t + 1] };
-            let delta = reward + gamma * next_value - value;
-            last_gae = delta + gamma * gae_lambda * last_gae;
+            let delta = reward + (gamma as f32) * next_value - value;
+            last_gae = delta + (gamma as f32) * (gae_lambda as f32) * last_gae;
         }
 
         advantages.push(last_gae);

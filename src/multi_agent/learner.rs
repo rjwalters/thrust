@@ -173,18 +173,17 @@ impl PolicyLearner {
 
         // Convert Vec data to Tensors
         let device = self.trainer.policy().device();
-        let batch_size = batch.observations.len() as i64;
-        let obs_dim = batch.observations[0].len() as i64;
+        let batch_size = batch.actions.len() as i64;
+        let obs_dim = (batch.observations.len() / batch.actions.len()) as i64;
 
-        // Flatten observations: Vec<Vec<f32>> -> Tensor [batch_size, obs_dim]
-        let obs_flat: Vec<f32> = batch.observations.iter().flatten().copied().collect();
-        let observations = Tensor::from_slice(&obs_flat)
+        // Observations are already flattened: Vec<f32> -> Tensor [batch_size, obs_dim]
+        let observations = Tensor::from_slice(&batch.observations)
             .view([batch_size, obs_dim])
             .to_device(device);
 
         let actions = Tensor::from_slice(&batch.actions).to_device(device);
-        let old_log_probs = Tensor::from_slice(&batch.log_probs).to_device(device);
-        let old_values = Tensor::from_slice(&batch.values).to_device(device);
+        let old_log_probs = Tensor::from_slice(&batch.old_log_probs).to_device(device);
+        let old_values = Tensor::from_slice(&batch.old_values).to_device(device);
         let advantages = Tensor::from_slice(&batch.advantages).to_device(device);
         let returns = Tensor::from_slice(&batch.returns).to_device(device);
 
@@ -316,11 +315,11 @@ impl From<LearnerConfig> for crate::train::ppo::PPOConfig {
             gamma: config.gamma,
             gae_lambda: config.gae_lambda,
             clip_range: config.clip_epsilon,
-            clip_range_vf: None,
+            clip_range_vf: 0.2, // Use default value
             vf_coef: config.value_loss_coef,
             ent_coef: config.entropy_coef,
             max_grad_norm: 0.5,
-            target_kl: None,
+            target_kl: 0.01, // Use default value
         }
     }
 }

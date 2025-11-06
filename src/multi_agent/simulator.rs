@@ -48,7 +48,7 @@ pub struct GameSimulator<E: MultiAgentEnvironment> {
 
 impl<E> GameSimulator<E>
 where
-    E: MultiAgentEnvironment<Action = i64>,
+    E: MultiAgentEnvironment,
 {
     /// Create a new game simulator
     #[allow(clippy::too_many_arguments)]
@@ -117,7 +117,7 @@ where
     /// Reset all environments to initial state
     fn reset_environments(&mut self) -> Result<()> {
         for env in &mut self.env_pool {
-            env.reset()?;
+            env.reset();
         }
         Ok(())
     }
@@ -139,7 +139,7 @@ where
 
                 // Get observations for all agents
                 let observations: Vec<_> = (0..self.agents_per_game)
-                    .map(|i| env.get_observation(i))
+                    .map(|i| env.get_agent_observation(i))
                     .collect();
 
                 // Each agent selects an action
@@ -244,7 +244,7 @@ where
 
     /// Convert observation to tensor
     /// This is a placeholder - real implementation depends on observation type
-    fn obs_to_tensor(_obs: &E::Observation, device: Device) -> Result<Tensor> {
+    fn obs_to_tensor(_obs: &Vec<f32>, device: Device) -> Result<Tensor> {
         // TODO: This needs to be generic over observation types
         // For now, assume observations are already Vec<f32>-like
         // In real implementation, we'd need trait bounds or conversion logic

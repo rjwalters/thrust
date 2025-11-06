@@ -26,7 +26,7 @@ export interface UseSnakeResult {
 
 const GRID_WIDTH = 20;
 const GRID_HEIGHT = 20;
-const NUM_AGENTS = 4;
+const NUM_AGENTS = 1; // Single-agent environment
 
 export function useSnake(): UseSnakeResult {
 	const [state, setState] = useState<SnakeState | null>(null);
@@ -47,11 +47,7 @@ export function useSnake(): UseSnakeResult {
 			try {
 				const wasm = await initWasm();
 				if (mounted) {
-					envRef.current = new wasm.WasmSnake(
-						GRID_WIDTH,
-						GRID_HEIGHT,
-						NUM_AGENTS,
-					);
+					envRef.current = new wasm.WasmSnake(GRID_WIDTH, GRID_HEIGHT);
 					envRef.current.reset();
 
 					// Initialize state
@@ -97,14 +93,12 @@ export function useSnake(): UseSnakeResult {
 			if (elapsed >= targetFrameTime) {
 				lastFrameTimeRef.current = currentTime;
 
-				// Generate random actions for all agents (placeholder for trained model)
-				const actions = new Int32Array(NUM_AGENTS);
-				for (let i = 0; i < NUM_AGENTS; i++) {
-					actions[i] = Math.floor(Math.random() * 4); // 0: up, 1: right, 2: down, 3: left
-				}
+				// Generate random action (placeholder for trained model)
+				// 0: up, 1: down, 2: left, 3: right
+				const action = Math.floor(Math.random() * 4);
 
 				// Step environment
-				envRef.current.step(actions);
+				envRef.current.step(action);
 				stepsRef.current++;
 
 				// Check if all agents are dead

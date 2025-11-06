@@ -187,6 +187,10 @@ impl Environment for CartPole {
         self.steps = 0;
     }
 
+    fn get_observation(&self) -> Vec<f32> {
+        self.get_observation()
+    }
+
     fn step(&mut self, action: i64) -> StepResult {
         // Perform physics step
         self.physics_step(action);

@@ -203,6 +203,56 @@ impl<P> PPOTrainer<P> {
         Ok(stats_sum.average())
     }
 
-    // TODO: Add convenience method for training with policy that implements required traits
-    // This will be added once the Policy trait is properly defined
+    /// Train for one PPO update with explicit policy reference
+    ///
+    /// This is a convenience method that calls train_step with a closure
+    /// that evaluates the policy.
+    ///
+    /// # Arguments
+    ///
+    /// * `policy` - Policy to evaluate
+    /// * `observations` - Observation tensor [batch_size, obs_dim]
+    /// * `actions` - Action tensor [batch_size]
+    /// * `old_log_probs` - Old log probabilities [batch_size]
+    /// * `old_values` - Old value estimates [batch_size]
+    /// * `advantages` - Computed advantages [batch_size]
+    /// * `returns` - Computed returns [batch_size]
+    /// * `evaluate_fn` - Function that evaluates policy at (obs, actions)
+    ///
+    /// # Returns
+    /// Training statistics for this update
+    pub fn train_step_with_policy<Policy, F>(
+        &mut self,
+        policy: &Policy,
+        observations: &Tensor,
+        actions: &Tensor,
+        old_log_probs: &Tensor,
+        old_values: &Tensor,
+        advantages: &Tensor,
+        returns: &Tensor,
+        evaluate_fn: F,
+    ) -> Result<TrainingStats>
+    where
+        F: Fn(&Policy, &Tensor, &Tensor) -> (Tensor, Tensor, Tensor),
+    {
+        self.train_step(
+            observations,
+            actions,
+            old_log_probs,
+            old_values,
+            advantages,
+            returns,
+            |obs, acts| evaluate_fn(policy, obs, acts),
+        )
+    }
+
+    /// Increment step counter
+    pub fn increment_steps(&mut self, steps: usize) {
+        self.total_steps += steps;
+    }
+
+    /// Increment episode counter
+    pub fn increment_episodes(&mut self, episodes: usize) {
+        self.total_episodes += episodes;
+    }
 }

@@ -150,17 +150,16 @@ fn main() -> Result<()> {
         let batch = buffer.get_batch();
 
         // Convert to tensors
-        let obs_flat: Vec<f32> = batch.observations.iter().flatten().copied().collect();
-        let batch_size = batch.observations.len();
+        let batch_size = batch.actions.len(); // Number of samples in batch
 
-        let obs_tensor = tch::Tensor::from_slice(&obs_flat)
+        let obs_tensor = tch::Tensor::from_slice(&batch.observations)
             .reshape([batch_size as i64, obs_dim])
             .to_device(device);
         let actions_tensor = tch::Tensor::from_slice(&batch.actions)
             .to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.log_probs)
+        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs)
             .to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.values)
+        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values)
             .to_device(device);
         let advantages_tensor = tch::Tensor::from_slice(&batch.advantages)
             .to_device(device);

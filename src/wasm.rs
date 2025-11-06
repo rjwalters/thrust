@@ -117,17 +117,12 @@ impl WasmSnake {
         self.episode += 1;
     }
 
-    /// Step with actions for all agents
-    /// actions: array of action indices (one per agent)
+    /// Step the environment with a single action
+    /// action: 0 = up, 1 = down, 2 = left, 3 = right
     #[wasm_bindgen]
-    pub fn step(&mut self, actions: &[i64]) {
-        // Call the environment's step_multi method directly
+    pub fn step(&mut self, action: i64) {
         use crate::env::Environment;
-        // For simplicity in WASM, just step without returning anything
-        // Rendering will query state separately
-        for &action in actions {
-            let _ = self.env.step(action);
-        }
+        let _ = self.env.step(action);
     }
 
     /// Get observation for a specific agent

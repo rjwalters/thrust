@@ -61,7 +61,14 @@
       "Bash(git log:*)",
       "Bash(git rev-parse:*)",
       "Bash(git reset:*)",
-      "Bash(git pull:*)"
+      "Bash(git pull:*)",
+      "Bash(git checkout:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(git stash:*)",
+      "Bash(export LIBTORCH=/opt/homebrew/Cellar/pytorch/2.9.0_1/lib)",
+      "Bash(export LIBTORCH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch:*)",
+      "Bash(/tmp/cargo_errors.txt)",
+      "Bash(grep:*)"
     ],
     "deny": [],
     "ask": []

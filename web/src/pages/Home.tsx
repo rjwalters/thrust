@@ -37,19 +37,15 @@ export default function Home() {
 						to="/snake"
 						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
 					>
-						<h2 className="text-3xl font-bold text-white mb-4">
-							Multi-Agent Snake
-						</h2>
+						<h2 className="text-3xl font-bold text-white mb-4">Snake Game</h2>
 						<p className="text-white/80 mb-4">
-							4 AI agents competing in Snake with hardware-accelerated rendering
-							using Pixi.js.
+							Classic Snake game with hardware-accelerated rendering using Pixi.js.
+							Watch the AI agent learn to collect food and avoid walls.
 						</p>
 						<div className="text-sm text-white/60">
-							<span className="bg-white/20 px-3 py-1 rounded-full">
-								Pixi.js
-							</span>
+							<span className="bg-white/20 px-3 py-1 rounded-full">Pixi.js</span>
 							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
-								Multi-Agent
+								Single-Agent
 							</span>
 						</div>
 					</Link>

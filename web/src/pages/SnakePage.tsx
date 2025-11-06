@@ -16,7 +16,7 @@ export default function SnakePage() {
 				>
 					← Back to Home
 				</Link>
-				<h1 className="text-4xl font-bold mb-8">Multi-Agent Snake</h1>
+				<h1 className="text-4xl font-bold mb-8">Snake Game</h1>
 
 				<div className="grid lg:grid-cols-[auto_1fr] gap-8">
 					{/* Visualization */}

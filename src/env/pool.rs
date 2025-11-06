@@ -82,14 +82,17 @@ impl<E: Environment + Send> EnvPool<E> {
     /// let observations = pool.reset();
     /// assert_eq!(observations.len(), 4);
     /// ```
-    pub fn reset(&mut self) -> Vec<E::Observation>
+    pub fn reset(&mut self) -> Vec<Vec<f32>>
     where
-        E::Observation: Send,
+        E: Send,
     {
         use rayon::iter::ParallelIterator;
         self.envs
             .par_iter_mut()
-            .map(|env| env.reset().expect("Environment reset failed"))
+            .map(|env| {
+                env.reset();
+                env.get_observation()
+            })
             .collect()
     }
 
@@ -115,10 +118,9 @@ impl<E: Environment + Send> EnvPool<E> {
     /// let results = pool.step(&actions);
     /// assert_eq!(results.len(), 4);
     /// ```
-    pub fn step(&mut self, actions: &[E::Action]) -> Vec<StepResult<E::Observation>>
+    pub fn step(&mut self, actions: &[i64]) -> Vec<StepResult>
     where
-        E::Action: Copy + Send + Sync,
-        E::Observation: Send,
+        E: Send,
     {
         use rayon::iter::ParallelIterator;
         assert_eq!(
@@ -130,7 +132,7 @@ impl<E: Environment + Send> EnvPool<E> {
         self.envs
             .par_iter_mut()
             .zip(actions.par_iter())
-            .map(|(env, &action)| env.step(action).expect("Environment step failed"))
+            .map(|(env, &action)| env.step(action))
             .collect()
     }
 
@@ -158,8 +160,9 @@ impl<E: Environment + Send> EnvPool<E> {
     /// # Returns
     ///
     /// Initial observation from the reset environment
-    pub fn reset_env(&mut self, env_id: usize) -> anyhow::Result<E::Observation> {
-        self.envs[env_id].reset()
+    pub fn reset_env(&mut self, env_id: usize) -> anyhow::Result<Vec<f32>> {
+        self.envs[env_id].reset();
+        Ok(self.envs[env_id].get_observation())
     }
 }
 
@@ -181,20 +184,12 @@ pub struct PoolStepResult<O> {
     pub truncated: Vec<bool>,
 }
 
-impl<E: Environment + Send> EnvPool<E>
-where
-    E::Observation: Send,
-    E::Action: Send,
-{
+impl<E: Environment + Send> EnvPool<E> {
     /// Step all environments and return structured result
     ///
     /// This is a convenience method that unpacks individual StepResults
     /// into a single PoolStepResult with parallel vectors.
-    pub fn step_structured(&mut self, actions: &[E::Action]) -> PoolStepResult<E::Observation>
-    where
-        E::Action: Copy + Send + Sync,
-        E::Observation: Send,
-    {
+    pub fn step_structured(&mut self, actions: &[i64]) -> PoolStepResult<Vec<f32>> {
         let results = self.step(actions);
 
         let mut observations = Vec::with_capacity(self.num_envs);
