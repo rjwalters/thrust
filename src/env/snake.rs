@@ -40,8 +40,7 @@ pub fn make_snake_env(width: i32, height: i32) -> SnakeEnv {
     SnakeEnv::new(width, height)
 }
 
-/// Create multi-agent snake environment
-// TODO: Re-enable after fixing multi-agent code
+// TODO: Re-enable multi-agent snake environment after fixing multi-agent code
 // #[cfg(feature = "training")]
 // pub fn make_multi_snake_env(width: i32, height: i32, num_agents: usize) -> MultiAgentSnakeEnv {
 //     MultiAgentSnakeEnv::new(width, height, num_agents)
