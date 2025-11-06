@@ -5,3 +5,4 @@
 
 pub mod inference;
 pub mod mlp;
+pub mod snake_cnn;

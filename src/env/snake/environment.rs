@@ -228,6 +228,66 @@ impl SnakeEnv {
         self.step_multi(&[action])
     }
 
+    /// Get grid-based observation for a specific snake
+    ///
+    /// Returns a multi-channel grid representation:
+    /// - Channel 0: Own snake body (1.0 where body is)
+    /// - Channel 1: Own snake head (1.0 at head position)
+    /// - Channel 2: Other snakes (1.0 where other snakes are)
+    /// - Channel 3: Food (1.0 at food position)
+    /// - Channel 4: Walls (1.0 at boundaries)
+    ///
+    /// Flattened as [C0_pixels..., C1_pixels..., C2_pixels..., ...]
+    pub fn get_grid_observation(&self, snake_id: usize) -> Vec<f32> {
+        if snake_id >= self.snakes.len() {
+            // Return empty grid if invalid snake_id
+            return vec![0.0; 5 * (self.width as usize) * (self.height as usize)];
+        }
+
+        let grid_size = (self.width as usize) * (self.height as usize);
+        let mut obs = vec![0.0; 5 * grid_size];
+
+        let own_snake = &self.snakes[snake_id];
+
+        // Channel 0: Own snake body
+        for pos in &own_snake.body {
+            let idx = (pos.y as usize) * (self.width as usize) + (pos.x as usize);
+            obs[idx] = 1.0;
+        }
+
+        // Channel 1: Own snake head
+        let head_idx = (own_snake.head.y as usize) * (self.width as usize) + (own_snake.head.x as usize);
+        obs[grid_size + head_idx] = 1.0;
+
+        // Channel 2: Other snakes
+        for (id, snake) in self.snakes.iter().enumerate() {
+            if id != snake_id {
+                for pos in &snake.body {
+                    let idx = 2 * grid_size + (pos.y as usize) * (self.width as usize) + (pos.x as usize);
+                    obs[idx] = 1.0;
+                }
+            }
+        }
+
+        // Channel 3: Food
+        let food_idx = 3 * grid_size + (self.food.y as usize) * (self.width as usize) + (self.food.x as usize);
+        obs[food_idx] = 1.0;
+
+        // Channel 4: Walls (boundaries)
+        // Top and bottom walls
+        for x in 0..self.width as usize {
+            obs[4 * grid_size + 0 * (self.width as usize) + x] = 1.0;  // Top
+            obs[4 * grid_size + ((self.height as usize - 1) * (self.width as usize)) + x] = 1.0;  // Bottom
+        }
+        // Left and right walls
+        for y in 0..self.height as usize {
+            obs[4 * grid_size + y * (self.width as usize) + 0] = 1.0;  // Left
+            obs[4 * grid_size + y * (self.width as usize) + (self.width as usize - 1)] = 1.0;  // Right
+        }
+
+        obs
+    }
+
     /// Get current observation (for first snake, backward compatibility)
     pub fn get_observation(&self) -> Vec<f32> {
         if self.snakes.is_empty() {
