@@ -14,7 +14,9 @@
         const route = params.get('p');
         if (route) {
           // Remove the query parameter and set the correct path
-          const newUrl = window.location.pathname + route + window.location.hash;
+          // Remove trailing slash from pathname if present to avoid double slashes
+          const pathname = window.location.pathname.replace(/\/$/, '');
+          const newUrl = pathname + route + window.location.hash;
           window.history.replaceState(null, '', newUrl);
         }
       })();
