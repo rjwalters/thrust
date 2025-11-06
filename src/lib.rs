@@ -34,6 +34,9 @@ pub mod utils;
 /// Pure Rust inference for WASM compilation
 pub mod inference;
 
+/// Multi-agent training infrastructure
+pub mod multi_agent;
+
 /// Prelude module for convenient imports
 ///
 /// This module re-exports commonly used types and traits for convenience.
