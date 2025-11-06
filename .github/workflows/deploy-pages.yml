@@ -5,7 +5,9 @@ on:
     branches: [main, master]
     paths:
       - 'web/**'
-      - 'wasm/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
@@ -48,17 +50,15 @@ jobs:
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build WASM
-        run: |
-          cd wasm
-          wasm-pack build --target web --release
+        run: wasm-pack build --target web --release --no-default-features --features wasm
 
       - name: Upload WASM artifacts
         uses: actions/upload-artifact@v4
         with:
           name: wasm-files
           path: |
-            wasm/pkg/thrust_rl_bg.wasm
-            wasm/pkg/thrust_rl.js
+            pkg/thrust_rl_bg.wasm
+            pkg/thrust_rl.js
           retention-days: 1
 
   build-web:
