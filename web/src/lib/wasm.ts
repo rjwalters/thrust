@@ -11,7 +11,7 @@ export interface WasmCartPole {
 
 export interface WasmSnake {
 	reset(): void;
-	step(action: number): void;
+	step(actions: Int32Array): void;
 	get_observation(agentId: number): Float32Array;
 	num_agents(): number;
 	active_agents(): Uint8Array;
@@ -24,7 +24,7 @@ export interface WasmSnake {
 
 export interface WasmModule {
 	WasmCartPole: new () => WasmCartPole;
-	WasmSnake: new (width: number, height: number) => WasmSnake;
+	WasmSnake: new (width: number, height: number, numAgents: number) => WasmSnake;
 }
 
 let wasmModule: WasmModule | null = null;

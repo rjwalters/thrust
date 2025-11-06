@@ -31,8 +31,8 @@ fn main() -> Result<()> {
 
     println!("🔄 Loading model from: {}", input_path);
 
-    // Create policy with matching architecture (CartPole: 4 obs, 2 actions, 64 hidden)
-    let mut policy = MlpPolicy::new(4, 2, 64);
+    // Create policy with matching architecture (CartPole: 4 obs, 2 actions, 128 hidden)
+    let mut policy = MlpPolicy::new(4, 2, 128);
 
     // Load trained weights
     policy.load(input_path)?;
@@ -41,7 +41,7 @@ fn main() -> Result<()> {
     println!("📊 Architecture:");
     println!("  - Input dim: {}", 4);
     println!("  - Output dim (actions): {}", 2);
-    println!("  - Hidden dim: {}", 64);
+    println!("  - Hidden dim: {}", 128);
 
     // Export to pure Rust format
     println!("🔄 Exporting to WASM-compatible format...");

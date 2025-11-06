@@ -100,13 +100,19 @@ export default function SnakePixi({ state }: SnakePixiProps) {
 		g.clear();
 
 		// Parse snake positions
-		let idx = 0;
-		while (idx < st.snakePositions.length) {
-			const agentId = st.snakePositions[idx];
-			const length = st.snakePositions[idx + 1];
-			idx += 2;
+		// Format: [num_snakes, len0, x0, y0, x1, y1, ..., len1, x0, y0, ...]
+		if (st.snakePositions.length === 0) return;
 
-			if (agentId < 0 || length <= 0) break;
+		const numSnakes = st.snakePositions[0];
+		let idx = 1;
+
+		for (let agentId = 0; agentId < numSnakes; agentId++) {
+			if (idx >= st.snakePositions.length) break;
+
+			const length = st.snakePositions[idx];
+			idx++;
+
+			if (length <= 0) continue;
 
 			const isActive = st.activeAgents[agentId] === 1;
 			const color = AGENT_COLORS[agentId % AGENT_COLORS.length];
@@ -114,13 +120,15 @@ export default function SnakePixi({ state }: SnakePixiProps) {
 
 			// Draw segments
 			for (let i = 0; i < length; i++) {
+				if (idx + i * 2 + 1 >= st.snakePositions.length) break;
+
 				const x = st.snakePositions[idx + i * 2];
 				const y = st.snakePositions[idx + i * 2 + 1];
 
 				const centerX = GRID_PADDING + x * CELL_SIZE + CELL_SIZE / 2;
 				const centerY = GRID_PADDING + y * CELL_SIZE + CELL_SIZE / 2;
 
-				const isHead = i === length - 1;
+				const isHead = i === 0; // First segment is the head
 				const segmentSize = isHead ? 10 : 9;
 
 				// Segment glow

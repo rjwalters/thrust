@@ -19,6 +19,8 @@ pub struct Snake {
     pub direction: Direction,
     /// Length of snake
     pub length: usize,
+    /// Whether the snake is alive
+    pub alive: bool,
 }
 
 impl Snake {
@@ -33,6 +35,7 @@ impl Snake {
             body,
             direction: start_direction,
             length: 1,
+            alive: true,
         }
     }
 
@@ -95,9 +98,9 @@ impl Snake {
         self.length
     }
 
-    /// Check if snake is alive (has length > 0)
+    /// Check if snake is alive
     pub fn is_alive(&self) -> bool {
-        self.length > 0
+        self.alive
     }
 }
 

@@ -145,6 +145,22 @@ function getArrayI32FromWasm0(ptr, len) {
     return getInt32ArrayMemory0().subarray(ptr / 4, ptr / 4 + len);
 }
 
+let cachedUint32ArrayMemory0 = null;
+
+function getUint32ArrayMemory0() {
+    if (cachedUint32ArrayMemory0 === null || cachedUint32ArrayMemory0.byteLength === 0) {
+        cachedUint32ArrayMemory0 = new Uint32Array(wasm.memory.buffer);
+    }
+    return cachedUint32ArrayMemory0;
+}
+
+function passArray32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getUint32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
+}
+
 const WasmCartPoleFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmcartpole_free(ptr >>> 0, 1));
@@ -269,7 +285,7 @@ export class WasmSnake {
      * @returns {number}
      */
     get_episode() {
-        const ret = wasm.wasmcartpole_get_steps(this.__wbg_ptr);
+        const ret = wasm.wasmsnake_get_episode(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -305,8 +321,8 @@ export class WasmSnake {
         return v1;
     }
     /**
-     * Get snake positions for rendering
-     * Returns flattened array: [len, x0, y0, x1, y1, ...]
+     * Get all snake positions for rendering
+     * Returns flattened array: [num_snakes, len0, x0, y0, x1, y1, ..., len1, x0, y0, ...]
      * @returns {Int32Array}
      */
     get_snake_positions() {
@@ -318,20 +334,23 @@ export class WasmSnake {
     /**
      * @param {number} width
      * @param {number} height
+     * @param {number} num_agents
      */
-    constructor(width, height) {
-        const ret = wasm.wasmsnake_new(width, height);
+    constructor(width, height, num_agents) {
+        const ret = wasm.wasmsnake_new(width, height, num_agents);
         this.__wbg_ptr = ret >>> 0;
         WasmSnakeFinalization.register(this, this.__wbg_ptr, this);
         return this;
     }
     /**
-     * Step the environment with a single action
-     * action: 0 = up, 1 = down, 2 = left, 3 = right
-     * @param {number} action
+     * Step the environment with actions for all agents
+     * actions: array of actions where each is 0=up, 1=down, 2=left, 3=right
+     * @param {Int32Array} actions
      */
-    step(action) {
-        wasm.wasmsnake_step(this.__wbg_ptr, action);
+    step(actions) {
+        const ptr0 = passArray32ToWasm0(actions, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmsnake_step(this.__wbg_ptr, ptr0, len0);
     }
     /**
      * Reset the environment
@@ -533,6 +552,7 @@ function __wbg_finalize_init(instance, module) {
     cachedDataViewMemory0 = null;
     cachedFloat32ArrayMemory0 = null;
     cachedInt32ArrayMemory0 = null;
+    cachedUint32ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
 
 

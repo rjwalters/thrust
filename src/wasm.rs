@@ -102,10 +102,10 @@ pub struct WasmSnake {
 #[wasm_bindgen]
 impl WasmSnake {
     #[wasm_bindgen(constructor)]
-    pub fn new(width: i32, height: i32) -> Self {
+    pub fn new(width: i32, height: i32, num_agents: usize) -> Self {
         console_error_panic_hook::set_once();
         Self {
-            env: SnakeEnv::new(width, height),
+            env: SnakeEnv::new_multi(width, height, num_agents),
             episode: 0,
         }
     }
@@ -117,31 +117,31 @@ impl WasmSnake {
         self.episode += 1;
     }
 
-    /// Step the environment with a single action
-    /// action: 0 = up, 1 = down, 2 = left, 3 = right
+    /// Step the environment with actions for all agents
+    /// actions: array of actions where each is 0=up, 1=down, 2=left, 3=right
     #[wasm_bindgen]
-    pub fn step(&mut self, action: i32) {
-        use crate::env::Environment;
-        let _ = self.env.step(action as i64);
+    pub fn step(&mut self, actions: &[i32]) {
+        let actions_i64: Vec<i64> = actions.iter().map(|&a| a as i64).collect();
+        let _ = self.env.step_multi(&actions_i64);
     }
 
     /// Get observation for a specific agent
     #[wasm_bindgen]
     pub fn get_observation(&self, _agent_id: usize) -> Vec<f32> {
-        // For now, return empty - we'll implement this when we have multi-agent support
+        // For now, return empty - we'll implement per-agent observations later
         vec![]
     }
 
     /// Get number of agents
     #[wasm_bindgen]
     pub fn num_agents(&self) -> usize {
-        1 // Single-agent environment
+        self.env.num_agents
     }
 
     /// Get active agents (alive = true, dead = false)
     #[wasm_bindgen]
     pub fn active_agents(&self) -> Vec<u8> {
-        vec![if self.env.snake.is_alive() { 1 } else { 0 }]
+        self.env.snakes.iter().map(|s| if s.is_alive() { 1 } else { 0 }).collect()
     }
 
     /// Get grid dimensions
@@ -155,16 +155,22 @@ impl WasmSnake {
         self.env.height
     }
 
-    /// Get snake positions for rendering
-    /// Returns flattened array: [len, x0, y0, x1, y1, ...]
+    /// Get all snake positions for rendering
+    /// Returns flattened array: [num_snakes, len0, x0, y0, x1, y1, ..., len1, x0, y0, ...]
     #[wasm_bindgen]
     pub fn get_snake_positions(&self) -> Vec<i32> {
         let mut positions = Vec::new();
 
-        positions.push(self.env.snake.body.len() as i32);
-        for pos in &self.env.snake.body {
-            positions.push(pos.x);
-            positions.push(pos.y);
+        // First, add the number of snakes
+        positions.push(self.env.snakes.len() as i32);
+
+        // Then add each snake's positions
+        for snake in &self.env.snakes {
+            positions.push(snake.body.len() as i32);
+            for pos in &snake.body {
+                positions.push(pos.x);
+                positions.push(pos.y);
+            }
         }
 
         positions
