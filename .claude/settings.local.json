@@ -31,7 +31,8 @@
       "Bash(ssh rwalters-sandbox-2:*)",
       "Bash(rsync:*)",
       "Bash(git add:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

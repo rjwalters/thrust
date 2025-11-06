@@ -152,6 +152,10 @@ impl MlpPolicy {
     pub fn unfreeze(&mut self) {
         self.vs.unfreeze();
     }
+
+    // TODO: Add export_for_inference() method
+    // This will extract weights from tch tensors and convert to pure Rust format
+    // for WASM inference. Requires handling tch-rs API differences between versions.
 }
 
 #[cfg(test)]

@@ -31,6 +31,9 @@ pub mod train;
 /// Utility functions and helpers
 pub mod utils;
 
+/// Pure Rust inference for WASM compilation
+pub mod inference;
+
 /// Prelude module for convenient imports
 ///
 /// This module re-exports commonly used types and traits for convenience.
