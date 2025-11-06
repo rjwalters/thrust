@@ -6,6 +6,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Thrust RL - Reinforcement Learning in Rust + CUDA</title>
     <meta name="description" content="High-performance reinforcement learning demos running in WebAssembly. Watch AI agents learn Snake and CartPole in real-time." />
+
+    <!-- GitHub Pages SPA redirect handler -->
+    <script>
+      (function() {
+        const params = new URLSearchParams(window.location.search);
+        const route = params.get('p');
+        if (route) {
+          // Remove the query parameter and set the correct path
+          const newUrl = window.location.pathname + route + window.location.hash;
+          window.history.replaceState(null, '', newUrl);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

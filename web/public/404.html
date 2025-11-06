@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Redirecting...</title>
+    <script>
+        // GitHub Pages SPA redirect workaround
+        // This script takes the current URL and converts the path into a query string parameter
+        // The main index.html will then read this and restore the correct route
+
+        const pathSegmentsToKeep = 1; // Keep '/thrust' segment
+
+        const pathSegments = window.location.pathname.split('/').filter(segment => segment);
+
+        // Remove the base path segments we want to keep
+        const route = pathSegments.slice(pathSegmentsToKeep).join('/');
+
+        // Redirect to index.html with the route as a query parameter
+        const redirect = window.location.origin + '/' + pathSegments.slice(0, pathSegmentsToKeep).join('/') + '/?p=/' + route;
+
+        console.log('404.html redirecting to:', redirect);
+        window.location.replace(redirect);
+    </script>
+</head>
+<body>
+    <p>Redirecting...</p>
+</body>
+</html>
