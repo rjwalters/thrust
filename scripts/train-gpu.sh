@@ -2,14 +2,16 @@
 # GPU training script
 
 if [ -z "$1" ]; then
-    echo "Usage: $0 <example_name>"
+    echo "Usage: $0 <example_name> [args...]"
     echo "Example: $0 train_cartpole_best"
+    echo "         $0 export_snake_model models/snake.pt models/snake.json"
     exit 1
 fi
 
 EXAMPLE_NAME=$1
+shift  # Remove first argument, rest are example arguments
 
-echo "🚀 Starting GPU training: $EXAMPLE_NAME"
+echo "🚀 Starting GPU example: $EXAMPLE_NAME"
 echo
 
 # Check for GPU
@@ -61,4 +63,9 @@ echo "Building with CUDA support..."
 cargo build --example "$EXAMPLE_NAME" --release
 
 # Run the example with CUDA libraries preloaded
-cargo run --example "$EXAMPLE_NAME" --release
+# Pass remaining arguments to the example
+if [ $# -gt 0 ]; then
+    cargo run --example "$EXAMPLE_NAME" --release -- "$@"
+else
+    cargo run --example "$EXAMPLE_NAME" --release
+fi
