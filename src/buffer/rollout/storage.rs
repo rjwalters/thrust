@@ -3,8 +3,6 @@
 //! This module handles the core storage functionality for rollout buffers,
 //! including data insertion, retrieval, and buffer management.
 
-use super::RolloutBatch;
-
 /// Rollout buffer for storing trajectories
 ///
 /// Stores trajectories collected from environment interactions and
