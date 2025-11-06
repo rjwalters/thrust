@@ -11,7 +11,7 @@ def export_model(input_path, output_path):
 
     # Try to load as state dict first, then as JIT model
     try:
-        state_dict = torch.load(input_path, map_location='cpu')
+        state_dict = torch.load(input_path, map_location='cpu', weights_only=False)
         # Check if it's a JIT model
         if isinstance(state_dict, torch.jit.ScriptModule):
             print("Detected TorchScript model, extracting state dict...")
