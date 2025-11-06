@@ -102,10 +102,10 @@ pub struct WasmSnake {
 #[wasm_bindgen]
 impl WasmSnake {
     #[wasm_bindgen(constructor)]
-    pub fn new(width: i32, height: i32, num_agents: usize) -> Self {
+    pub fn new(width: i32, height: i32) -> Self {
         console_error_panic_hook::set_once();
         Self {
-            env: SnakeEnv::new(width, height, num_agents),
+            env: SnakeEnv::new(width, height),
             episode: 0,
         }
     }
@@ -113,9 +113,7 @@ impl WasmSnake {
     /// Reset the environment
     #[wasm_bindgen]
     pub fn reset(&mut self) {
-        if let Err(e) = self.env.reset() {
-            web_sys::console::error_1(&format!("Reset error: {}", e).into());
-        }
+        self.env.reset();
         self.episode += 1;
     }
 
@@ -142,13 +140,13 @@ impl WasmSnake {
     /// Get number of agents
     #[wasm_bindgen]
     pub fn num_agents(&self) -> usize {
-        self.env.snakes.len()
+        1 // Single-agent environment
     }
 
     /// Get active agents (alive = true, dead = false)
     #[wasm_bindgen]
     pub fn active_agents(&self) -> Vec<u8> {
-        self.env.snakes.iter().map(|s| if s.alive { 1 } else { 0 }).collect()
+        vec![if self.env.snake.is_alive() { 1 } else { 0 }]
     }
 
     /// Get grid dimensions
@@ -163,27 +161,25 @@ impl WasmSnake {
     }
 
     /// Get snake positions for rendering
-    /// Returns flattened array: [agent0_len, agent0_x0, agent0_y0, agent0_x1, agent0_y1, ..., agent1_len, ...]
+    /// Returns flattened array: [len, x0, y0, x1, y1, ...]
     #[wasm_bindgen]
     pub fn get_snake_positions(&self) -> Vec<i32> {
         let mut positions = Vec::new();
 
-        for snake in &self.env.snakes {
-            positions.push(snake.body.len() as i32);
-            for pos in &snake.body {
-                positions.push(pos.x);
-                positions.push(pos.y);
-            }
+        positions.push(self.env.snake.body.len() as i32);
+        for pos in &self.env.snake.body {
+            positions.push(pos.x);
+            positions.push(pos.y);
         }
 
         positions
     }
 
-    /// Get food positions
-    /// Returns flattened array: [x0, y0, x1, y1, ...]
+    /// Get food position
+    /// Returns array: [x, y]
     #[wasm_bindgen]
     pub fn get_food_positions(&self) -> Vec<i32> {
-        self.env.food.iter().flat_map(|f| vec![f.x, f.y]).collect()
+        vec![self.env.food.x, self.env.food.y]
     }
 
     /// Get current episode
