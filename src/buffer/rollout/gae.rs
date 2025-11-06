@@ -38,21 +38,46 @@ pub fn compute_advantages(
 
     debug_assert_eq!(last_values.len(), num_envs, "last_values length mismatch");
 
+    // Collect all immutable data first to avoid borrow checker issues
+    let rewards: Vec<Vec<f32>> = buffer.rewards().iter()
+        .map(|step| step.to_vec())
+        .collect();
+    let values: Vec<Vec<f32>> = buffer.values().iter()
+        .map(|step| step.to_vec())
+        .collect();
+    let terminated: Vec<Vec<bool>> = buffer.terminated().iter()
+        .map(|step| step.to_vec())
+        .collect();
+
+    // Now we can get mutable access
     let advantages = buffer.advantages_mut();
     let returns = buffer.returns_mut();
 
     // Compute advantages and returns for each environment
     for env_id in 0..num_envs {
+        let env_rewards: Vec<f32> = rewards.iter().map(|step| step[env_id]).collect();
+        let env_values: Vec<f32> = values.iter().map(|step| step[env_id]).collect();
+        let env_terminated: Vec<bool> = terminated.iter().map(|step| step[env_id]).collect();
+
+        let mut env_advantages: Vec<f32> = vec![0.0; num_steps];
+        let mut env_returns: Vec<f32> = vec![0.0; num_steps];
+
         compute_gae_single_env(
-            &buffer.rewards().iter().map(|step| step[env_id]).collect::<Vec<_>>(),
-            &buffer.values().iter().map(|step| step[env_id]).collect::<Vec<_>>(),
-            &buffer.terminated().iter().map(|step| step[env_id]).collect::<Vec<_>>(),
+            &env_rewards,
+            &env_values,
+            &env_terminated,
             last_values[env_id],
             gamma,
             gae_lambda,
-            &mut advantages.iter_mut().map(|step| &mut step[env_id]).collect::<Vec<_>>(),
-            &mut returns.iter_mut().map(|step| &mut step[env_id]).collect::<Vec<_>>(),
+            &mut env_advantages,
+            &mut env_returns,
         );
+
+        // Copy results back
+        for step in 0..num_steps {
+            advantages[step][env_id] = env_advantages[step];
+            returns[step][env_id] = env_returns[step];
+        }
     }
 }
 
@@ -67,8 +92,8 @@ fn compute_gae_single_env(
     last_value: f32,
     gamma: f32,
     gae_lambda: f32,
-    advantages: &mut [&mut f32],
-    returns: &mut [&mut f32],
+    advantages: &mut [f32],
+    returns: &mut [f32],
 ) {
     let num_steps = rewards.len();
     debug_assert_eq!(values.len(), num_steps);
@@ -99,8 +124,8 @@ fn compute_gae_single_env(
         gae = delta + gamma * gae_lambda * gae;
 
         // Store results
-        *advantages[t] = gae;
-        *returns[t] = values[t] + gae;
+        advantages[t] = gae;
+        returns[t] = values[t] + gae;
     }
 }
 
@@ -122,6 +147,15 @@ pub fn compute_nstep_returns(
 
     debug_assert_eq!(last_values.len(), num_envs, "last_values length mismatch");
 
+    // Collect immutable data first
+    let rewards: Vec<Vec<f32>> = buffer.rewards().iter()
+        .map(|step| step.to_vec())
+        .collect();
+    let terminated: Vec<Vec<bool>> = buffer.terminated().iter()
+        .map(|step| step.to_vec())
+        .collect();
+
+    // Now get mutable access
     let returns = buffer.returns_mut();
 
     for env_id in 0..num_envs {
@@ -129,11 +163,11 @@ pub fn compute_nstep_returns(
 
         // Compute returns backwards
         for step in (0..num_steps).rev() {
-            if buffer.terminated()[step][env_id] {
+            if terminated[step][env_id] {
                 discounted_return = 0.0;
             }
 
-            discounted_return = buffer.rewards()[step][env_id] + gamma * discounted_return;
+            discounted_return = rewards[step][env_id] + gamma * discounted_return;
             returns[step][env_id] = discounted_return;
         }
     }
@@ -148,6 +182,16 @@ pub fn compute_nstep_returns(
 /// * `buffer` - Rollout buffer to compute returns for
 pub fn compute_mc_returns(buffer: &mut super::storage::RolloutBuffer) {
     let (num_steps, num_envs) = (buffer.shape().0, buffer.shape().1);
+
+    // Collect immutable data first
+    let rewards: Vec<Vec<f32>> = buffer.rewards().iter()
+        .map(|step| step.to_vec())
+        .collect();
+    let terminated: Vec<Vec<bool>> = buffer.terminated().iter()
+        .map(|step| step.to_vec())
+        .collect();
+
+    // Now get mutable access
     let returns = buffer.returns_mut();
 
     for env_id in 0..num_envs {
@@ -157,9 +201,9 @@ pub fn compute_mc_returns(buffer: &mut super::storage::RolloutBuffer) {
         let mut episode_start = 0;
 
         for step in 0..num_steps {
-            episode_return += buffer.rewards()[step][env_id];
+            episode_return += rewards[step][env_id];
 
-            if buffer.terminated()[step][env_id] || step == num_steps - 1 {
+            if terminated[step][env_id] || step == num_steps - 1 {
                 // Episode ended - assign return to all steps in episode
                 for s in episode_start..=step {
                     returns[s][env_id] = episode_return;
