@@ -37,9 +37,11 @@ pub mod matchmaking;
 pub mod population;
 pub mod simulator;
 pub mod learner;
+pub mod messages;
 
 pub use environment::{MultiAgentEnvironment, MultiAgentResult};
 pub use matchmaking::{Matchmaker, MatchmakingStrategy};
 pub use population::{Agent, AgentId, Population, PopulationConfig, LearningMode};
 pub use simulator::GameSimulator;
 pub use learner::PolicyLearner;
+pub use messages::{Experience, PolicyUpdate, TrainingStats, ControlMessage};
