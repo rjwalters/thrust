@@ -1,11 +1,34 @@
-# React + TypeScript + Vite
+# Thrust RL Web Demo
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+High-performance reinforcement learning demos running in WebAssembly. Watch AI agents learn Snake and CartPole in real-time.
 
-Currently, two official plugins are available:
+This is a React + TypeScript application built with Vite, featuring:
+- Real-time RL agent training visualization
+- WebAssembly-powered simulations
+- Multiple game environments (Snake, CartPole)
+- End-to-end testing with Playwright
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Development
+
+### Getting Started
+```bash
+pnpm install
+pnpm dev
+```
+
+### Testing
+```bash
+# Run all tests
+pnpm test
+
+# Run tests with UI
+pnpm test:ui
+
+# Run specific test file
+npx playwright test tests/basic.spec.ts
+```
+
+See [TESTING.md](./TESTING.md) for detailed testing documentation.
 
 ## React Compiler
 

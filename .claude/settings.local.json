@@ -51,7 +51,9 @@
       "Bash(gh api:*)",
       "Bash(gh workflow:*)",
       "Bash(gh run list:*)",
-      "Bash(gh run view:*)"
+      "Bash(gh run view:*)",
+      "WebFetch(domain:rjwalters.github.io)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []
