@@ -182,16 +182,12 @@ impl Default for CartPole {
 }
 
 impl Environment for CartPole {
-    type Observation = Vec<f32>;
-    type Action = i64;
-
-    fn reset(&mut self) -> Result<Self::Observation> {
+    fn reset(&mut self) {
         self.reset_state();
         self.steps = 0;
-        Ok(self.get_observation())
     }
 
-    fn step(&mut self, action: Self::Action) -> Result<StepResult<Self::Observation>> {
+    fn step(&mut self, action: i64) -> StepResult {
         // Perform physics step
         self.physics_step(action);
 
@@ -206,21 +202,29 @@ impl Environment for CartPole {
         // Episode ends when terminated or truncated
         let reward = if terminated || truncated { 0.0 } else { 1.0 };
 
-        Ok(StepResult {
+        StepResult {
             observation: self.get_observation(),
             reward,
             terminated,
             truncated,
             info: StepInfo::default(),
-        })
+        }
     }
 
     fn observation_space(&self) -> SpaceInfo {
-        SpaceInfo { shape: vec![4], dtype: SpaceType::Continuous }
+        SpaceInfo { shape: vec![4], space_type: SpaceType::Box }
     }
 
     fn action_space(&self) -> SpaceInfo {
-        SpaceInfo { shape: vec![], dtype: SpaceType::Discrete(2) }
+        SpaceInfo { shape: vec![2], space_type: SpaceType::Discrete(2) }
+    }
+
+    fn render(&self) -> Vec<u8> {
+        vec![] // Not implemented for cartpole
+    }
+
+    fn close(&mut self) {
+        // Nothing to clean up
     }
 }
 

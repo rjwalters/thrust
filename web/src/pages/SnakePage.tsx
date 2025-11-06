@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import SnakeControls from "../components/Snake/SnakeControls";
 import SnakePixi from "../components/Snake/SnakePixi";
 import { useSnake } from "../components/Snake/useSnake";
+import Footer from "../components/Footer";
 
 export default function SnakePage() {
 	const snake = useSnake();
@@ -35,6 +36,8 @@ export default function SnakePage() {
 						<SnakeControls snake={snake} />
 					</div>
 				</div>
+
+				<Footer />
 			</div>
 		</div>
 	);

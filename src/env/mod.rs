@@ -7,30 +7,30 @@ use anyhow::Result;
 
 /// Core trait for RL environments
 pub trait Environment {
-    /// Observation type
-    type Observation;
-
-    /// Action type
-    type Action;
-
     /// Reset the environment and return initial observation
-    fn reset(&mut self) -> Result<Self::Observation>;
+    fn reset(&mut self);
 
     /// Step the environment with an action
-    fn step(&mut self, action: Self::Action) -> Result<StepResult<Self::Observation>>;
+    fn step(&mut self, action: i64) -> StepResult;
 
     /// Get the observation space dimensions
     fn observation_space(&self) -> SpaceInfo;
 
     /// Get the action space dimensions
     fn action_space(&self) -> SpaceInfo;
+
+    /// Render the current environment state
+    fn render(&self) -> Vec<u8>;
+
+    /// Close the environment
+    fn close(&mut self);
 }
 
 /// Result of an environment step
 #[derive(Debug, Clone)]
-pub struct StepResult<O> {
+pub struct StepResult {
     /// Next observation
-    pub observation: O,
+    pub observation: Vec<f32>,
 
     /// Reward received
     pub reward: f32,
@@ -52,7 +52,7 @@ pub struct SpaceInfo {
     pub shape: Vec<usize>,
 
     /// Data type
-    pub dtype: SpaceType,
+    pub space_type: SpaceType,
 }
 
 /// Space data types
@@ -62,10 +62,7 @@ pub enum SpaceType {
     Discrete(usize),
 
     /// Continuous space (Box)
-    Continuous,
-
-    /// Multi-discrete space
-    MultiDiscrete,
+    Box,
 }
 
 /// Additional step information

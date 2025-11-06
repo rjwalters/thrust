@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import CartPole3D from "../components/CartPole/CartPole3D";
 import CartPoleControls from "../components/CartPole/CartPoleControls";
 import { useCartPole } from "../components/CartPole/useCartPole";
+import Footer from "../components/Footer";
 
 export default function CartPolePage() {
 	const cartpole = useCartPole();
@@ -37,6 +38,8 @@ export default function CartPolePage() {
 						<CartPoleControls cartpole={cartpole} />
 					</div>
 				</div>
+
+				<Footer />
 			</div>
 		</div>
 	);
