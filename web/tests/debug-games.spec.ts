@@ -22,8 +22,8 @@ test("debug cartpole page", async ({ page }) => {
 	console.log("\n=== Navigating to CartPole page ===");
 	await page.goto(`${BASE_URL}/cartpole`, { waitUntil: "networkidle" });
 
-	// Wait a bit for any async operations
-	await page.waitForTimeout(3000);
+	// Wait longer for WASM to initialize
+	await page.waitForTimeout(10000);
 
 	const title = await page.title();
 	console.log(`\nPage title: ${title}`);
@@ -62,8 +62,8 @@ test("debug snake page", async ({ page }) => {
 	console.log("\n=== Navigating to Snake page ===");
 	await page.goto(`${BASE_URL}/snake`, { waitUntil: "networkidle" });
 
-	// Wait a bit for any async operations
-	await page.waitForTimeout(3000);
+	// Wait longer for WASM to initialize
+	await page.waitForTimeout(10000);
 
 	const title = await page.title();
 	console.log(`\nPage title: ${title}`);
