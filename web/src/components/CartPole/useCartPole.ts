@@ -97,7 +97,8 @@ export function useCartPole(): UseCartPoleResult {
 
 				// Step environment
 				const nextState = envRef.current.step(action);
-				const done = nextState[4] === 1; // done flag is at index 4
+				// nextState format: [pos, vel, angle, angVel, reward, terminated, truncated]
+				const done = nextState[5] === 1 || nextState[6] === 1; // terminated or truncated
 
 				setState({
 					position: nextState[0],

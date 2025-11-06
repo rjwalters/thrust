@@ -15,7 +15,7 @@ use crate::env::{Environment, cartpole::CartPole, snake::SnakeEnv};
 pub struct WasmCartPole {
     env: CartPole,
     episode: u32,
-    total_steps: u32,
+    episode_steps: u32,
     best_score: u32,
 }
 
@@ -28,7 +28,7 @@ impl WasmCartPole {
         Self {
             env: CartPole::new(),
             episode: 0,
-            total_steps: 0,
+            episode_steps: 0,
             best_score: 0,
         }
     }
@@ -36,8 +36,14 @@ impl WasmCartPole {
     /// Reset the environment and start a new episode
     #[wasm_bindgen]
     pub fn reset(&mut self) -> Vec<f32> {
+        // Update best score before resetting
+        if self.episode_steps > self.best_score {
+            self.best_score = self.episode_steps;
+        }
+
         self.env.reset();
         self.episode += 1;
+        self.episode_steps = 0;
         self.env.get_state().to_vec()
     }
 
@@ -46,7 +52,7 @@ impl WasmCartPole {
     #[wasm_bindgen]
     pub fn step(&mut self, action: i32) -> Vec<f32> {
         let result = self.env.step(action as i64);
-        self.total_steps += 1;
+        self.episode_steps += 1;
 
         let mut output = result.observation.clone();
         output.push(result.reward);
@@ -55,9 +61,8 @@ impl WasmCartPole {
 
         // Update best score if episode ended
         if result.terminated || result.truncated {
-            let episode_steps = self.total_steps;
-            if episode_steps > self.best_score {
-                self.best_score = episode_steps;
+            if self.episode_steps > self.best_score {
+                self.best_score = self.episode_steps;
             }
         }
 
@@ -73,7 +78,7 @@ impl WasmCartPole {
     /// Get total steps in current episode
     #[wasm_bindgen]
     pub fn get_steps(&self) -> u32 {
-        self.total_steps
+        self.episode_steps
     }
 
     /// Get best score
