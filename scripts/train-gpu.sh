@@ -48,5 +48,9 @@ export LIBTORCH_USE_PYTORCH=1
 TORCH_LIB=$(python3 -c "import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))")
 export LD_LIBRARY_PATH="${TORCH_LIB}:${LD_LIBRARY_PATH}"
 
+# IMPORTANT: Build must happen on this machine to detect CUDA at compile time
+echo "Building with CUDA support..."
+cargo build --example "$EXAMPLE_NAME" --release
+
 # Run the example
 cargo run --example "$EXAMPLE_NAME" --release
