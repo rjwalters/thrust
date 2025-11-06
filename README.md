@@ -9,6 +9,10 @@
 
 > **Give your agents some thrust** 🚀
 
+## 🎮 [**Try the Live Demo**](https://rjwalters.github.io/thrust/)
+
+Watch trained RL agents play CartPole and Snake in real-time, running entirely in your browser via WebAssembly!
+
 Thrust is a modern reinforcement learning library built from the ground up in Rust, designed for maximum speed, memory safety, and scalability. Inspired by [PufferLib](https://github.com/PufferAI/PufferLib), Thrust combines the raw performance of Rust with the proven power of PyTorch (via [tch-rs](https://github.com/LaurentMazare/tch-rs)) to deliver **3-6x faster training** than traditional Python implementations.
 
 ## 🎯 Vision
