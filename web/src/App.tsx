@@ -5,7 +5,7 @@ import SnakePage from "./pages/SnakePage";
 
 function App() {
 	return (
-		<BrowserRouter>
+		<BrowserRouter basename="/thrust">
 			<Routes>
 				<Route path="/" element={<Home />} />
 				<Route path="/cartpole" element={<CartPolePage />} />
