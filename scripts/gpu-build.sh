@@ -17,8 +17,9 @@ source ~/.cargo/env
 
 # Set up libtorch paths
 export LIBTORCH="$(pwd)/libtorch"
-export LD_LIBRARY_PATH="$LIBTORCH/lib:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$LIBTORCH/lib:${LD_LIBRARY_PATH:-}"
 export LIBTORCH_USE_PYTORCH=1
+export LIBTORCH_BYPASS_VERSION_CHECK=1
 
 # Parse arguments
 RELEASE_FLAG=""
