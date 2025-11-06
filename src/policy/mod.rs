@@ -4,5 +4,9 @@
 //! networks.
 
 pub mod inference;
+
+#[cfg(feature = "training")]
 pub mod mlp;
+
+#[cfg(feature = "training")]
 pub mod snake_cnn;

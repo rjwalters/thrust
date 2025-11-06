@@ -7,6 +7,9 @@ export interface WasmCartPole {
 	get_episode(): number;
 	get_steps(): number;
 	get_best_score(): number;
+	load_policy_json(json: string): void;
+	get_policy_action(): number;
+	has_policy(): boolean;
 }
 
 export interface WasmSnake {

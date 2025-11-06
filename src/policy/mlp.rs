@@ -11,11 +11,15 @@
 //!         |
 //!     [Dense(64)]
 //!         |
-//!       ReLU
+//!      Tanh
 //!         |
 //!     [Dense(64)]
 //!         |
-//!       ReLU
+//!      Tanh
+//!         |
+//!    [Dense(64)] (optional 3rd layer)
+//!         |
+//!      Tanh
 //!      /     \
 //!  Policy   Value
 //!  Network  Network
@@ -28,13 +32,40 @@
 use anyhow::Result;
 use tch::{
     Device, Kind, Tensor,
-    nn::{self, Module, OptimizerConfig},
+    nn::{self, Module, OptimizerConfig, Init},
 };
+
+/// Configuration for MLP policy architecture
+#[derive(Debug, Clone)]
+pub struct MlpConfig {
+    pub num_layers: usize,
+    pub hidden_dim: i64,
+    pub use_orthogonal_init: bool,
+    pub activation: Activation,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Activation {
+    ReLU,
+    Tanh,
+}
+
+impl Default for MlpConfig {
+    fn default() -> Self {
+        Self {
+            num_layers: 2,
+            hidden_dim: 64,
+            use_orthogonal_init: true,
+            activation: Activation::Tanh,
+        }
+    }
+}
 
 /// Multi-layer perceptron policy for discrete actions
 ///
 /// Implements an actor-critic architecture with:
-/// - Shared feature extraction layers
+/// - Shared feature extraction layers (2-3 layers)
+/// - Orthogonal weight initialization (better for RL)
 /// - Separate policy head (outputs action logits)
 /// - Separate value head (outputs state value estimate)
 pub struct MlpPolicy {
@@ -43,31 +74,90 @@ pub struct MlpPolicy {
     policy_head: nn::Linear,
     value_head: nn::Linear,
     device: Device,
+    config: MlpConfig,
 }
 
 impl MlpPolicy {
-    /// Create a new MLP policy
+    /// Create a new MLP policy with default 2-layer architecture
     ///
     /// # Arguments
     ///
     /// * `obs_dim` - Observation space dimensionality
     /// * `action_dim` - Number of discrete actions
-    /// * `hidden_dim` - Size of hidden layers (default: 64)
+    /// * `hidden_dim` - Size of hidden layers
     pub fn new(obs_dim: i64, action_dim: i64, hidden_dim: i64) -> Self {
+        let config = MlpConfig {
+            hidden_dim,
+            ..Default::default()
+        };
+        Self::with_config(obs_dim, action_dim, config)
+    }
+
+    /// Create a new MLP policy with custom configuration
+    ///
+    /// # Arguments
+    ///
+    /// * `obs_dim` - Observation space dimensionality
+    /// * `action_dim` - Number of discrete actions
+    /// * `config` - Architecture configuration
+    pub fn with_config(obs_dim: i64, action_dim: i64, config: MlpConfig) -> Self {
         let vs = nn::VarStore::new(Device::cuda_if_available());
         let root = vs.root();
 
-        let shared = nn::seq()
-            .add(nn::linear(&root / "shared" / "fc1", obs_dim, hidden_dim, Default::default()))
-            .add_fn(|x| x.relu())
-            .add(nn::linear(&root / "shared" / "fc2", hidden_dim, hidden_dim, Default::default()))
-            .add_fn(|x| x.relu());
+        // Weight initialization - use orthogonal for hidden layers
+        let hidden_init = if config.use_orthogonal_init {
+            Init::Orthogonal { gain: 2.0_f64.sqrt() }
+        } else {
+            Init::Randn { mean: 0.0, stdev: 0.01 }
+        };
 
-        let policy_head = nn::linear(&root / "policy", hidden_dim, action_dim, Default::default());
-        let value_head = nn::linear(&root / "value", hidden_dim, 1, Default::default());
+        let mut linear_config = nn::LinearConfig::default();
+        linear_config.ws_init = hidden_init;
+
+        // Build shared layers
+        let mut shared = nn::seq();
+
+        // First layer
+        shared = shared
+            .add(nn::linear(&root / "shared" / "fc1", obs_dim, config.hidden_dim, linear_config))
+            .add_fn(move |x| match config.activation {
+                Activation::ReLU => x.relu(),
+                Activation::Tanh => x.tanh(),
+            });
+
+        // Second layer
+        shared = shared
+            .add(nn::linear(&root / "shared" / "fc2", config.hidden_dim, config.hidden_dim, linear_config))
+            .add_fn(move |x| match config.activation {
+                Activation::ReLU => x.relu(),
+                Activation::Tanh => x.tanh(),
+            });
+
+        // Optional third layer
+        if config.num_layers >= 3 {
+            shared = shared
+                .add(nn::linear(&root / "shared" / "fc3", config.hidden_dim, config.hidden_dim, linear_config))
+                .add_fn(move |x| match config.activation {
+                    Activation::ReLU => x.relu(),
+                    Activation::Tanh => x.tanh(),
+                });
+        }
+
+        // Policy and value heads with smaller gain for output layers
+        let output_init = if config.use_orthogonal_init {
+            Init::Orthogonal { gain: 0.01 }
+        } else {
+            Init::Randn { mean: 0.0, stdev: 0.01 }
+        };
+
+        let mut output_config = nn::LinearConfig::default();
+        output_config.ws_init = output_init;
+
+        let policy_head = nn::linear(&root / "policy", config.hidden_dim, action_dim, output_config);
+        let value_head = nn::linear(&root / "value", config.hidden_dim, 1, output_config);
         let device = vs.device();
 
-        Self { vs, shared, policy_head, value_head, device }
+        Self { vs, shared, policy_head, value_head, device, config }
     }
 
     /// Forward pass: compute action logits and values
@@ -158,8 +248,14 @@ impl MlpPolicy {
     ///
     /// Extracts all weights and biases from the PyTorch model and converts them
     /// to a pure Rust format that can be used in WebAssembly.
+    ///
+    /// Note: Only supports 2-layer models for now (3-layer export not yet implemented)
     pub fn export_for_inference(&self) -> crate::policy::inference::InferenceModel {
         use tch::Tensor;
+
+        if self.config.num_layers > 2 {
+            panic!("Export for 3+ layer models not yet implemented");
+        }
 
         // Helper function to convert a 2D tensor to Vec<Vec<f32>>
         fn tensor_to_2d(tensor: &Tensor) -> Vec<Vec<f32>> {
@@ -259,10 +355,17 @@ impl MlpPolicy {
                 .expect("Missing value.bias"),
         );
 
+        let activation = match self.config.activation {
+            Activation::ReLU => crate::policy::inference::InferenceActivation::ReLU,
+            Activation::Tanh => crate::policy::inference::InferenceActivation::Tanh,
+        };
+
         crate::policy::inference::InferenceModel {
             obs_dim,
             action_dim,
             hidden_dim,
+            activation,
+            metadata: None,  // Will be set by training script
             shared_fc1_weight,
             shared_fc1_bias,
             shared_fc2_weight,

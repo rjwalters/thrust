@@ -18,6 +18,7 @@ export interface UseCartPoleResult {
 	isRunning: boolean;
 	isPaused: boolean;
 	speed: number;
+	modelLoaded: boolean;
 	start: () => void;
 	pause: () => void;
 	reset: () => void;
@@ -29,12 +30,13 @@ export function useCartPole(): UseCartPoleResult {
 	const [isRunning, setIsRunning] = useState(false);
 	const [isPaused, setIsPaused] = useState(false);
 	const [speed, setSpeed] = useState(1);
+	const [modelLoaded, setModelLoaded] = useState(false);
 
 	const envRef = useRef<WasmCartPole | null>(null);
 	const frameIdRef = useRef<number | null>(null);
 	const lastFrameTimeRef = useRef<number>(0);
 
-	// Initialize WASM environment
+	// Initialize WASM environment and load policy
 	useEffect(() => {
 		let mounted = true;
 
@@ -43,6 +45,19 @@ export function useCartPole(): UseCartPoleResult {
 				const wasm = await initWasm();
 				if (mounted) {
 					envRef.current = new wasm.WasmCartPole();
+
+					// Load the trained policy
+					try {
+						const response = await fetch("/cartpole_model.json");
+						const modelJson = await response.text();
+						envRef.current.load_policy_json(modelJson);
+						setModelLoaded(true);
+						console.log("CartPole policy loaded successfully");
+					} catch (error) {
+						console.warn("Failed to load CartPole policy:", error);
+						setModelLoaded(false);
+					}
+
 					const initialState = envRef.current.reset();
 
 					setState({
@@ -87,13 +102,8 @@ export function useCartPole(): UseCartPoleResult {
 			if (elapsed >= targetFrameTime) {
 				lastFrameTimeRef.current = currentTime;
 
-				// Get current state for policy
-				const currentState = envRef.current.get_state();
-
-				// Simple policy: if pole is falling right (angle > 0), push right (1)
-				// if falling left (angle < 0), push left (0)
-				// This is a placeholder for a trained model
-				const action = currentState[2] > 0 ? 1 : 0;
+				// Get action from the trained policy
+				const action = envRef.current.get_policy_action();
 
 				// Step environment
 				const nextState = envRef.current.step(action);
@@ -178,6 +188,7 @@ export function useCartPole(): UseCartPoleResult {
 		isRunning,
 		isPaused,
 		speed,
+		modelLoaded,
 		start,
 		pause,
 		reset,

@@ -1,11 +1,47 @@
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
 import CartPole3D from "../components/CartPole/CartPole3D";
 import CartPoleControls from "../components/CartPole/CartPoleControls";
 import { useCartPole } from "../components/CartPole/useCartPole";
 import Footer from "../components/Footer";
 
+interface ModelMetadata {
+	total_steps: number;
+	total_episodes: number;
+	final_performance: number;
+	training_time_secs: number;
+	device: string;
+	environment: string;
+	algorithm: string;
+	timestamp?: string;
+	notes?: string;
+}
+
+interface ModelInfo {
+	obs_dim: number;
+	action_dim: number;
+	hidden_dim: number;
+	activation: string;
+	metadata?: ModelMetadata;
+}
+
 export default function CartPolePage() {
 	const cartpole = useCartPole();
+	const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+
+	// Load model metadata
+	useEffect(() => {
+		async function loadModelInfo() {
+			try {
+				const response = await fetch("/cartpole_model.json");
+				const data = await response.json();
+				setModelInfo(data);
+			} catch (error) {
+				console.error("Failed to load model info:", error);
+			}
+		}
+		loadModelInfo();
+	}, []);
 
 	return (
 		<div className="min-h-screen bg-gray-50">
@@ -43,15 +79,14 @@ export default function CartPolePage() {
 				<div className="mt-8 bg-white rounded-lg shadow-lg p-6">
 					<h2 className="text-2xl font-bold mb-4">Neural Network Architecture</h2>
 					<p className="text-gray-600 mb-4">
-						The CartPole agent uses a Multi-Layer Perceptron (MLP) trained with PPO
-						(Proximal Policy Optimization) to balance the pole on the cart.
+						{modelInfo?.metadata?.algorithm || "PPO (Proximal Policy Optimization)"} agent trained to balance the pole on the cart.
 					</p>
 
 					<div className="grid md:grid-cols-2 gap-6">
 						<div>
 							<h3 className="font-semibold mb-2">Input Layer</h3>
 							<div className="bg-gray-50 p-3 rounded text-sm font-mono">
-								<div className="text-gray-700">4 continuous features:</div>
+								<div className="text-gray-700">{modelInfo?.obs_dim || 4} continuous features:</div>
 								<ul className="mt-2 space-y-1 text-xs">
 									<li>• Cart position (x)</li>
 									<li>• Cart velocity (ẋ)</li>
@@ -64,20 +99,20 @@ export default function CartPolePage() {
 						<div>
 							<h3 className="font-semibold mb-2">Hidden Layers</h3>
 							<div className="bg-gray-50 p-3 rounded text-sm font-mono space-y-2">
-								<div>Hidden 1: 4 → 64 neurons</div>
-								<div>Hidden 2: 64 → 64 neurons</div>
-								<div className="text-gray-500 text-xs">ReLU activation after each</div>
+								<div>Hidden 1: {modelInfo?.obs_dim || 4} → {modelInfo?.hidden_dim || 64} neurons</div>
+								<div>Hidden 2: {modelInfo?.hidden_dim || 64} → {modelInfo?.hidden_dim || 64} neurons</div>
+								<div className="text-gray-500 text-xs">{modelInfo?.activation || "ReLU"} activation</div>
 							</div>
 						</div>
 
 						<div>
 							<h3 className="font-semibold mb-2">Output Heads</h3>
 							<div className="bg-gray-50 p-3 rounded text-sm font-mono space-y-2">
-								<div>Policy: 64 → 2 actions</div>
+								<div>Policy: {modelInfo?.hidden_dim || 64} → {modelInfo?.action_dim || 2} actions</div>
 								<div className="text-xs text-gray-600">
 									(Push Left, Push Right)
 								</div>
-								<div className="mt-2">Value: 64 → 1 scalar</div>
+								<div className="mt-2">Value: {modelInfo?.hidden_dim || 64} → 1 scalar</div>
 								<div className="text-xs text-gray-600">
 									(State value estimate)
 								</div>
@@ -87,23 +122,31 @@ export default function CartPolePage() {
 						<div>
 							<h3 className="font-semibold mb-2">Training Details</h3>
 							<div className="bg-gray-50 p-3 rounded text-sm space-y-1">
-								<div className="font-mono text-xs">Algorithm: PPO</div>
-								<div className="font-mono text-xs">Vectorized: 4 envs</div>
-								<div className="font-mono text-xs">Steps: 128/rollout</div>
-								<div className="text-xs text-gray-600 mt-2">
-									Trained to keep pole upright as long as possible
-								</div>
+								{modelInfo?.metadata && (
+									<>
+										<div className="font-mono text-xs">Steps: {modelInfo.metadata.total_steps.toLocaleString()}</div>
+										<div className="font-mono text-xs">Episodes: {modelInfo.metadata.total_episodes.toLocaleString()}</div>
+										<div className="font-mono text-xs">Performance: {modelInfo.metadata.final_performance.toFixed(1)} steps/ep</div>
+										<div className="font-mono text-xs">Training time: {modelInfo.metadata.training_time_secs.toFixed(1)}s</div>
+										<div className="font-mono text-xs">Device: {modelInfo.metadata.device}</div>
+									</>
+								)}
 							</div>
 						</div>
 					</div>
 
 					<div className="mt-4 p-4 bg-blue-50 rounded-lg">
 						<p className="text-sm text-blue-900">
-							<strong>Total Parameters:</strong> ~4.5K trainable weights
+							<strong>Status:</strong> {cartpole.modelLoaded ? "Model loaded successfully" : "Loading model..."}
 						</p>
 						<p className="text-sm text-blue-800 mt-1">
 							The model runs entirely in your browser using WebAssembly for real-time inference.
 						</p>
+						{modelInfo?.metadata?.notes && (
+							<p className="text-xs text-blue-700 mt-2 italic">
+								{modelInfo.metadata.notes}
+							</p>
+						)}
 					</div>
 				</div>
 

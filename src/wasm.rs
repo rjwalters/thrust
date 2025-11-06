@@ -17,6 +17,7 @@ pub struct WasmCartPole {
     episode: u32,
     episode_steps: u32,
     best_score: u32,
+    policy: Option<crate::policy::inference::InferenceModel>,
 }
 
 #[cfg(feature = "wasm")]
@@ -30,6 +31,7 @@ impl WasmCartPole {
             episode: 0,
             episode_steps: 0,
             best_score: 0,
+            policy: None,
         }
     }
 
@@ -92,6 +94,36 @@ impl WasmCartPole {
     #[wasm_bindgen]
     pub fn get_state(&self) -> Vec<f32> {
         self.env.get_state().to_vec()
+    }
+
+    /// Load policy from JSON string
+    /// The JSON should contain the InferenceModel structure
+    #[wasm_bindgen]
+    pub fn load_policy_json(&mut self, json: &str) -> Result<(), JsValue> {
+        let policy: crate::policy::inference::InferenceModel =
+            serde_json::from_str(json)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse policy JSON: {}", e)))?;
+
+        self.policy = Some(policy);
+        Ok(())
+    }
+
+    /// Get policy action using the loaded model
+    /// Returns action index (0 or 1) or -1 if no policy loaded
+    #[wasm_bindgen]
+    pub fn get_policy_action(&self) -> i32 {
+        if let Some(ref policy) = self.policy {
+            let state = self.env.get_state();
+            policy.get_action(&state) as i32
+        } else {
+            -1 // No policy loaded
+        }
+    }
+
+    /// Check if policy is loaded
+    #[wasm_bindgen]
+    pub fn has_policy(&self) -> bool {
+        self.policy.is_some()
     }
 }
 

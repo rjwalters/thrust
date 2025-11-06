@@ -204,6 +204,38 @@ impl SnakeCNNInference {
     }
 }
 
+/// Activation function type for inference
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum InferenceActivation {
+    ReLU,
+    Tanh,
+}
+
+/// Training metadata for the model
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrainingMetadata {
+    /// Total training steps
+    pub total_steps: usize,
+    /// Total episodes
+    pub total_episodes: usize,
+    /// Final average performance (steps per episode)
+    pub final_performance: f64,
+    /// Training wall time in seconds
+    pub training_time_secs: f64,
+    /// Device used for training (CPU, CUDA, MPS)
+    pub device: String,
+    /// Environment name
+    pub environment: String,
+    /// Training algorithm
+    pub algorithm: String,
+    /// Timestamp when trained
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+    /// Additional notes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes: Option<String>,
+}
+
 /// A serializable MLP model for inference
 ///
 /// This struct contains all the weights and biases needed to run
@@ -216,6 +248,13 @@ pub struct InferenceModel {
     pub action_dim: usize,
     /// Hidden layer dimension
     pub hidden_dim: usize,
+    /// Activation function
+    #[serde(default = "default_activation")]
+    pub activation: InferenceActivation,
+
+    /// Training metadata (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<TrainingMetadata>,
 
     /// Shared layer 1: weights [obs_dim, hidden_dim]
     pub shared_fc1_weight: Vec<Vec<f32>>,
@@ -238,6 +277,10 @@ pub struct InferenceModel {
     pub value_bias: Vec<f32>,
 }
 
+fn default_activation() -> InferenceActivation {
+    InferenceActivation::Tanh
+}
+
 impl InferenceModel {
     /// Save model to JSON file
     pub fn save_json<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
@@ -251,6 +294,17 @@ impl InferenceModel {
         let json = std::fs::read_to_string(path)?;
         let model = serde_json::from_str(&json)?;
         Ok(model)
+    }
+
+    /// Apply activation function
+    #[inline]
+    fn activate(&self, x: f32) -> f32 {
+        match self.activation {
+            InferenceActivation::ReLU => {
+                if x < 0.0 { 0.0 } else { x }
+            }
+            InferenceActivation::Tanh => x.tanh(),
+        }
     }
 
     /// Forward pass: compute action logits and value
@@ -269,11 +323,7 @@ impl InferenceModel {
             for (j, &val) in obs.iter().enumerate() {
                 hidden1[i] += row[j] * val;
             }
-            hidden1[i] += self.shared_fc1_bias[i];
-            // ReLU activation
-            if hidden1[i] < 0.0 {
-                hidden1[i] = 0.0;
-            }
+            hidden1[i] = self.activate(hidden1[i] + self.shared_fc1_bias[i]);
         }
 
         // Layer 2: hidden_dim -> hidden_dim
@@ -282,11 +332,7 @@ impl InferenceModel {
             for (j, &val) in hidden1.iter().enumerate() {
                 hidden2[i] += row[j] * val;
             }
-            hidden2[i] += self.shared_fc2_bias[i];
-            // ReLU activation
-            if hidden2[i] < 0.0 {
-                hidden2[i] = 0.0;
-            }
+            hidden2[i] = self.activate(hidden2[i] + self.shared_fc2_bias[i]);
         }
 
         // Policy head: hidden_dim -> action_dim
@@ -346,6 +392,8 @@ mod tests {
             obs_dim: 2,
             action_dim: 2,
             hidden_dim: 4,
+            activation: InferenceActivation::Tanh,
+            metadata: None,
             shared_fc1_weight: vec![vec![1.0, 0.0]; 4],
             shared_fc1_bias: vec![0.0; 4],
             shared_fc2_weight: vec![vec![1.0, 0.0, 0.0, 0.0]; 4],
@@ -369,6 +417,8 @@ mod tests {
             obs_dim: 2,
             action_dim: 2,
             hidden_dim: 4,
+            activation: InferenceActivation::ReLU,
+            metadata: None,
             shared_fc1_weight: vec![vec![1.0, 0.0]; 4],
             shared_fc1_bias: vec![0.0; 4],
             shared_fc2_weight: vec![vec![1.0, 0.0, 0.0, 0.0]; 4],
@@ -391,6 +441,8 @@ mod tests {
             obs_dim: 4,
             action_dim: 2,
             hidden_dim: 64,
+            activation: InferenceActivation::Tanh,
+            metadata: None,
             shared_fc1_weight: vec![vec![0.0; 4]; 64],
             shared_fc1_bias: vec![0.0; 64],
             shared_fc2_weight: vec![vec![0.0; 64]; 64],
