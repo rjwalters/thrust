@@ -39,5 +39,9 @@ echo
 # Set environment to use PyTorch from pip
 export LIBTORCH_USE_PYTORCH=1
 
+# Set LD_LIBRARY_PATH to include PyTorch lib directory
+TORCH_LIB=$(python3 -c "import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))")
+export LD_LIBRARY_PATH="${TORCH_LIB}:${LD_LIBRARY_PATH}"
+
 # Run the example
 cargo run --example "$EXAMPLE_NAME" --release
