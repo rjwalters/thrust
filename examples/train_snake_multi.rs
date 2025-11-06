@@ -179,7 +179,6 @@ fn main() -> Result<()> {
         }
 
         let mut episode_rewards = Vec::new();
-        let mut episode_lengths = Vec::new();
 
         // Collect rollout
         for step in 0..args.steps_per_rollout {
@@ -334,7 +333,6 @@ fn main() -> Result<()> {
                 // Backward pass
                 opt.zero_grad();
                 loss.backward();
-                nn::clip_grad_norm_(&vs.trainable_variables(), 0.5);
                 opt.step();
             }
         }

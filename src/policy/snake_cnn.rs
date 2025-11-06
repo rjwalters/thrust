@@ -107,7 +107,7 @@ impl SnakeCNN {
             .relu()
             .apply(&self.conv2)
             .relu()
-            .apply(&self.conv2)
+            .apply(&self.conv3)
             .relu();
 
         // Flatten
