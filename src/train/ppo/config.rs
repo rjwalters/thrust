@@ -174,3 +174,72 @@ impl PPOConfig {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = PPOConfig::default();
+        assert!(config.validate().is_ok());
+        assert_eq!(config.learning_rate, 3e-4);
+        assert_eq!(config.n_epochs, 10);
+        assert_eq!(config.batch_size, 64);
+    }
+
+    #[test]
+    fn test_config_validation() {
+        // Valid config should pass
+        let config = PPOConfig::new();
+        assert!(config.validate().is_ok());
+
+        // Invalid learning rate
+        let config = PPOConfig::new().learning_rate(-1.0);
+        assert!(config.validate().is_err());
+
+        // Invalid gamma
+        let config = PPOConfig::new().gamma(1.5);
+        assert!(config.validate().is_err());
+
+        // Invalid n_epochs
+        let config = PPOConfig::new().n_epochs(0);
+        assert!(config.validate().is_err());
+
+        // Invalid batch_size
+        let config = PPOConfig::new().batch_size(0);
+        assert!(config.validate().is_err());
+
+        // Invalid clip_range
+        let config = PPOConfig::new().clip_range(-0.1);
+        assert!(config.validate().is_err());
+
+        // Invalid vf_coef (should allow 0.0)
+        let config = PPOConfig::new().vf_coef(-0.1);
+        assert!(config.validate().is_err());
+
+        // Valid vf_coef = 0.0
+        let config = PPOConfig::new().vf_coef(0.0);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_config_builder() {
+        let config = PPOConfig::new()
+            .learning_rate(1e-3)
+            .n_epochs(5)
+            .batch_size(128)
+            .gamma(0.95)
+            .clip_range(0.1);
+
+        assert_eq!(config.learning_rate, 1e-3);
+        assert_eq!(config.n_epochs, 5);
+        assert_eq!(config.batch_size, 128);
+        assert_eq!(config.gamma, 0.95);
+        assert_eq!(config.clip_range, 0.1);
+
+        // Other values should remain default
+        assert_eq!(config.gae_lambda, 0.95);
+        assert_eq!(config.vf_coef, 0.5);
+    }
+}

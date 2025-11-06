@@ -83,10 +83,7 @@ impl SnakeEnv {
                 reward: 0.0,
                 terminated: true,
                 truncated: false,
-                info: StepInfo {
-                    episode: self.episode,
-                    steps: self.steps,
-                },
+                info: StepInfo::default(),
             };
         }
 
@@ -140,10 +137,7 @@ impl SnakeEnv {
             reward,
             terminated,
             truncated,
-            info: StepInfo {
-                episode: self.episode,
-                steps: self.steps,
-            },
+            info: StepInfo::default(),
         }
     }
 

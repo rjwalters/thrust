@@ -207,3 +207,77 @@ fn compute_gae_single_env(
         Tensor::from_slice(&returns),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tch::Tensor;
+
+    #[test]
+    fn test_compute_policy_loss() {
+        // Test basic policy loss computation
+        let log_probs = Tensor::from_slice(&[0.0, 0.5, -0.5]);
+        let old_log_probs = Tensor::from_slice(&[0.0, 0.0, 0.0]);
+        let advantages = Tensor::from_slice(&[1.0, -1.0, 0.5]);
+        let clip_range = 0.2;
+
+        let (loss, clip_frac, kl) = compute_policy_loss(&log_probs, &old_log_probs, &advantages, clip_range);
+
+        // Loss should be a scalar tensor
+        assert_eq!(loss.size().len(), 0);
+        // Clip fraction and KL should be computed
+        assert!(clip_frac >= 0.0 && clip_frac <= 1.0);
+        assert!(kl >= 0.0); // KL should be non-negative
+    }
+
+    #[test]
+    fn test_compute_value_loss() {
+        // Test value loss computation
+        let values = Tensor::from_slice(&[1.0, 2.0, 0.5]);
+        let old_values = Tensor::from_slice(&[1.0, 1.5, 0.8]);
+        let returns = Tensor::from_slice(&[1.2, 2.1, 0.6]);
+        let clip_range_vf = 0.2;
+
+        let (loss, explained_var) = compute_value_loss(&values, &old_values, &returns, clip_range_vf);
+
+        // Loss should be a scalar tensor
+        assert_eq!(loss.size().len(), 0);
+        // Explained variance should be between 0 and 1
+        assert!(explained_var >= 0.0 && explained_var <= 1.0);
+    }
+
+    #[test]
+    fn test_compute_entropy_loss() {
+        // Test entropy loss computation
+        let entropy = Tensor::from_slice(&[0.5, 1.0, 0.1]);
+
+        let loss = compute_entropy_loss(&entropy);
+
+        // Loss should be a scalar tensor
+        assert_eq!(loss.size().len(), 0);
+
+        // Entropy loss should be negative (since it's -entropy)
+        let loss_val: f32 = loss.into();
+        assert!(loss_val < 0.0);
+    }
+
+    #[test]
+    fn test_generate_minibatch_indices() {
+        let buffer_size = 100;
+        let batch_size = 32;
+
+        let indices = generate_minibatch_indices(buffer_size, batch_size);
+
+        // Should have multiple batches
+        assert!(!indices.is_empty());
+
+        // Each batch should be approximately batch_size
+        for batch in &indices {
+            assert!(batch.len() <= batch_size);
+        }
+
+        // Total samples should cover the buffer
+        let total_samples: usize = indices.iter().map(|b| b.len()).sum();
+        assert_eq!(total_samples, buffer_size);
+    }
+}

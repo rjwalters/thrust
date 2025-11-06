@@ -248,3 +248,75 @@ impl RolloutBatch {
         self.len() == 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_rollout_buffer_creation() {
+        let buffer = RolloutBuffer::new(10, 2, 4);
+
+        assert_eq!(buffer.shape(), (10, 2, 4));
+        assert_eq!(buffer.len(), 20); // 10 steps * 2 envs
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn test_rollout_buffer_add_and_reset() {
+        let mut buffer = RolloutBuffer::new(5, 1, 2);
+
+        // Add some data
+        buffer.add(0, 0, &[1.0, 2.0], 1, 1.5, 0.8, -0.2, false, false);
+        buffer.add(1, 0, &[2.0, 3.0], 0, 2.0, 1.2, -0.1, false, false);
+
+        // Check data was stored
+        assert_eq!(buffer.actions()[0][0], 1);
+        assert_eq!(buffer.rewards()[0][0], 1.5);
+        assert_eq!(buffer.observations()[0][0], vec![1.0, 2.0]);
+
+        // Reset and check advantages/returns are cleared
+        buffer.reset();
+        assert_eq!(buffer.advantages()[0][0], 0.0);
+        assert_eq!(buffer.returns()[0][0], 0.0);
+    }
+
+    #[test]
+    fn test_rollout_batch_from_buffer() {
+        let mut buffer = RolloutBuffer::new(2, 1, 2);
+
+        // Add test data
+        buffer.add(0, 0, &[1.0, 2.0], 1, 1.5, 0.8, -0.2, false, false);
+        buffer.add(1, 0, &[2.0, 3.0], 0, 2.0, 1.2, -0.1, false, false);
+
+        // Set some advantages and returns
+        buffer.advantages_mut()[0][0] = 0.5;
+        buffer.returns_mut()[0][0] = 1.3;
+        buffer.advantages_mut()[1][0] = 0.8;
+        buffer.returns_mut()[1][0] = 2.0;
+
+        let batch = RolloutBatch::from_buffer(&buffer);
+
+        assert_eq!(batch.size(), 2);
+        assert_eq!(batch.actions, vec![1, 0]);
+        assert_eq!(batch.advantages, vec![0.5, 0.8]);
+        assert_eq!(batch.returns, vec![1.3, 2.0]);
+        assert_eq!(batch.observations, vec![1.0, 2.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_rollout_batch_properties() {
+        let batch = RolloutBatch {
+            observations: vec![1.0, 2.0, 3.0, 4.0],
+            actions: vec![0, 1],
+            old_log_probs: vec![-0.1, -0.2],
+            old_values: vec![0.5, 0.8],
+            advantages: vec![0.3, 0.6],
+            returns: vec![1.0, 1.5],
+        };
+
+        assert_eq!(batch.size(), 2);
+        assert_eq!(batch.obs_shape(), (2, 2)); // 2 samples, 2 obs dims each
+        assert!(!batch.is_empty());
+    }
+}

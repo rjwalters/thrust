@@ -136,3 +136,103 @@ impl Food {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_snake_creation() {
+        let pos = Position::new(5, 5);
+        let snake = Snake::new(0, pos, Direction::Right);
+
+        assert_eq!(snake.id, 0);
+        assert_eq!(snake.head, pos);
+        assert_eq!(snake.direction, Direction::Right);
+        assert_eq!(snake.length, 1);
+        assert_eq!(snake.body.len(), 1);
+        assert!(snake.is_alive());
+    }
+
+    #[test]
+    fn test_snake_movement() {
+        let start_pos = Position::new(5, 5);
+        let mut snake = Snake::new(0, start_pos, Direction::Right);
+
+        snake.move_forward();
+        assert_eq!(snake.head, Position::new(6, 5));
+        assert_eq!(snake.body.len(), 1); // Tail removed since not growing
+
+        snake.grow();
+        snake.move_forward();
+        assert_eq!(snake.head, Position::new(7, 5));
+        assert_eq!(snake.body.len(), 2); // Body grew
+        assert_eq!(snake.length, 2);
+    }
+
+    #[test]
+    fn test_snake_direction_change() {
+        let mut snake = Snake::new(0, Position::new(5, 5), Direction::Right);
+
+        // Valid direction change
+        snake.change_direction(Direction::Down);
+        assert_eq!(snake.direction, Direction::Down);
+
+        // Invalid direction change (immediate reversal should be ignored)
+        snake.change_direction(Direction::Up);
+        assert_eq!(snake.direction, Direction::Down); // Should remain Down
+    }
+
+    #[test]
+    fn test_snake_collision_detection() {
+        let mut snake = Snake::new(0, Position::new(1, 1), Direction::Right);
+        snake.grow();
+        snake.move_forward(); // Now at (2,1) with body at (1,1)
+
+        // Wall collision
+        assert!(snake.collides_with_wall(3, 3)); // Grid is 3x3 (0-2)
+
+        // Self collision - move to create collision
+        let mut snake2 = Snake::new(0, Position::new(5, 5), Direction::Right);
+        snake2.grow();
+        snake2.move_forward();
+        snake2.change_direction(Direction::Down);
+        snake2.move_forward();
+        snake2.change_direction(Direction::Left);
+        snake2.move_forward();
+        // Now should be colliding with itself
+        assert!(snake2.collides_with_self());
+    }
+
+    #[test]
+    fn test_snake_food_eating() {
+        let snake_pos = Position::new(5, 5);
+        let food_pos = Position::new(5, 5);
+        let snake = Snake::new(0, snake_pos, Direction::Right);
+
+        assert!(snake.eats_food(&food_pos));
+
+        let food_pos2 = Position::new(6, 5);
+        assert!(!snake.eats_food(&food_pos2));
+    }
+
+    #[test]
+    fn test_food_generation() {
+        let mut rng = rand::thread_rng();
+        let snakes = vec![
+            Snake::new(0, Position::new(0, 0), Direction::Right),
+            Snake::new(1, Position::new(2, 2), Direction::Right),
+        ];
+
+        let food = Food::generate_random(5, 5, &snakes, &mut rng);
+        let food_pos = food.position;
+
+        // Food should be within bounds
+        assert!(food_pos.in_bounds(5, 5));
+
+        // Food should not be on any snake
+        for snake in &snakes {
+            assert!(!snake.get_all_positions().contains(&food_pos));
+        }
+    }
+}

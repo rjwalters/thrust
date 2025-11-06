@@ -36,46 +36,32 @@ impl WasmCartPole {
     /// Reset the environment and start a new episode
     #[wasm_bindgen]
     pub fn reset(&mut self) -> Vec<f32> {
-        match self.env.reset() {
-            Ok(obs) => {
-                self.episode += 1;
-                obs
-            }
-            Err(e) => {
-                web_sys::console::error_1(&format!("Reset error: {}", e).into());
-                vec![0.0; 4]
-            }
-        }
+        self.env.reset();
+        self.episode += 1;
+        self.env.get_state().to_vec()
     }
 
     /// Take a step in the environment
     /// Returns: [obs0, obs1, obs2, obs3, reward, terminated, truncated]
     #[wasm_bindgen]
     pub fn step(&mut self, action: i64) -> Vec<f32> {
-        match self.env.step(action) {
-            Ok(result) => {
-                self.total_steps += 1;
+        let result = self.env.step(action);
+        self.total_steps += 1;
 
-                let mut output = result.observation.clone();
-                output.push(result.reward);
-                output.push(if result.terminated { 1.0 } else { 0.0 });
-                output.push(if result.truncated { 1.0 } else { 0.0 });
+        let mut output = result.observation.clone();
+        output.push(result.reward);
+        output.push(if result.terminated { 1.0 } else { 0.0 });
+        output.push(if result.truncated { 1.0 } else { 0.0 });
 
-                // Update best score if episode ended
-                if result.terminated || result.truncated {
-                    let episode_steps = self.total_steps;
-                    if episode_steps > self.best_score {
-                        self.best_score = episode_steps;
-                    }
-                }
-
-                output
-            }
-            Err(e) => {
-                web_sys::console::error_1(&format!("Step error: {}", e).into());
-                vec![0.0; 7]
+        // Update best score if episode ended
+        if result.terminated || result.truncated {
+            let episode_steps = self.total_steps;
+            if episode_steps > self.best_score {
+                self.best_score = episode_steps;
             }
         }
+
+        output
     }
 
     /// Get current episode number

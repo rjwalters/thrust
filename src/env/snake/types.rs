@@ -104,3 +104,81 @@ impl GameState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_direction_from_action() {
+        assert_eq!(Direction::from_action(0), Direction::Up);
+        assert_eq!(Direction::from_action(1), Direction::Down);
+        assert_eq!(Direction::from_action(2), Direction::Left);
+        assert_eq!(Direction::from_action(3), Direction::Right);
+        assert_eq!(Direction::from_action(4), Direction::Right); // Out of bounds
+    }
+
+    #[test]
+    fn test_direction_to_delta() {
+        assert_eq!(Direction::Up.to_delta(), (0, -1));
+        assert_eq!(Direction::Down.to_delta(), (0, 1));
+        assert_eq!(Direction::Left.to_delta(), (-1, 0));
+        assert_eq!(Direction::Right.to_delta(), (1, 0));
+    }
+
+    #[test]
+    fn test_direction_opposite() {
+        assert_eq!(Direction::Up.opposite(), Direction::Down);
+        assert_eq!(Direction::Down.opposite(), Direction::Up);
+        assert_eq!(Direction::Left.opposite(), Direction::Right);
+        assert_eq!(Direction::Right.opposite(), Direction::Left);
+    }
+
+    #[test]
+    fn test_position_new() {
+        let pos = Position::new(5, 10);
+        assert_eq!(pos.x, 5);
+        assert_eq!(pos.y, 10);
+    }
+
+    #[test]
+    fn test_position_add_direction() {
+        let pos = Position::new(5, 5);
+
+        assert_eq!(pos.add_direction(Direction::Up), Position::new(5, 4));
+        assert_eq!(pos.add_direction(Direction::Down), Position::new(5, 6));
+        assert_eq!(pos.add_direction(Direction::Left), Position::new(4, 5));
+        assert_eq!(pos.add_direction(Direction::Right), Position::new(6, 5));
+    }
+
+    #[test]
+    fn test_position_in_bounds() {
+        let pos = Position::new(5, 5);
+
+        assert!(pos.in_bounds(10, 10));
+        assert!(!pos.in_bounds(5, 10)); // x = 5, width = 5 (0-4)
+        assert!(!pos.in_bounds(10, 5)); // y = 5, height = 5 (0-4)
+    }
+
+    #[test]
+    fn test_position_manhattan_distance() {
+        let pos1 = Position::new(0, 0);
+        let pos2 = Position::new(3, 4);
+
+        assert_eq!(pos1.manhattan_distance(&pos2), 7);
+        assert_eq!(pos2.manhattan_distance(&pos1), 7);
+    }
+
+    #[test]
+    fn test_game_state_creation() {
+        let state = GameState::new(5, 5, 2);
+
+        assert_eq!(state.grid.len(), 5);
+        assert_eq!(state.grid[0].len(), 5);
+        assert_eq!(state.scores.len(), 2);
+        assert_eq!(state.active_agents.len(), 2);
+        assert!(state.active_agents.iter().all(|&x| x)); // All should be true
+        assert_eq!(state.episode, 0);
+        assert_eq!(state.steps, 0);
+    }
+}
