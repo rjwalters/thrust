@@ -1,0 +1,16 @@
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[target.x86_64-apple-darwin]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[build]
+# Use all available CPU cores for parallel compilation
+jobs = 8
+
+[alias]
+# Convenient aliases for common commands
+check-all = "check --all-targets --all-features"
+test-all = "test --all-targets --all-features"
+clippy-all = "clippy --all-targets --all-features -- -D warnings"

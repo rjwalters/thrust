@@ -1,0 +1,12 @@
+# Clippy configuration for Thrust
+# See: https://rust-lang.github.io/rust-clippy/master/index.html
+
+# Performance lints
+too-many-arguments-threshold = 8
+type-complexity-threshold = 250
+
+# Style preferences
+single-char-binding-names-threshold = 5
+
+# Allow some common patterns that clippy warns about
+# but are idiomatic in RL code

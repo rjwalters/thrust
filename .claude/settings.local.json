@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make check:*)",
+      "Bash(make test:*)",
+      "Bash(make clippy:*)",
+      "Bash(make ci:*)",
+      "Bash(make fmt:*)",
+      "WebSearch",
+      "Bash(cargo check:*)",
+      "Bash(cargo update:*)",
+      "Bash(brew install:*)",
+      "Bash(export LIBTORCH_USE_PYTORCH=1)",
+      "Bash(echo:*)",
+      "Bash(LIBTORCH_USE_PYTORCH=1 cargo check:*)",
+      "Bash(brew --prefix:*)",
+      "Bash(LIBTORCH=/Users/rwalters/GitHub/thrust/libtorch DYLD_LIBRARY_PATH=/Users/rwalters/GitHub/thrust/libtorch/lib cargo check:*)",
+      "Bash(rustup install:*)",
+      "Bash(rustup default:*)",
+      "Bash(LIBTORCH=/Users/rwalters/GitHub/thrust/libtorch DYLD_LIBRARY_PATH=/Users/rwalters/GitHub/thrust/libtorch/lib cargo test:*)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(LIBTORCH=/Users/rwalters/GitHub/thrust/libtorch DYLD_LIBRARY_PATH=/Users/rwalters/GitHub/thrust/libtorch/lib cargo +nightly test:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(LIBTORCH=/Users/rwalters/GitHub/thrust/libtorch DYLD_LIBRARY_PATH=/Users/rwalters/GitHub/thrust/libtorch/lib cargo +nightly clippy:*)",
+      "Bash(find:*)",
+      "Bash(LIBTORCH=/Users/rwalters/GitHub/thrust/libtorch DYLD_LIBRARY_PATH=/Users/rwalters/GitHub/thrust/libtorch/lib cargo +nightly build:*)",
+      "Bash(LIBTORCH=/Users/rwalters/GitHub/thrust/libtorch DYLD_LIBRARY_PATH=/Users/rwalters/GitHub/thrust/libtorch/lib cargo +nightly run:*)",
+      "Bash(chmod:*)",
+      "Bash(tee:*)",
+      "Bash(cat:*)",
+      "Bash(ssh rwalters-sandbox-2:*)",
+      "Bash(rsync:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
