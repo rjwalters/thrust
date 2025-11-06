@@ -53,7 +53,10 @@
       "Bash(gh run list:*)",
       "Bash(gh run view:*)",
       "WebFetch(domain:rjwalters.github.io)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(pnpm exec playwright test:*)",
+      "Bash(gh run watch:*)",
+      "Bash(SKIP_DEV_SERVER=1 pnpm exec playwright test:*)"
     ],
     "deny": [],
     "ask": []

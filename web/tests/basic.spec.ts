@@ -1,39 +1,56 @@
 import { expect, test } from '@playwright/test';
 
 test('homepage has title', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('http://localhost:5173/thrust/');
 
   // Expect a title "to contain" a substring.
   await expect(page).toHaveTitle(/Thrust RL/);
 });
 
 test('homepage has heading', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('http://localhost:5173/thrust/');
 
   // Check if the page has the main heading
   await expect(page.getByText('Thrust RL')).toBeVisible();
 });
 
-test('navigation to cartpole page', async ({ page }) => {
-  await page.goto('/');
+test('homepage displays game cards', async ({ page }) => {
+  await page.goto('http://localhost:5173/thrust/');
 
-  // Click on a link that navigates to cartpole
-  // Adjust selector based on your actual navigation
-  const cartpoleLink = page.locator('a[href="/cartpole"]').first();
-  if (await cartpoleLink.isVisible()) {
-    await cartpoleLink.click();
-    await expect(page).toHaveURL(/.*cartpole/);
-  }
+  // Check that both game cards are visible
+  await expect(page.getByText('CartPole 3D')).toBeVisible();
+  await expect(page.getByText('Multi-Agent Snake')).toBeVisible();
+
+  // Check game descriptions
+  await expect(page.getByText(/Classic control problem/)).toBeVisible();
+  await expect(page.getByText(/AI agents competing in Snake/)).toBeVisible();
+});
+
+test('homepage has github link', async ({ page }) => {
+  await page.goto('http://localhost:5173/thrust/');
+
+  // Check for GitHub link
+  await expect(page.getByText('View on GitHub')).toBeVisible();
+});
+
+test('navigation to cartpole page', async ({ page }) => {
+  await page.goto('http://localhost:5173/thrust/');
+
+  // Click on CartPole 3D card
+  await page.getByText('CartPole 3D').click();
+  await expect(page).toHaveURL('http://localhost:5173/thrust/cartpole');
+
+  // Verify we're on the CartPole page
+  await expect(page.getByText('CartPole 3D')).toBeVisible();
 });
 
 test('navigation to snake page', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('http://localhost:5173/thrust/');
 
-  // Click on a link that navigates to snake
-  // Adjust selector based on your actual navigation
-  const snakeLink = page.locator('a[href="/snake"]').first();
-  if (await snakeLink.isVisible()) {
-    await snakeLink.click();
-    await expect(page).toHaveURL(/.*snake/);
-  }
+  // Click on Multi-Agent Snake card
+  await page.getByText('Multi-Agent Snake').click();
+  await expect(page).toHaveURL('http://localhost:5173/thrust/snake');
+
+  // Verify we're on the Snake page
+  await expect(page.getByText('Multi-Agent Snake')).toBeVisible();
 });

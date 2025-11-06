@@ -18,8 +18,8 @@ export default defineConfig({
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('/')`. */
-    /* App is configured to run at /thrust/ subdirectory */
-    baseURL: 'http://localhost:5173/thrust',
+    /* App is configured to run at /thrust/ subdirectory - baseURL handled by webServer */
+    // baseURL: 'http://localhost:5173/thrust',
 
     /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
     trace: 'on-first-retry',

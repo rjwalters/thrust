@@ -50,6 +50,9 @@ The Playwright configuration is in `playwright.config.ts`. It includes:
 Tests are located in the `tests/` directory. Current tests include:
 
 - `basic.spec.ts` - Basic functionality tests for homepage and navigation
+- `cartpole.spec.ts` - Tests for CartPole game page loading and structure
+- `snake.spec.ts` - Tests for Snake game page loading and structure
+- `production.spec.ts` - Tests for production deployment verification
 
 ## Writing Tests
 
