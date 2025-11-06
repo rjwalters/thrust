@@ -46,7 +46,12 @@
       "Bash(pnpm dev)",
       "Bash(pnpm build:*)",
       "Bash(pnpm ls:*)",
-      "Bash(gh repo create:*)"
+      "Bash(gh repo create:*)",
+      "Bash(git push:*)",
+      "Bash(gh api:*)",
+      "Bash(gh workflow:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)"
     ],
     "deny": [],
     "ask": []

@@ -154,9 +154,112 @@ impl MlpPolicy {
         self.vs.unfreeze();
     }
 
-    // TODO: Add export_for_inference() method
-    // This will extract weights from tch tensors and convert to pure Rust format
-    // for WASM inference. Requires handling tch-rs API differences between versions.
+    /// Export model weights for WASM inference
+    ///
+    /// Extracts all weights and biases from the PyTorch model and converts them
+    /// to a pure Rust format that can be used in WebAssembly.
+    pub fn export_for_inference(&self) -> crate::policy::inference::InferenceModel {
+        use tch::Tensor;
+
+        // Helper function to convert a 2D tensor to Vec<Vec<f32>>
+        fn tensor_to_2d(tensor: &Tensor) -> Vec<Vec<f32>> {
+            let size = tensor.size();
+            assert_eq!(size.len(), 2, "Expected 2D tensor");
+            let rows = size[0] as usize;
+            let cols = size[1] as usize;
+
+            let flat: Vec<f32> = Vec::try_from(tensor.to_kind(Kind::Float).to_device(Device::Cpu))
+                .expect("Failed to convert tensor");
+
+            let mut result = Vec::with_capacity(rows);
+            for i in 0..rows {
+                result.push(flat[i * cols..(i + 1) * cols].to_vec());
+            }
+            result
+        }
+
+        // Helper function to convert a 1D tensor to Vec<f32>
+        fn tensor_to_1d(tensor: &Tensor) -> Vec<f32> {
+            Vec::try_from(tensor.to_kind(Kind::Float).to_device(Device::Cpu))
+                .expect("Failed to convert tensor")
+        }
+
+        // Get the variable store's named variables
+        let variables = self.vs.variables();
+
+        // Extract dimensions
+        let obs_dim = variables
+            .get("shared.fc1.weight")
+            .expect("Missing shared.fc1.weight")
+            .size()[1] as usize;
+        let hidden_dim = variables
+            .get("shared.fc1.weight")
+            .expect("Missing shared.fc1.weight")
+            .size()[0] as usize;
+        let action_dim = variables
+            .get("policy.weight")
+            .expect("Missing policy.weight")
+            .size()[0] as usize;
+
+        // Extract weights - note: PyTorch stores linear weights transposed
+        let shared_fc1_weight = tensor_to_2d(
+            variables
+                .get("shared.fc1.weight")
+                .expect("Missing shared.fc1.weight"),
+        );
+        let shared_fc1_bias = tensor_to_1d(
+            variables
+                .get("shared.fc1.bias")
+                .expect("Missing shared.fc1.bias"),
+        );
+
+        let shared_fc2_weight = tensor_to_2d(
+            variables
+                .get("shared.fc2.weight")
+                .expect("Missing shared.fc2.weight"),
+        );
+        let shared_fc2_bias = tensor_to_1d(
+            variables
+                .get("shared.fc2.bias")
+                .expect("Missing shared.fc2.bias"),
+        );
+
+        let policy_weight = tensor_to_2d(
+            variables
+                .get("policy.weight")
+                .expect("Missing policy.weight"),
+        );
+        let policy_bias = tensor_to_1d(
+            variables
+                .get("policy.bias")
+                .expect("Missing policy.bias"),
+        );
+
+        let value_weight = tensor_to_2d(
+            variables
+                .get("value.weight")
+                .expect("Missing value.weight"),
+        );
+        let value_bias = tensor_to_1d(
+            variables
+                .get("value.bias")
+                .expect("Missing value.bias"),
+        );
+
+        crate::policy::inference::InferenceModel {
+            obs_dim,
+            action_dim,
+            hidden_dim,
+            shared_fc1_weight,
+            shared_fc1_bias,
+            shared_fc2_weight,
+            shared_fc2_bias,
+            policy_weight,
+            policy_bias,
+            value_weight,
+            value_bias,
+        }
+    }
 }
 
 #[cfg(test)]

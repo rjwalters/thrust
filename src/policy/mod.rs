@@ -3,4 +3,5 @@
 //! This module provides policy implementations using tch-rs for neural
 //! networks.
 
+pub mod inference;
 pub mod mlp;
