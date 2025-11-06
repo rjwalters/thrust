@@ -2,6 +2,16 @@
 //!
 //! This example demonstrates training 4 snakes to compete for food using
 //! a CNN policy network and PPO reinforcement learning.
+//!
+//! # Usage
+//!
+//! ```bash
+//! # Train on CPU
+//! cargo run --example train_snake_multi --release
+//!
+//! # Train on GPU
+//! cargo run --example train_snake_multi --release -- --cuda
+//! ```
 
 use anyhow::Result;
 use std::path::PathBuf;
@@ -130,7 +140,16 @@ fn compute_advantages(
 }
 
 fn main() -> Result<()> {
-    let args = Args::default();
+    let mut args = Args::default();
+
+    // Parse command-line arguments
+    for arg in std::env::args().skip(1) {
+        match arg.as_str() {
+            "--cuda" => args.cuda = true,
+            "--cpu" => args.cuda = false,
+            _ => eprintln!("Unknown argument: {}", arg),
+        }
+    }
 
     // Setup device
     let device = if args.cuda && tch::Cuda::is_available() {
