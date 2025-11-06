@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     let action_space = env.action_space();
 
     let obs_dim = obs_space.shape[0] as i64;
-    let action_dim = match action_space.dtype {
+    let action_dim = match action_space.space_type {
         thrust_rl::env::SpaceType::Discrete(n) => n as i64,
         _ => panic!("Expected discrete action space"),
     };
@@ -113,7 +113,7 @@ fn main() -> Result<()> {
                 buffer.add(
                     step,
                     env_id,
-                    observations[env_id].clone(),
+                    &observations[env_id],
                     actions_vec[env_id],
                     results[env_id].reward,
                     values_vec[env_id],
@@ -149,18 +149,17 @@ fn main() -> Result<()> {
         // Get training batch
         let batch = buffer.get_batch();
 
-        // Convert to tensors
-        let obs_flat: Vec<f32> = batch.observations.iter().flatten().copied().collect();
-        let batch_size = batch.observations.len();
+        // Convert to tensors (batch.observations is already flattened)
+        let batch_size = batch.observations.len() / obs_dim as usize;
 
-        let obs_tensor = tch::Tensor::from_slice(&obs_flat)
+        let obs_tensor = tch::Tensor::from_slice(&batch.observations)
             .reshape([batch_size as i64, obs_dim])
             .to_device(device);
         let actions_tensor = tch::Tensor::from_slice(&batch.actions)
             .to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.log_probs)
+        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs)
             .to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.values)
+        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values)
             .to_device(device);
         let advantages_tensor = tch::Tensor::from_slice(&batch.advantages)
             .to_device(device);
