@@ -48,6 +48,10 @@ export LIBTORCH_USE_PYTORCH=1
 TORCH_LIB=$(python3 -c "import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))")
 export LD_LIBRARY_PATH="${TORCH_LIB}:${LD_LIBRARY_PATH}"
 
+# CRITICAL: Preload CUDA libraries to ensure they're loaded at runtime
+# The linker drops these as "unused" even with --no-as-needed, so we force-load them
+export LD_PRELOAD="${TORCH_LIB}/libtorch_cuda.so:${TORCH_LIB}/libtorch.so"
+
 # CRITICAL: Force linker to keep CUDA library dependency
 # Without this, the linker removes libtorch_cuda.so as "unused" even though it's needed at runtime
 export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
@@ -56,5 +60,5 @@ export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
 echo "Building with CUDA support..."
 cargo build --example "$EXAMPLE_NAME" --release
 
-# Run the example
+# Run the example with CUDA libraries preloaded
 cargo run --example "$EXAMPLE_NAME" --release
