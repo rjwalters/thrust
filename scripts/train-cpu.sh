@@ -17,6 +17,11 @@ if [ -d "venv" ]; then
     source venv/bin/activate
 fi
 
+# Source cargo environment if available
+if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+fi
+
 # Set environment to use PyTorch from pip
 export LIBTORCH_USE_PYTORCH=1
 

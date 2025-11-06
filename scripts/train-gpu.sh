@@ -24,6 +24,11 @@ else
     echo "⚠️  Warning: venv not found - run ./scripts/setup-libtorch.sh first"
 fi
 
+# Source cargo environment if available
+if [ -f "$HOME/.cargo/env" ]; then
+    source "$HOME/.cargo/env"
+fi
+
 # Verify CUDA is available in PyTorch
 CUDA_CHECK=$(python3 -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "false")
 if [ "$CUDA_CHECK" != "True" ]; then
