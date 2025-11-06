@@ -209,10 +209,18 @@ fn main() -> Result<()> {
     let avg_steps = trainer.total_steps() as f64 / trainer.total_episodes() as f64;
     tracing::info!("Average steps per episode: {:.1}", avg_steps);
 
-    // Save model
+    // Save model in PyTorch format
     let save_path = "cartpole_model_best.pt";
     policy.save(save_path)?;
     tracing::info!("💾 Model saved to {}", save_path);
+
+    // Export model to JSON for web demo (bypasses PyTorch loading issues)
+    tracing::info!("🔄 Exporting model to JSON for web...");
+    let exported_model = policy.export_for_inference();
+    let json_path = "cartpole_model_best.json";
+    exported_model.save_json(json_path)?;
+    tracing::info!("✅ Model exported to {}", json_path);
+    tracing::info!("📦 File size: {} bytes", std::fs::metadata(json_path)?.len());
 
     Ok(())
 }
