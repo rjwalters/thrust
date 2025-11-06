@@ -120,9 +120,9 @@ impl WasmSnake {
     /// Step the environment with a single action
     /// action: 0 = up, 1 = down, 2 = left, 3 = right
     #[wasm_bindgen]
-    pub fn step(&mut self, action: i64) {
+    pub fn step(&mut self, action: i32) {
         use crate::env::Environment;
-        let _ = self.env.step(action);
+        let _ = self.env.step(action as i64);
     }
 
     /// Get observation for a specific agent
