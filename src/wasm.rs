@@ -44,8 +44,8 @@ impl WasmCartPole {
     /// Take a step in the environment
     /// Returns: [obs0, obs1, obs2, obs3, reward, terminated, truncated]
     #[wasm_bindgen]
-    pub fn step(&mut self, action: i64) -> Vec<f32> {
-        let result = self.env.step(action);
+    pub fn step(&mut self, action: i32) -> Vec<f32> {
+        let result = self.env.step(action as i64);
         self.total_steps += 1;
 
         let mut output = result.observation.clone();
