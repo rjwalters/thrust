@@ -59,7 +59,9 @@
       "Bash(SKIP_DEV_SERVER=1 pnpm exec playwright test:*)",
       "Bash(pnpm list:*)",
       "Bash(git log:*)",
-      "Bash(git rev-parse:*)"
+      "Bash(git rev-parse:*)",
+      "Bash(git reset:*)",
+      "Bash(git pull:*)"
     ],
     "deny": [],
     "ask": []
