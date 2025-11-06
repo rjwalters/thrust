@@ -50,6 +50,22 @@ export function useSnake(): UseSnakeResult {
 					envRef.current = new wasm.WasmSnake(GRID_WIDTH, GRID_HEIGHT, NUM_AGENTS);
 					envRef.current.reset();
 
+					// Load policy from JSON
+					try {
+						console.log("[Snake] Loading policy model...");
+						const response = await fetch("/snake_model.json");
+						if (response.ok) {
+							const policyJson = await response.text();
+							console.log(`[Snake] Policy JSON loaded (${policyJson.length} bytes)`);
+							envRef.current.load_policy_json(policyJson);
+							console.log("[Snake] Policy loaded successfully");
+						} else {
+							console.warn("[Snake] Policy model not found, using random actions");
+						}
+					} catch (error) {
+						console.warn("[Snake] Failed to load policy:", error);
+					}
+
 					// Initialize state
 					setState({
 						width: GRID_WIDTH,
@@ -93,11 +109,18 @@ export function useSnake(): UseSnakeResult {
 			if (elapsed >= targetFrameTime) {
 				lastFrameTimeRef.current = currentTime;
 
-				// Generate random actions for all agents
+				// Generate actions for all agents
 				// 0: up, 1: down, 2: left, 3: right
 				const actions = new Int32Array(NUM_AGENTS);
 				for (let i = 0; i < NUM_AGENTS; i++) {
-					actions[i] = Math.floor(Math.random() * 4);
+					if (envRef.current.has_policy()) {
+						// Use trained policy
+						const action = envRef.current.get_policy_action(i);
+						actions[i] = action >= 0 ? action : Math.floor(Math.random() * 4);
+					} else {
+						// Fall back to random actions if no policy loaded
+						actions[i] = Math.floor(Math.random() * 4);
+					}
 				}
 
 				// Step environment with all actions

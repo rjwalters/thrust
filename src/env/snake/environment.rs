@@ -251,27 +251,35 @@ impl SnakeEnv {
 
         // Channel 0: Own snake body
         for pos in &own_snake.body {
-            let idx = (pos.y as usize) * (self.width as usize) + (pos.x as usize);
-            obs[idx] = 1.0;
+            if pos.x >= 0 && pos.x < self.width && pos.y >= 0 && pos.y < self.height {
+                let idx = (pos.y as usize) * (self.width as usize) + (pos.x as usize);
+                obs[idx] = 1.0;
+            }
         }
 
         // Channel 1: Own snake head
-        let head_idx = (own_snake.head.y as usize) * (self.width as usize) + (own_snake.head.x as usize);
-        obs[grid_size + head_idx] = 1.0;
+        if own_snake.head.x >= 0 && own_snake.head.x < self.width && own_snake.head.y >= 0 && own_snake.head.y < self.height {
+            let head_idx = (own_snake.head.y as usize) * (self.width as usize) + (own_snake.head.x as usize);
+            obs[grid_size + head_idx] = 1.0;
+        }
 
         // Channel 2: Other snakes
         for (id, snake) in self.snakes.iter().enumerate() {
             if id != snake_id {
                 for pos in &snake.body {
-                    let idx = 2 * grid_size + (pos.y as usize) * (self.width as usize) + (pos.x as usize);
-                    obs[idx] = 1.0;
+                    if pos.x >= 0 && pos.x < self.width && pos.y >= 0 && pos.y < self.height {
+                        let idx = 2 * grid_size + (pos.y as usize) * (self.width as usize) + (pos.x as usize);
+                        obs[idx] = 1.0;
+                    }
                 }
             }
         }
 
         // Channel 3: Food
-        let food_idx = 3 * grid_size + (self.food.y as usize) * (self.width as usize) + (self.food.x as usize);
-        obs[food_idx] = 1.0;
+        if self.food.x >= 0 && self.food.x < self.width && self.food.y >= 0 && self.food.y < self.height {
+            let food_idx = 3 * grid_size + (self.food.y as usize) * (self.width as usize) + (self.food.x as usize);
+            obs[food_idx] = 1.0;
+        }
 
         // Channel 4: Walls (boundaries)
         // Top and bottom walls

@@ -20,6 +20,9 @@ export interface WasmSnake {
 	get_snake_positions(): Int32Array;
 	get_food_positions(): Int32Array;
 	get_episode(): number;
+	load_policy_json(json: string): void;
+	get_policy_action(agentId: number): number;
+	has_policy(): boolean;
 }
 
 export interface WasmModule {

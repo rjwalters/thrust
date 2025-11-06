@@ -6,6 +6,7 @@
 
 pub mod nn;
 pub mod weights;
+pub mod snake;
 
 use serde::{Deserialize, Serialize};
 

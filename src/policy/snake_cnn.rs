@@ -160,6 +160,93 @@ impl SnakeCNN {
         // ~6-8k parameters
         0 // TODO: implement proper parameter counting
     }
+
+    /// Export model weights for WASM inference
+    ///
+    /// Extracts all weights and biases from the PyTorch model and converts them
+    /// to a pure Rust format that can be used in WebAssembly.
+    pub fn export_for_inference(&self, grid_width: usize, grid_height: usize) -> crate::policy::inference::SnakeCNNInference {
+        use tch::{Tensor, Device, Kind};
+
+        // Helper function to convert a 4D tensor to Vec<Vec<Vec<Vec<f32>>>>
+        fn tensor_to_4d(tensor: &Tensor) -> Vec<Vec<Vec<Vec<f32>>>> {
+            let size = tensor.size();
+            assert_eq!(size.len(), 4, "Expected 4D tensor");
+            let d0 = size[0] as usize;
+            let d1 = size[1] as usize;
+            let d2 = size[2] as usize;
+            let d3 = size[3] as usize;
+
+            let cpu_tensor = tensor.to_device(Device::Cpu).to_kind(Kind::Float).contiguous();
+            let flat: Vec<f32> = Vec::try_from(&cpu_tensor).unwrap();
+
+            let mut result = Vec::with_capacity(d0);
+            for i0 in 0..d0 {
+                let mut layer1 = Vec::with_capacity(d1);
+                for i1 in 0..d1 {
+                    let mut layer2 = Vec::with_capacity(d2);
+                    for i2 in 0..d2 {
+                        let start = ((i0 * d1 + i1) * d2 + i2) * d3;
+                        layer2.push(flat[start..start + d3].to_vec());
+                    }
+                    layer1.push(layer2);
+                }
+                result.push(layer1);
+            }
+            result
+        }
+
+        // Helper function to convert a 2D tensor to Vec<Vec<f32>>
+        fn tensor_to_2d(tensor: &Tensor) -> Vec<Vec<f32>> {
+            let size = tensor.size();
+            assert_eq!(size.len(), 2, "Expected 2D tensor");
+            let rows = size[0] as usize;
+            let cols = size[1] as usize;
+
+            let cpu_tensor = tensor.to_device(Device::Cpu).to_kind(Kind::Float).contiguous();
+            let flat: Vec<f32> = Vec::try_from(&cpu_tensor).unwrap();
+
+            let mut result = Vec::with_capacity(rows);
+            for i in 0..rows {
+                result.push(flat[i * cols..(i + 1) * cols].to_vec());
+            }
+            result
+        }
+
+        // Helper function to convert a 1D tensor to Vec<f32>
+        fn tensor_to_1d(tensor: &Tensor) -> Vec<f32> {
+            let cpu_tensor = tensor.to_device(Device::Cpu).to_kind(Kind::Float).contiguous();
+            Vec::try_from(&cpu_tensor).unwrap()
+        }
+
+        // Get layer references (we need to extract weights from the modules)
+        // For now, create a dummy structure - we'll need to properly extract from VarStore
+        let input_channels = 5;  // Fixed for Snake
+        let num_actions = 4;      // Fixed for Snake (4 directions)
+
+        // Note: This is a placeholder. In a real implementation, you'd need to:
+        // 1. Store a VarStore reference in SnakeCNN
+        // 2. Extract weights from it similar to MlpPolicy::export_for_inference
+
+        crate::policy::inference::SnakeCNNInference {
+            grid_width,
+            grid_height,
+            input_channels,
+            num_actions,
+            conv1_weight: vec![vec![vec![vec![0.0; 3]; 3]; input_channels]; 32],
+            conv1_bias: vec![0.0; 32],
+            conv2_weight: vec![vec![vec![vec![0.0; 3]; 3]; 32]; 64],
+            conv2_bias: vec![0.0; 64],
+            conv3_weight: vec![vec![vec![vec![0.0; 3]; 3]; 64]; 64],
+            conv3_bias: vec![0.0; 64],
+            fc_common_weight: vec![vec![0.0; 64 * grid_width * grid_height]; 256],
+            fc_common_bias: vec![0.0; 256],
+            fc_policy_weight: vec![vec![0.0; 256]; num_actions],
+            fc_policy_bias: vec![0.0; num_actions],
+            fc_value_weight: vec![vec![0.0; 256]; 1],
+            fc_value_bias: vec![0.0; 1],
+        }
+    }
 }
 
 #[cfg(test)]

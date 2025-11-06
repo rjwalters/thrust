@@ -101,6 +101,7 @@ impl WasmCartPole {
 pub struct WasmSnake {
     env: SnakeEnv,
     episode: u32,
+    policy: Option<crate::inference::snake::SnakeCNNInference>,
 }
 
 #[cfg(feature = "wasm")]
@@ -112,6 +113,7 @@ impl WasmSnake {
         Self {
             env: SnakeEnv::new_multi(width, height, num_agents),
             episode: 0,
+            policy: None,
         }
     }
 
@@ -130,11 +132,16 @@ impl WasmSnake {
         let _ = self.env.step_multi(&actions_i64);
     }
 
-    /// Get observation for a specific agent
+    /// Get grid observation for a specific agent
+    /// Returns flattened grid [channels * height * width] where:
+    /// - Channel 0: Own snake body
+    /// - Channel 1: Own snake head
+    /// - Channel 2: Other snakes
+    /// - Channel 3: Food
+    /// - Channel 4: Walls
     #[wasm_bindgen]
-    pub fn get_observation(&self, _agent_id: usize) -> Vec<f32> {
-        // For now, return empty - we'll implement per-agent observations later
-        vec![]
+    pub fn get_observation(&self, agent_id: usize) -> Vec<f32> {
+        self.env.get_grid_observation(agent_id)
     }
 
     /// Get number of agents
@@ -192,6 +199,36 @@ impl WasmSnake {
     #[wasm_bindgen]
     pub fn get_episode(&self) -> u32 {
         self.episode
+    }
+
+    /// Load policy from JSON string
+    /// The JSON should contain the SnakeCNNInference model structure
+    #[wasm_bindgen]
+    pub fn load_policy_json(&mut self, json: &str) -> Result<(), JsValue> {
+        let policy: crate::inference::snake::SnakeCNNInference =
+            serde_json::from_str(json)
+                .map_err(|e| JsValue::from_str(&format!("Failed to parse policy JSON: {}", e)))?;
+
+        self.policy = Some(policy);
+        Ok(())
+    }
+
+    /// Get policy action for a specific agent using the loaded model
+    /// Returns action index (0=up, 1=down, 2=left, 3=right) or -1 if no policy loaded
+    #[wasm_bindgen]
+    pub fn get_policy_action(&self, agent_id: usize) -> i32 {
+        if let Some(ref policy) = self.policy {
+            let observation = self.env.get_grid_observation(agent_id);
+            policy.get_action(&observation) as i32
+        } else {
+            -1 // No policy loaded
+        }
+    }
+
+    /// Check if policy is loaded
+    #[wasm_bindgen]
+    pub fn has_policy(&self) -> bool {
+        self.policy.is_some()
     }
 }
 
