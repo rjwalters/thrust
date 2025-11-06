@@ -105,7 +105,23 @@ Thrust is inspired by:
 - [tch-rs](https://github.com/LaurentMazare/tch-rs) - Rust bindings for PyTorch
 - [Border](https://github.com/laboroai/border) - Rust RL library
 
-## 🚀 Quick Start (Coming Soon)
+## 🚀 Quick Start
+
+### GPU Training
+
+Train agents with CUDA acceleration:
+
+```bash
+# Install PyTorch with CUDA support
+./scripts/setup-libtorch.sh
+
+# Train CartPole agent
+./scripts/train-gpu.sh train_cartpole_best
+```
+
+See [docs/GPU_SETUP.md](docs/GPU_SETUP.md) for detailed GPU setup instructions and troubleshooting.
+
+### Library Usage (Coming Soon)
 
 ```rust
 use thrust_rl::prelude::*;
