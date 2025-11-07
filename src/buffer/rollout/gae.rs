@@ -104,6 +104,13 @@ fn compute_gae_single_env(
     let mut gae = 0.0;
 
     for t in (0..num_steps).rev() {
+        // Reset GAE when crossing episode boundary (backwards iteration)
+        // If step t is terminal, reset GAE before computing its advantage
+        // This prevents accumulating GAE from future episodes
+        if terminated[t] {
+            gae = 0.0;
+        }
+
         // Bootstrap from next value if not terminated
         let next_value = if t == num_steps - 1 {
             // Last step: bootstrap from final value estimate

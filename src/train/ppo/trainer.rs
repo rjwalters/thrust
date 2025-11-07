@@ -113,6 +113,20 @@ impl<P> PPOTrainer<P> {
         let mut stats_sum = TrainingStats::zeros();
         let mut num_updates = 0;
 
+        // Smart advantage normalization: only normalize when variance is sufficient
+        // When std is too low, normalization centering destroys the learning signal
+        let adv_mean = advantages.mean(tch::Kind::Float);
+        let adv_std = advantages.std(false);
+        let adv_std_val: f64 = f64::try_from(&adv_std).unwrap_or(1e-8);
+
+        let advantages_normalized = if adv_std_val > 1e-4 {
+            // Sufficient variance: normalize to stabilize training
+            (advantages - adv_mean) / (adv_std + 1e-8)
+        } else {
+            // Low variance: skip normalization to preserve learning signal
+            advantages.shallow_clone()
+        };
+
         // Multiple epochs over the data
         for epoch in 0..self.config.n_epochs {
             let batch_indices = generate_minibatch_indices(batch_size, self.config.batch_size);
@@ -131,15 +145,10 @@ impl<P> PPOTrainer<P> {
                     .index_select(0, &indices_tensor.to_device(old_log_probs.device()));
                 let mb_old_values = old_values
                     .index_select(0, &indices_tensor.to_device(old_values.device()));
-                let mb_advantages = advantages
-                    .index_select(0, &indices_tensor.to_device(advantages.device()));
+                let mb_advantages = advantages_normalized
+                    .index_select(0, &indices_tensor.to_device(advantages_normalized.device()));
                 let mb_returns = returns
                     .index_select(0, &indices_tensor.to_device(returns.device()));
-
-                // Normalize advantages at minibatch level (SB3-style)
-                let adv_mean = mb_advantages.mean(tch::Kind::Float);
-                let adv_std = mb_advantages.std(false);
-                let mb_advantages = (&mb_advantages - adv_mean) / (adv_std + 1e-8);
 
                 // Forward pass
                 let (log_probs, entropy, values) = forward_fn(&mb_obs, &mb_actions);

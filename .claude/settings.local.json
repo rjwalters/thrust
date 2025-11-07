@@ -73,7 +73,8 @@
       "Bash(LIBTORCH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch/lib cargo +nightly test:*)",
       "Bash(./scripts/remote-optimize.sh:*)",
       "Bash(python3:*)",
-      "Bash(scp:*)"
+      "Bash(scp:*)",
+      "Bash(git submodule add:*)"
     ],
     "deny": [],
     "ask": []

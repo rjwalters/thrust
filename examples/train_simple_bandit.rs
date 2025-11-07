@@ -73,7 +73,7 @@ fn main() -> Result<()> {
         .gae_lambda(0.95)
         .clip_range(0.2)
         .vf_coef(0.5)
-        .ent_coef(0.01)
+        .ent_coef(0.1)  // 10x higher to encourage exploration on this trivial task
         .max_grad_norm(0.5);
 
     let dummy_policy = MlpPolicy::new(obs_dim, action_dim, 64);
@@ -176,6 +176,25 @@ fn main() -> Result<()> {
             .to_device(device);
         let returns_tensor = tch::Tensor::from_slice(&batch.returns)
             .to_device(device);
+
+        // Debug: Log first few samples to understand what's happening
+        if update == 0 || update == 10 || update == 50 {
+            tracing::info!("=== DEBUG: Update {} ===", update);
+            tracing::info!("Sample observations (first 5): {:?}", &batch.observations[..5.min(batch.observations.len())]);
+            tracing::info!("Sample actions (first 5): {:?}", &batch.actions[..5.min(batch.actions.len())]);
+            tracing::info!("Sample advantages (first 5): {:?}", &batch.advantages[..5.min(batch.advantages.len())]);
+            tracing::info!("Sample old_log_probs (first 5): {:?}", &batch.old_log_probs[..5.min(batch.old_log_probs.len())]);
+
+            // Check policy outputs for a few samples
+            let sample_obs = tch::Tensor::from_slice(&batch.observations[..obs_dim as usize])
+                .reshape([1, obs_dim])
+                .to_device(device);
+            let (sample_logits, sample_values) = policy.forward(&sample_obs);
+            let sample_probs = sample_logits.softmax(-1, tch::Kind::Float);
+            // Flatten 2D tensors before converting to Vec
+            tracing::info!("Sample policy probs: {:?}", Vec::<f32>::try_from(sample_probs.flatten(0, -1)).unwrap());
+            tracing::info!("Sample value: {:?}", Vec::<f32>::try_from(sample_values.flatten(0, -1)).unwrap());
+        }
 
         // Train
         let stats = trainer.train_step_with_policy(

@@ -176,13 +176,12 @@ impl MlpPolicy {
 
         // Use log_softmax for numerical stability
         let log_probs_all = logits.log_softmax(-1, Kind::Float);
-        let probs = log_probs_all.exp();
 
-        // Clamp probabilities to avoid numerical issues and renormalize
-        let probs_clamped = probs.clamp(1e-8, 1.0);
-        let probs_normalized = &probs_clamped / probs_clamped.sum_dim_intlist(-1, true, Kind::Float);
+        // Sample from probabilities (softmax already produces valid probabilities)
+        let probs = logits.softmax(-1, Kind::Float);
+        let actions = probs.multinomial(1, true).squeeze_dim(-1);
 
-        let actions = probs_normalized.multinomial(1, true).squeeze_dim(-1);
+        // Get log probabilities for the sampled actions
         let log_probs = log_probs_all.gather(-1, &actions.unsqueeze(-1), false).squeeze_dim(-1);
         (actions, log_probs, values)
     }
@@ -197,10 +196,10 @@ impl MlpPolicy {
 
         let action_log_probs = log_probs.gather(-1, &actions.unsqueeze(-1), false).squeeze_dim(-1);
 
-        // Compute entropy with clamping to avoid log(0)
-        let probs_clamped = probs.clamp(1e-8, 1.0);
+        // Compute entropy: H = -Σ p(x) * log(p(x))
+        // Use the same probs and log_probs (no clamping - softmax already handles it)
         let entropy =
-            -(probs_clamped * log_probs).sum_dim_intlist(-1, false, Kind::Float).mean(Kind::Float);
+            -(probs * log_probs).sum_dim_intlist(-1, false, Kind::Float).mean(Kind::Float);
         (action_log_probs, entropy, values)
     }
 
