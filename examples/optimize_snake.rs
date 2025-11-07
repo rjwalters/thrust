@@ -177,7 +177,7 @@ fn run_trial(
     let mut rollout_buffer = RolloutBuffer::new();
     let mut total_episodes = 0;
     let mut total_episode_rewards = Vec::new();
-    let total_steps = 150_000; // 150k steps per trial
+    let total_steps = 2_000_000; // 2M steps per trial for deep training
     let num_rollouts = total_steps / (steps_per_rollout * num_envs * num_agents);
 
     // Training loop
@@ -414,7 +414,7 @@ fn main() -> Result<()> {
 
     tracing::info!("Configuration:");
     tracing::info!("  Trials: {}", num_trials);
-    tracing::info!("  Steps per trial: ~150,000");
+    tracing::info!("  Steps per trial: 2M (deep training)");
 
     // Setup device
     let device = if tch::Cuda::is_available() {
