@@ -17,6 +17,7 @@ pub struct PPOTrainer<P> {
     optimizer: Option<tch::nn::Optimizer>,
     total_steps: usize,
     total_episodes: usize,
+    low_entropy_count: usize,
 }
 
 impl<P> PPOTrainer<P> {
@@ -35,6 +36,7 @@ impl<P> PPOTrainer<P> {
             optimizer: None,
             total_steps: 0,
             total_episodes: 0,
+            low_entropy_count: 0,
         })
     }
 
@@ -204,8 +206,47 @@ impl<P> PPOTrainer<P> {
         // Update training counters
         self.total_steps += num_updates;
 
+        // Get average statistics
+        let avg_stats = stats_sum.average();
+
+        // Check for entropy collapse (early stopping)
+        const ENTROPY_THRESHOLD: f64 = 0.05;
+        const MAX_LOW_ENTROPY_COUNT: usize = 3;
+
+        if avg_stats.entropy < ENTROPY_THRESHOLD {
+            self.low_entropy_count += 1;
+            tracing::warn!(
+                "⚠️  Low entropy detected: {:.4} (count: {}/{})",
+                avg_stats.entropy,
+                self.low_entropy_count,
+                MAX_LOW_ENTROPY_COUNT
+            );
+
+            if self.low_entropy_count >= MAX_LOW_ENTROPY_COUNT {
+                tracing::error!(
+                    "🚨 Training stopped: Entropy collapse detected! Entropy has been below {:.3} for {} consecutive updates.",
+                    ENTROPY_THRESHOLD,
+                    MAX_LOW_ENTROPY_COUNT
+                );
+                return Err(anyhow!(
+                    "Training stopped due to entropy collapse (entropy < {} for {} updates)",
+                    ENTROPY_THRESHOLD,
+                    MAX_LOW_ENTROPY_COUNT
+                ));
+            }
+        } else {
+            // Reset counter if entropy is healthy
+            if self.low_entropy_count > 0 {
+                tracing::info!(
+                    "✅ Entropy recovered: {:.4} (reset low entropy counter)",
+                    avg_stats.entropy
+                );
+                self.low_entropy_count = 0;
+            }
+        }
+
         // Return average statistics
-        Ok(stats_sum.average())
+        Ok(avg_stats)
     }
 
     /// Train for one PPO update with explicit policy reference
