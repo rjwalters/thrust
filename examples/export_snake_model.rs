@@ -3,9 +3,10 @@
 //! This example loads a trained PyTorch Snake model and exports the weights
 //! to a JSON format that can be loaded in WebAssembly for inference.
 
-use anyhow::Result;
 use std::env;
-use tch::{nn, Device, Tensor, Kind};
+
+use anyhow::Result;
+use tch::{Device, Kind, Tensor, nn};
 use thrust_rl::policy::snake_cnn::SnakeCNN;
 
 fn main() -> Result<()> {
@@ -108,13 +109,17 @@ fn main() -> Result<()> {
     let conv3_weight = tensor_to_4d(variables.get("conv3.weight").expect("Missing conv3.weight"));
     let conv3_bias = tensor_to_1d(variables.get("conv3.bias").expect("Missing conv3.bias"));
 
-    let fc_common_weight = tensor_to_2d(variables.get("fc_common.weight").expect("Missing fc_common.weight"));
-    let fc_common_bias = tensor_to_1d(variables.get("fc_common.bias").expect("Missing fc_common.bias"));
+    let fc_common_weight =
+        tensor_to_2d(variables.get("fc_common.weight").expect("Missing fc_common.weight"));
+    let fc_common_bias =
+        tensor_to_1d(variables.get("fc_common.bias").expect("Missing fc_common.bias"));
 
-    let fc_policy_weight = tensor_to_2d(variables.get("policy.weight").expect("Missing policy.weight"));
+    let fc_policy_weight =
+        tensor_to_2d(variables.get("policy.weight").expect("Missing policy.weight"));
     let fc_policy_bias = tensor_to_1d(variables.get("policy.bias").expect("Missing policy.bias"));
 
-    let fc_value_weight = tensor_to_2d(variables.get("value.weight").expect("Missing value.weight"));
+    let fc_value_weight =
+        tensor_to_2d(variables.get("value.weight").expect("Missing value.weight"));
     let fc_value_bias = tensor_to_1d(variables.get("value.bias").expect("Missing value.bias"));
 
     // Create inference model

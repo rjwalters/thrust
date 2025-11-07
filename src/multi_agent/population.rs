@@ -2,8 +2,12 @@
 //!
 //! Manages a collection of diverse agent policies and their fitness metrics.
 
+use std::sync::{
+    Arc, RwLock,
+    atomic::{AtomicU64, Ordering},
+};
+
 use crate::policy::mlp::MlpPolicy;
-use std::sync::{Arc, RwLock, atomic::{AtomicU64, Ordering}};
 
 /// Unique identifier for an agent in the population
 pub type AgentId = usize;
@@ -61,12 +65,7 @@ impl Population {
         let min_fitness = fitnesses.iter().cloned().fold(f64::INFINITY, f64::min);
         let total_games = games.iter().sum();
 
-        PopulationStats {
-            mean_fitness,
-            max_fitness,
-            min_fitness,
-            total_games,
-        }
+        PopulationStats { mean_fitness, max_fitness, min_fitness, total_games }
     }
 }
 
@@ -208,10 +207,7 @@ mod tests {
 
     #[test]
     fn test_population_stats() {
-        let config = PopulationConfig {
-            size: 3,
-            ..Default::default()
-        };
+        let config = PopulationConfig { size: 3, ..Default::default() };
         let mut pop = Population::new(config, 4, 2, 64);
 
         pop.update_fitness(0, 10.0);

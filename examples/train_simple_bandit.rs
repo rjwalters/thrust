@@ -13,16 +13,14 @@
 use anyhow::Result;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
-    env::{pool::EnvPool, simple_bandit::SimpleBandit, Environment},
+    env::{Environment, pool::EnvPool, simple_bandit::SimpleBandit},
     policy::mlp::MlpPolicy,
     train::ppo::{PPOConfig, PPOTrainer},
 };
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     tracing::info!("🧪 SimpleBandit PPO Correctness Test");
     tracing::info!("Expected result: ~100% success rate (1.0 reward every step)");
@@ -31,7 +29,7 @@ fn main() -> Result<()> {
     // Hyperparameters - simple configuration for easy task
     const NUM_ENVS: usize = 4;
     const NUM_STEPS: usize = 100;
-    const TOTAL_TIMESTEPS: usize = 50_000;  // Should be plenty for this trivial task
+    const TOTAL_TIMESTEPS: usize = 50_000; // Should be plenty for this trivial task
     const LEARNING_RATE: f64 = 0.001;
 
     // Environment dimensions
@@ -157,8 +155,9 @@ fn main() -> Result<()> {
         let (_, _, last_values) = policy.get_action(&obs_tensor);
         let last_values_vec: Vec<f32> = Vec::try_from(last_values)?;
 
-        // Use gamma=0.0, gae_lambda=0.0 for contextual bandit (no temporal dependencies)
-        // This gives: A = r - V (simple advantage, no bootstrapping)
+        // Use gamma=0.0, gae_lambda=0.0 for contextual bandit (no temporal
+        // dependencies) This gives: A = r - V (simple advantage, no
+        // bootstrapping)
         buffer.compute_advantages(&last_values_vec, 0.0, 0.0);
 
         // Get training batch
@@ -170,24 +169,31 @@ fn main() -> Result<()> {
         let obs_tensor = tch::Tensor::from_slice(&batch.observations)
             .reshape([batch_size as i64, obs_dim])
             .to_device(device);
-        let actions_tensor = tch::Tensor::from_slice(&batch.actions)
-            .to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs)
-            .to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values)
-            .to_device(device);
-        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages)
-            .to_device(device);
-        let returns_tensor = tch::Tensor::from_slice(&batch.returns)
-            .to_device(device);
+        let actions_tensor = tch::Tensor::from_slice(&batch.actions).to_device(device);
+        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs).to_device(device);
+        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values).to_device(device);
+        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages).to_device(device);
+        let returns_tensor = tch::Tensor::from_slice(&batch.returns).to_device(device);
 
         // Debug: Log first few samples to understand what's happening
         if update == 0 || update == 10 || update == 50 {
             tracing::info!("=== DEBUG: Update {} ===", update);
-            tracing::info!("Sample observations (first 5): {:?}", &batch.observations[..5.min(batch.observations.len())]);
-            tracing::info!("Sample actions (first 5): {:?}", &batch.actions[..5.min(batch.actions.len())]);
-            tracing::info!("Sample advantages (first 5): {:?}", &batch.advantages[..5.min(batch.advantages.len())]);
-            tracing::info!("Sample old_log_probs (first 5): {:?}", &batch.old_log_probs[..5.min(batch.old_log_probs.len())]);
+            tracing::info!(
+                "Sample observations (first 5): {:?}",
+                &batch.observations[..5.min(batch.observations.len())]
+            );
+            tracing::info!(
+                "Sample actions (first 5): {:?}",
+                &batch.actions[..5.min(batch.actions.len())]
+            );
+            tracing::info!(
+                "Sample advantages (first 5): {:?}",
+                &batch.advantages[..5.min(batch.advantages.len())]
+            );
+            tracing::info!(
+                "Sample old_log_probs (first 5): {:?}",
+                &batch.old_log_probs[..5.min(batch.old_log_probs.len())]
+            );
 
             // Check policy outputs for a few samples
             let sample_obs = tch::Tensor::from_slice(&batch.observations[..obs_dim as usize])
@@ -196,8 +202,14 @@ fn main() -> Result<()> {
             let (sample_logits, sample_values) = policy.forward(&sample_obs);
             let sample_probs = sample_logits.softmax(-1, tch::Kind::Float);
             // Flatten 2D tensors before converting to Vec
-            tracing::info!("Sample policy probs: {:?}", Vec::<f32>::try_from(sample_probs.flatten(0, -1)).unwrap());
-            tracing::info!("Sample value: {:?}", Vec::<f32>::try_from(sample_values.flatten(0, -1)).unwrap());
+            tracing::info!(
+                "Sample policy probs: {:?}",
+                Vec::<f32>::try_from(sample_probs.flatten(0, -1)).unwrap()
+            );
+            tracing::info!(
+                "Sample value: {:?}",
+                Vec::<f32>::try_from(sample_values.flatten(0, -1)).unwrap()
+            );
         }
 
         // Train
@@ -231,7 +243,10 @@ fn main() -> Result<()> {
 
             // Warn if success rate is not improving
             if update > 50 && success_rate < 0.8 {
-                tracing::warn!("⚠️  Success rate is low after {} updates. Expected ~100% for this trivial task.", update);
+                tracing::warn!(
+                    "⚠️  Success rate is low after {} updates. Expected ~100% for this trivial task.",
+                    update
+                );
             }
         }
     }
@@ -250,9 +265,14 @@ fn main() -> Result<()> {
     if final_success_rate >= 0.95 {
         tracing::info!("✅ SUCCESS: PPO correctly learned SimpleBandit!");
         tracing::info!("   This suggests PPO implementation is working correctly.");
-        tracing::info!("   CartPole variance may be environment-specific or require more investigation.");
+        tracing::info!(
+            "   CartPole variance may be environment-specific or require more investigation."
+        );
     } else if final_success_rate >= 0.8 {
-        tracing::warn!("⚠️  MARGINAL: Success rate is {:.1}%, expected ~100%", final_success_rate * 100.0);
+        tracing::warn!(
+            "⚠️  MARGINAL: Success rate is {:.1}%, expected ~100%",
+            final_success_rate * 100.0
+        );
         tracing::warn!("   PPO may have implementation issues or suboptimal hyperparameters.");
     } else {
         tracing::error!("❌ FAILURE: Success rate is only {:.1}%!", final_success_rate * 100.0);

@@ -39,15 +39,9 @@ pub fn compute_advantages(
     debug_assert_eq!(last_values.len(), num_envs, "last_values length mismatch");
 
     // Collect all immutable data first to avoid borrow checker issues
-    let rewards: Vec<Vec<f32>> = buffer.rewards().iter()
-        .map(|step| step.to_vec())
-        .collect();
-    let values: Vec<Vec<f32>> = buffer.values().iter()
-        .map(|step| step.to_vec())
-        .collect();
-    let terminated: Vec<Vec<bool>> = buffer.terminated().iter()
-        .map(|step| step.to_vec())
-        .collect();
+    let rewards: Vec<Vec<f32>> = buffer.rewards().iter().map(|step| step.to_vec()).collect();
+    let values: Vec<Vec<f32>> = buffer.values().iter().map(|step| step.to_vec()).collect();
+    let terminated: Vec<Vec<bool>> = buffer.terminated().iter().map(|step| step.to_vec()).collect();
 
     // Now we can get mutable access to both advantages and returns
     let (advantages, returns) = buffer.advantages_and_returns_mut();
@@ -154,12 +148,8 @@ pub fn compute_nstep_returns(
     debug_assert_eq!(last_values.len(), num_envs, "last_values length mismatch");
 
     // Collect immutable data first
-    let rewards: Vec<Vec<f32>> = buffer.rewards().iter()
-        .map(|step| step.to_vec())
-        .collect();
-    let terminated: Vec<Vec<bool>> = buffer.terminated().iter()
-        .map(|step| step.to_vec())
-        .collect();
+    let rewards: Vec<Vec<f32>> = buffer.rewards().iter().map(|step| step.to_vec()).collect();
+    let terminated: Vec<Vec<bool>> = buffer.terminated().iter().map(|step| step.to_vec()).collect();
 
     // Now get mutable access
     let returns = buffer.returns_mut();
@@ -190,12 +180,8 @@ pub fn compute_mc_returns(buffer: &mut super::storage::RolloutBuffer) {
     let (num_steps, num_envs) = (buffer.shape().0, buffer.shape().1);
 
     // Collect immutable data first
-    let rewards: Vec<Vec<f32>> = buffer.rewards().iter()
-        .map(|step| step.to_vec())
-        .collect();
-    let terminated: Vec<Vec<bool>> = buffer.terminated().iter()
-        .map(|step| step.to_vec())
-        .collect();
+    let rewards: Vec<Vec<f32>> = buffer.rewards().iter().map(|step| step.to_vec()).collect();
+    let terminated: Vec<Vec<bool>> = buffer.terminated().iter().map(|step| step.to_vec()).collect();
 
     // Now get mutable access
     let returns = buffer.returns_mut();
@@ -243,9 +229,8 @@ pub fn normalize_advantages(buffer: &mut super::storage::RolloutBuffer) {
 
     // Compute mean and std
     let mean: f32 = all_advantages.iter().sum::<f32>() / all_advantages.len() as f32;
-    let variance: f32 = all_advantages.iter()
-        .map(|&x| (x - mean).powi(2))
-        .sum::<f32>() / all_advantages.len() as f32;
+    let variance: f32 = all_advantages.iter().map(|&x| (x - mean).powi(2)).sum::<f32>()
+        / all_advantages.len() as f32;
     let std = variance.sqrt().max(1e-8); // Avoid division by zero
 
     // Normalize advantages

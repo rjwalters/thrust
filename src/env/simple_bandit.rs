@@ -8,10 +8,12 @@
 //! - Episodes: Fixed length of 100 steps
 //!
 //! This environment should reach 100% success rate (reward=1.0 every step)
-//! if PPO is implemented correctly. If it doesn't converge reliably, there's a bug.
+//! if PPO is implemented correctly. If it doesn't converge reliably, there's a
+//! bug.
+
+use rand::{Rng, SeedableRng};
 
 use super::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
-use rand::{Rng, SeedableRng};
 
 /// Simple contextual bandit for testing PPO correctness
 #[derive(Debug)]
@@ -25,12 +27,7 @@ pub struct SimpleBandit {
 impl SimpleBandit {
     /// Create a new simple bandit environment
     pub fn new() -> Self {
-        Self {
-            state: 0.0,
-            steps: 0,
-            max_steps: 100,
-            rng: rand::rngs::StdRng::from_entropy(),
-        }
+        Self { state: 0.0, steps: 0, max_steps: 100, rng: rand::rngs::StdRng::from_entropy() }
     }
 }
 
@@ -53,7 +50,11 @@ impl Environment for SimpleBandit {
 
     fn step(&mut self, action: i64) -> StepResult {
         // Reward +1 if action matches state, 0 otherwise
-        let reward = if action == self.state as i64 { 1.0 } else { 0.0 };
+        let reward = if action == self.state as i64 {
+            1.0
+        } else {
+            0.0
+        };
 
         self.steps += 1;
         let terminated = self.steps >= self.max_steps;
@@ -72,7 +73,7 @@ impl Environment for SimpleBandit {
 
     fn observation_space(&self) -> SpaceInfo {
         SpaceInfo {
-            shape: vec![1],  // Single value: 0 or 1
+            shape: vec![1], // Single value: 0 or 1
             space_type: SpaceType::Box,
         }
     }
@@ -80,7 +81,7 @@ impl Environment for SimpleBandit {
     fn action_space(&self) -> SpaceInfo {
         SpaceInfo {
             shape: vec![],
-            space_type: SpaceType::Discrete(2),  // Two actions: 0 or 1
+            space_type: SpaceType::Discrete(2), // Two actions: 0 or 1
         }
     }
 

@@ -1,8 +1,10 @@
 //! Trial execution and result tracking
 
-use super::space::ParameterValue;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+use super::space::ParameterValue;
 
 /// Optimization objective
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,22 +56,12 @@ pub struct TrialResult {
 impl TrialResult {
     /// Create a successful result
     pub fn success(metrics: HashMap<String, f64>, duration_secs: f64) -> Self {
-        Self {
-            metrics,
-            duration_secs,
-            success: true,
-            error: None,
-        }
+        Self { metrics, duration_secs, success: true, error: None }
     }
 
     /// Create a failed result
     pub fn failure(error: String) -> Self {
-        Self {
-            metrics: HashMap::new(),
-            duration_secs: 0.0,
-            success: false,
-            error: Some(error),
-        }
+        Self { metrics: HashMap::new(), duration_secs: 0.0, success: false, error: Some(error) }
     }
 
     /// Get metric value
@@ -81,11 +73,7 @@ impl TrialResult {
 impl Trial {
     /// Create a new trial
     pub fn new(id: usize, config: HashMap<String, ParameterValue>) -> Self {
-        Self {
-            id,
-            config,
-            result: None,
-        }
+        Self { id, config, result: None }
     }
 
     /// Check if trial is complete

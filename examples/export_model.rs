@@ -10,8 +10,9 @@
 //! cargo run --example export_model cartpole_model.pt cartpole_wasm.json
 //! ```
 
-use anyhow::Result;
 use std::env;
+
+use anyhow::Result;
 use thrust_rl::policy::mlp::MlpPolicy;
 
 fn main() -> Result<()> {
@@ -31,7 +32,8 @@ fn main() -> Result<()> {
 
     println!("🔄 Loading model from: {}", input_path);
 
-    // Create policy with matching architecture (CartPole: 4 obs, 2 actions, 128 hidden)
+    // Create policy with matching architecture (CartPole: 4 obs, 2 actions, 128
+    // hidden)
     let mut policy = MlpPolicy::new(4, 2, 128);
 
     // Load trained weights

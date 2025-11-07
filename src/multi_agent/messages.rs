@@ -4,8 +4,9 @@
 //! - GameSimulator → PolicyLearner: Experience data
 //! - PolicyLearner → GameSimulator: Policy updates
 
-use super::population::AgentId;
 use tch::Tensor;
+
+use super::population::AgentId;
 
 /// Experience tuple sent from simulator to learner
 #[derive(Debug)]
@@ -144,25 +145,16 @@ pub enum ControlMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tch::Kind;
+
+    use super::*;
 
     #[test]
     fn test_experience_creation() {
         let obs = Tensor::randn([4], (Kind::Float, tch::Device::Cpu));
         let next_obs = Tensor::randn([4], (Kind::Float, tch::Device::Cpu));
 
-        let exp = Experience::new(
-            0,
-            obs,
-            1,
-            1.0,
-            next_obs,
-            false,
-            false,
-            0.5,
-            -0.69,
-        );
+        let exp = Experience::new(0, obs, 1, 1.0, next_obs, false, false, 0.5, -0.69);
 
         assert_eq!(exp.agent_id, 0);
         assert_eq!(exp.action, 1);
@@ -175,8 +167,28 @@ mod tests {
         let obs = Tensor::randn([4], (Kind::Float, tch::Device::Cpu));
         let next_obs = Tensor::randn([4], (Kind::Float, tch::Device::Cpu));
 
-        let exp_term = Experience::new(0, obs.shallow_clone(), 1, 1.0, next_obs.shallow_clone(), true, false, 0.5, -0.69);
-        let exp_trunc = Experience::new(0, obs.shallow_clone(), 1, 1.0, next_obs.shallow_clone(), false, true, 0.5, -0.69);
+        let exp_term = Experience::new(
+            0,
+            obs.shallow_clone(),
+            1,
+            1.0,
+            next_obs.shallow_clone(),
+            true,
+            false,
+            0.5,
+            -0.69,
+        );
+        let exp_trunc = Experience::new(
+            0,
+            obs.shallow_clone(),
+            1,
+            1.0,
+            next_obs.shallow_clone(),
+            false,
+            true,
+            0.5,
+            -0.69,
+        );
         let exp_both = Experience::new(0, obs, 1, 1.0, next_obs, true, true, 0.5, -0.69);
 
         assert!(exp_term.is_done());

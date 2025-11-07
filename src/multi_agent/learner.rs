@@ -2,19 +2,17 @@
 //!
 //! Each learner trains a single agent's policy using PPO.
 
-use crate::{
-    buffer::rollout::RolloutBuffer,
-    policy::mlp::MlpPolicy,
-    train::ppo::PPOTrainer,
-};
-use super::{
-    population::AgentId,
-    messages::{Experience, PolicyUpdate, TrainingStats},
-};
+use std::time::Duration;
+
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
-use std::time::Duration;
 use tch::Tensor;
+
+use super::{
+    messages::{Experience, PolicyUpdate, TrainingStats},
+    population::AgentId,
+};
+use crate::{buffer::rollout::RolloutBuffer, policy::mlp::MlpPolicy, train::ppo::PPOTrainer};
 
 /// Policy learner - trains one agent's policy
 ///
@@ -105,9 +103,14 @@ impl PolicyLearner {
 
             // 3. Compute advantages
             // TODO: Fix API - compute_advantages needs last_values
-            // self.buffer.compute_advantages(&last_values, self.config.gamma, self.config.gae_lambda);
+            // self.buffer.compute_advantages(&last_values, self.config.gamma,
+            // self.config.gae_lambda);
             let last_values = vec![0.0]; // Placeholder
-            self.buffer.compute_advantages(&last_values, self.config.gamma as f32, self.config.gae_lambda as f32);
+            self.buffer.compute_advantages(
+                &last_values,
+                self.config.gamma as f32,
+                self.config.gae_lambda as f32,
+            );
 
             // 4. Train on batch
             let stats = self.train_step()?;
@@ -150,9 +153,10 @@ impl PolicyLearner {
             match self.experience_receiver.recv_timeout(timeout) {
                 Ok(_exp) => {
                     // TODO: Fix - buffer.add() API doesn't match
-                    // Need to adapt Experience format to buffer's expected format
-                    // For now, just count the received experience
-                    // self.buffer.add(...)?;
+                    // Need to adapt Experience format to buffer's expected
+                    // format For now, just count the
+                    // received experience self.buffer.add(.
+                    // ..)?;
                 }
                 Err(_) => {
                     // Timeout - check if we have enough data
@@ -188,12 +192,14 @@ impl PolicyLearner {
         let returns = Tensor::from_slice(&batch.returns).to_device(device);
 
         // Train for multiple epochs
-        // Note: We can't use train_step() because it requires both &self.policy and &mut self.trainer
-        // Instead, we'll use a workaround by calling the trainer directly with its own policy
+        // Note: We can't use train_step() because it requires both &self.policy and
+        // &mut self.trainer Instead, we'll use a workaround by calling the
+        // trainer directly with its own policy
         let mut total_stats = TrainingStats::default();
         for _ in 0..self.config.n_epochs {
             // Safety: The trainer owns the policy, so this is safe as long as we don't
-            // call any methods that would try to borrow trainer mutably during policy access
+            // call any methods that would try to borrow trainer mutably during policy
+            // access
             let trainer_ptr: *mut PPOTrainer<MlpPolicy> = &mut self.trainer;
             let policy_ptr: *const MlpPolicy = unsafe { &*trainer_ptr }.policy();
 
@@ -206,7 +212,9 @@ impl PolicyLearner {
                     &old_values,
                     &advantages,
                     &returns,
-                    |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| policy.evaluate_actions(obs, acts),
+                    |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| {
+                        policy.evaluate_actions(obs, acts)
+                    },
                 )?
             };
 
@@ -231,24 +239,18 @@ impl PolicyLearner {
     /// Send policy update to simulator
     fn send_policy_update(&mut self, stats: TrainingStats) -> Result<()> {
         // Save model to file
-        let model_path = format!(
-            "{}/agent_{}_step_{}.pt",
-            self.model_save_dir, self.agent_id, self.step
-        );
+        let model_path =
+            format!("{}/agent_{}_step_{}.pt", self.model_save_dir, self.agent_id, self.step);
         self.trainer.policy().save(&model_path)?;
 
         // Create update message
-        let update = PolicyUpdate {
-            agent_id: self.agent_id,
-            version: self.step as u64,
-            model_path,
-            stats,
-        };
+        let update =
+            PolicyUpdate { agent_id: self.agent_id, version: self.step as u64, model_path, stats };
 
         // Send (non-blocking)
-        self.policy_sender.try_send(update).map_err(|e| {
-            anyhow::anyhow!("Failed to send policy update: {}", e)
-        })?;
+        self.policy_sender
+            .try_send(update)
+            .map_err(|e| anyhow::anyhow!("Failed to send policy update: {}", e))?;
 
         Ok(())
     }
@@ -343,14 +345,8 @@ mod tests {
         let (policy_sender, _policy_receiver) = crossbeam_channel::unbounded();
         let config = LearnerConfig::default();
 
-        let learner = PolicyLearner::new(
-            0,
-            policy,
-            exp_receiver,
-            policy_sender,
-            config,
-            "/tmp".to_string(),
-        );
+        let learner =
+            PolicyLearner::new(0, policy, exp_receiver, policy_sender, config, "/tmp".to_string());
 
         assert!(learner.is_ok());
         assert_eq!(learner.unwrap().agent_id, 0);

@@ -2,9 +2,9 @@
 //!
 //! Determines which agents play together in each game instance.
 
+use rand::{Rng, SeedableRng, rngs::StdRng};
+
 use super::population::{AgentId, Population};
-use rand::{Rng, SeedableRng};
-use rand::rngs::StdRng;
 
 /// Trait for matchmaking strategies
 pub trait Matchmaker: Send {
@@ -64,9 +64,7 @@ pub struct RandomMatchmaker {
 
 impl RandomMatchmaker {
     pub fn new() -> Self {
-        Self {
-            rng: StdRng::from_entropy(),
-        }
+        Self { rng: StdRng::from_entropy() }
     }
 }
 
@@ -139,10 +137,7 @@ pub struct FitnessBasedMatchmaker {
 
 impl FitnessBasedMatchmaker {
     pub fn new(window_size: usize) -> Self {
-        Self {
-            window_size,
-            rng: StdRng::from_entropy(),
-        }
+        Self { window_size, rng: StdRng::from_entropy() }
     }
 }
 
@@ -154,11 +149,8 @@ impl Matchmaker for FitnessBasedMatchmaker {
         agents_per_game: usize,
     ) -> Vec<Vec<AgentId>> {
         // Sort agents by fitness
-        let mut ranked: Vec<(AgentId, f64)> = population
-            .agents
-            .iter()
-            .map(|a| (a.id, a.fitness))
-            .collect();
+        let mut ranked: Vec<(AgentId, f64)> =
+            population.agents.iter().map(|a| (a.id, a.fitness)).collect();
         ranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
 
         let pop_size = ranked.len();
@@ -195,9 +187,7 @@ pub struct SelfPlayMatchmaker {
 
 impl SelfPlayMatchmaker {
     pub fn new() -> Self {
-        Self {
-            rng: StdRng::from_entropy(),
-        }
+        Self { rng: StdRng::from_entropy() }
     }
 }
 
@@ -230,10 +220,7 @@ mod tests {
     use crate::multi_agent::population::PopulationConfig;
 
     fn create_test_population(size: usize) -> Population {
-        let config = PopulationConfig {
-            size,
-            ..Default::default()
-        };
+        let config = PopulationConfig { size, ..Default::default() };
         Population::new(config, 4, 2, 64)
     }
 

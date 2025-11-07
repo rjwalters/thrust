@@ -15,14 +15,19 @@
 //! efficient computation of advantages.
 
 // Re-export main components
-pub use storage::{RolloutBuffer, RolloutBatch};
-pub use gae::{compute_advantages, compute_mc_returns, compute_nstep_returns, normalize_advantages};
-pub use sampling::{generate_minibatch_indices, sample_minibatch, Minibatch, MinibatchIterator, shuffle_indices, train_val_split};
+pub use gae::{
+    compute_advantages, compute_mc_returns, compute_nstep_returns, normalize_advantages,
+};
+pub use sampling::{
+    Minibatch, MinibatchIterator, generate_minibatch_indices, sample_minibatch, shuffle_indices,
+    train_val_split,
+};
+pub use storage::{RolloutBatch, RolloutBuffer};
 
 // Submodules
-mod storage;
 mod gae;
 mod sampling;
+mod storage;
 
 // Legacy interface - re-export compute_advantages as a method on RolloutBuffer
 impl RolloutBuffer {

@@ -32,7 +32,7 @@
 use anyhow::Result;
 use tch::{
     Device, Kind, Tensor,
-    nn::{self, Module, OptimizerConfig, Init},
+    nn::{self, Init, Module, OptimizerConfig},
 };
 
 /// Configuration for MLP policy architecture
@@ -86,10 +86,7 @@ impl MlpPolicy {
     /// * `action_dim` - Number of discrete actions
     /// * `hidden_dim` - Size of hidden layers
     pub fn new(obs_dim: i64, action_dim: i64, hidden_dim: i64) -> Self {
-        let config = MlpConfig {
-            hidden_dim,
-            ..Default::default()
-        };
+        let config = MlpConfig { hidden_dim, ..Default::default() };
         Self::with_config(obs_dim, action_dim, config)
     }
 
@@ -129,7 +126,12 @@ impl MlpPolicy {
 
         // Second layer
         shared = shared
-            .add(nn::linear(&root / "shared" / "fc2", config.hidden_dim, config.hidden_dim, linear_config))
+            .add(nn::linear(
+                &root / "shared" / "fc2",
+                config.hidden_dim,
+                config.hidden_dim,
+                linear_config,
+            ))
             .add_fn(move |x| match config.activation {
                 Activation::ReLU => x.relu(),
                 Activation::Tanh => x.tanh(),
@@ -138,7 +140,12 @@ impl MlpPolicy {
         // Optional third layer
         if config.num_layers >= 3 {
             shared = shared
-                .add(nn::linear(&root / "shared" / "fc3", config.hidden_dim, config.hidden_dim, linear_config))
+                .add(nn::linear(
+                    &root / "shared" / "fc3",
+                    config.hidden_dim,
+                    config.hidden_dim,
+                    linear_config,
+                ))
                 .add_fn(move |x| match config.activation {
                     Activation::ReLU => x.relu(),
                     Activation::Tanh => x.tanh(),
@@ -155,7 +162,8 @@ impl MlpPolicy {
         let mut output_config = nn::LinearConfig::default();
         output_config.ws_init = output_init;
 
-        let policy_head = nn::linear(&root / "policy", config.hidden_dim, action_dim, output_config);
+        let policy_head =
+            nn::linear(&root / "policy", config.hidden_dim, action_dim, output_config);
         let value_head = nn::linear(&root / "value", config.hidden_dim, 1, output_config);
         let device = vs.device();
 
@@ -250,7 +258,8 @@ impl MlpPolicy {
     /// Extracts all weights and biases from the PyTorch model and converts them
     /// to a pure Rust format that can be used in WebAssembly.
     ///
-    /// Note: Only supports 2-layer models for now (3-layer export not yet implemented)
+    /// Note: Only supports 2-layer models for now (3-layer export not yet
+    /// implemented)
     pub fn export_for_inference(&self) -> crate::policy::inference::InferenceModel {
         use tch::Tensor;
 
@@ -272,7 +281,12 @@ impl MlpPolicy {
             // Extract as Vec<f32>
             let flat: Vec<f32> = match Vec::try_from(flat_tensor) {
                 Ok(v) => v,
-                Err(e) => panic!("Failed to convert tensor to Vec: {:?}. Tensor shape: {:?}, device: {:?}", e, cpu_tensor.size(), cpu_tensor.device()),
+                Err(e) => panic!(
+                    "Failed to convert tensor to Vec: {:?}. Tensor shape: {:?}, device: {:?}",
+                    e,
+                    cpu_tensor.size(),
+                    cpu_tensor.device()
+                ),
             };
 
             // Reshape into 2D Vec<Vec<f32>>
@@ -290,7 +304,12 @@ impl MlpPolicy {
             let flat_tensor = cpu_tensor.view([-1]);
             match Vec::try_from(flat_tensor) {
                 Ok(v) => v,
-                Err(e) => panic!("Failed to convert tensor to Vec: {:?}. Tensor shape: {:?}, device: {:?}", e, cpu_tensor.size(), cpu_tensor.device()),
+                Err(e) => panic!(
+                    "Failed to convert tensor to Vec: {:?}. Tensor shape: {:?}, device: {:?}",
+                    e,
+                    cpu_tensor.size(),
+                    cpu_tensor.device()
+                ),
             }
         }
 
@@ -298,63 +317,32 @@ impl MlpPolicy {
         let variables = self.vs.variables();
 
         // Extract dimensions
-        let obs_dim = variables
-            .get("shared.fc1.weight")
-            .expect("Missing shared.fc1.weight")
-            .size()[1] as usize;
-        let hidden_dim = variables
-            .get("shared.fc1.weight")
-            .expect("Missing shared.fc1.weight")
-            .size()[0] as usize;
-        let action_dim = variables
-            .get("policy.weight")
-            .expect("Missing policy.weight")
-            .size()[0] as usize;
+        let obs_dim = variables.get("shared.fc1.weight").expect("Missing shared.fc1.weight").size()
+            [1] as usize;
+        let hidden_dim =
+            variables.get("shared.fc1.weight").expect("Missing shared.fc1.weight").size()[0]
+                as usize;
+        let action_dim =
+            variables.get("policy.weight").expect("Missing policy.weight").size()[0] as usize;
 
         // Extract weights - note: PyTorch stores linear weights transposed
-        let shared_fc1_weight = tensor_to_2d(
-            variables
-                .get("shared.fc1.weight")
-                .expect("Missing shared.fc1.weight"),
-        );
-        let shared_fc1_bias = tensor_to_1d(
-            variables
-                .get("shared.fc1.bias")
-                .expect("Missing shared.fc1.bias"),
-        );
+        let shared_fc1_weight =
+            tensor_to_2d(variables.get("shared.fc1.weight").expect("Missing shared.fc1.weight"));
+        let shared_fc1_bias =
+            tensor_to_1d(variables.get("shared.fc1.bias").expect("Missing shared.fc1.bias"));
 
-        let shared_fc2_weight = tensor_to_2d(
-            variables
-                .get("shared.fc2.weight")
-                .expect("Missing shared.fc2.weight"),
-        );
-        let shared_fc2_bias = tensor_to_1d(
-            variables
-                .get("shared.fc2.bias")
-                .expect("Missing shared.fc2.bias"),
-        );
+        let shared_fc2_weight =
+            tensor_to_2d(variables.get("shared.fc2.weight").expect("Missing shared.fc2.weight"));
+        let shared_fc2_bias =
+            tensor_to_1d(variables.get("shared.fc2.bias").expect("Missing shared.fc2.bias"));
 
-        let policy_weight = tensor_to_2d(
-            variables
-                .get("policy.weight")
-                .expect("Missing policy.weight"),
-        );
-        let policy_bias = tensor_to_1d(
-            variables
-                .get("policy.bias")
-                .expect("Missing policy.bias"),
-        );
+        let policy_weight =
+            tensor_to_2d(variables.get("policy.weight").expect("Missing policy.weight"));
+        let policy_bias = tensor_to_1d(variables.get("policy.bias").expect("Missing policy.bias"));
 
-        let value_weight = tensor_to_2d(
-            variables
-                .get("value.weight")
-                .expect("Missing value.weight"),
-        );
-        let value_bias = tensor_to_1d(
-            variables
-                .get("value.bias")
-                .expect("Missing value.bias"),
-        );
+        let value_weight =
+            tensor_to_2d(variables.get("value.weight").expect("Missing value.weight"));
+        let value_bias = tensor_to_1d(variables.get("value.bias").expect("Missing value.bias"));
 
         let activation = match self.config.activation {
             Activation::ReLU => crate::policy::inference::InferenceActivation::ReLU,
@@ -366,7 +354,7 @@ impl MlpPolicy {
             action_dim,
             hidden_dim,
             activation,
-            metadata: None,  // Will be set by training script
+            metadata: None, // Will be set by training script
             shared_fc1_weight,
             shared_fc1_bias,
             shared_fc2_weight,

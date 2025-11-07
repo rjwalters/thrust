@@ -16,7 +16,7 @@
 use anyhow::Result;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
-    env::{cartpole::CartPole, pool::EnvPool, Environment},
+    env::{Environment, cartpole::CartPole, pool::EnvPool},
     policy::{
         inference::TrainingMetadata,
         mlp::{Activation, MlpConfig, MlpPolicy},
@@ -26,9 +26,7 @@ use thrust_rl::{
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     tracing::info!("🚀 Starting CartPole PPO Training (Hybrid Config)");
 
@@ -37,10 +35,10 @@ fn main() -> Result<()> {
 
     // Hyperparameters - hybrid approach
     const NUM_ENVS: usize = 8;
-    const NUM_STEPS: usize = 64;  // Compromise: longer than SB3's 32, shorter than our 256
-    const TOTAL_TIMESTEPS: usize = 200_000;  // Train for 200k steps
-    const INITIAL_LEARNING_RATE: f64 = 0.0005;  // Between SB3 (0.001) and ours (0.00025)
-    const HIDDEN_DIM: i64 = 128;  // Keep our larger network
+    const NUM_STEPS: usize = 64; // Compromise: longer than SB3's 32, shorter than our 256
+    const TOTAL_TIMESTEPS: usize = 200_000; // Train for 200k steps
+    const INITIAL_LEARNING_RATE: f64 = 0.0005; // Between SB3 (0.001) and ours (0.00025)
+    const HIDDEN_DIM: i64 = 128; // Keep our larger network
 
     // Environment dimensions
     let env = CartPole::new();
@@ -69,7 +67,7 @@ fn main() -> Result<()> {
         num_layers: 2,
         hidden_dim: HIDDEN_DIM,
         use_orthogonal_init: true,
-        activation: Activation::ReLU,  // ReLU worked much better!
+        activation: Activation::ReLU, // ReLU worked much better!
     };
     let mut policy = MlpPolicy::with_config(obs_dim, action_dim, config);
     let device = policy.device();
@@ -177,16 +175,11 @@ fn main() -> Result<()> {
         let obs_tensor = tch::Tensor::from_slice(&batch.observations)
             .reshape([batch_size as i64, obs_dim])
             .to_device(device);
-        let actions_tensor = tch::Tensor::from_slice(&batch.actions)
-            .to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs)
-            .to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values)
-            .to_device(device);
-        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages)
-            .to_device(device);
-        let returns_tensor = tch::Tensor::from_slice(&batch.returns)
-            .to_device(device);
+        let actions_tensor = tch::Tensor::from_slice(&batch.actions).to_device(device);
+        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs).to_device(device);
+        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values).to_device(device);
+        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages).to_device(device);
+        let returns_tensor = tch::Tensor::from_slice(&batch.returns).to_device(device);
 
         // Train
         let stats = trainer.train_step_with_policy(
@@ -267,7 +260,9 @@ fn main() -> Result<()> {
             "Hybrid training: ReLU activation, 128 hidden units, n_steps=64, batch_size=256, n_epochs=15, \
              lr=0.0005->0 (linear decay), gamma=0.99, gae_lambda=0.95, ent_coef=0.005. \
              Achieved {:.1} steps/episode in {:.1}s ({:.0} steps/sec).",
-            final_avg, training_secs, trainer.total_steps() as f64 / training_secs
+            final_avg,
+            training_secs,
+            trainer.total_steps() as f64 / training_secs
         )),
     };
     exported_model.metadata = Some(metadata);

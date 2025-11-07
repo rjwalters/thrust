@@ -2,16 +2,18 @@
 //!
 //! Manages parallel environment execution, matchmaking, and experience routing.
 
+use std::sync::{Arc, RwLock};
+
+use anyhow::Result;
+use crossbeam_channel::{Receiver, Sender};
+use tch::{Device, Kind, Tensor, no_grad};
+
 use super::{
     environment::MultiAgentEnvironment,
     matchmaking::Matchmaker,
     messages::{Experience, PolicyUpdate},
     population::{AgentId, Population},
 };
-use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender};
-use std::sync::{Arc, RwLock};
-use tch::{Device, Kind, Tensor, no_grad};
 
 /// Game simulator - runs environments and routes experiences to learners
 ///
@@ -106,11 +108,8 @@ where
     /// Create new matches using matchmaker
     fn create_matches(&mut self) -> Result<()> {
         let pop = self.population.read().unwrap();
-        self.current_matches = self.matchmaker.create_matches(
-            &pop,
-            self.env_pool.len(),
-            self.agents_per_game,
-        );
+        self.current_matches =
+            self.matchmaker.create_matches(&pop, self.env_pool.len(), self.agents_per_game);
         Ok(())
     }
 
@@ -138,9 +137,8 @@ where
                 let agent_ids = &self.current_matches[env_id];
 
                 // Get observations for all agents
-                let observations: Vec<_> = (0..self.agents_per_game)
-                    .map(|i| env.get_agent_observation(i))
-                    .collect();
+                let observations: Vec<_> =
+                    (0..self.agents_per_game).map(|i| env.get_agent_observation(i)).collect();
 
                 // Each agent selects an action
                 let mut actions = Vec::new();
@@ -259,11 +257,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        env::{Environment, SpaceInfo, StepResult, SpaceType, StepInfo},
-        multi_agent::{
-            environment::MultiAgentResult,
-            population::PopulationConfig,
-        },
+        env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult},
+        multi_agent::{environment::MultiAgentResult, population::PopulationConfig},
     };
 
     #[derive(Clone)]
@@ -290,17 +285,11 @@ mod tests {
         }
 
         fn observation_space(&self) -> SpaceInfo {
-            SpaceInfo {
-                shape: vec![],
-                dtype: SpaceType::Discrete(2),
-            }
+            SpaceInfo { shape: vec![], dtype: SpaceType::Discrete(2) }
         }
 
         fn action_space(&self) -> SpaceInfo {
-            SpaceInfo {
-                shape: vec![],
-                dtype: SpaceType::Discrete(2),
-            }
+            SpaceInfo { shape: vec![], dtype: SpaceType::Discrete(2) }
         }
     }
 

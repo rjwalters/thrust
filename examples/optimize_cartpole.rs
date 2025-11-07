@@ -11,13 +11,13 @@
 //!
 //! Results are saved to `cartpole_optimization_results.json` after each trial.
 
+use std::{collections::HashMap, fs};
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fs;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
-    env::{cartpole::CartPole, pool::EnvPool, Environment},
+    env::{Environment, cartpole::CartPole, pool::EnvPool},
     optimize::{Objective, ParameterValue, SearchSpace, Trial, TrialResult},
     policy::mlp::{Activation, MlpConfig, MlpPolicy},
     train::ppo::{PPOConfig, PPOTrainer},
@@ -32,11 +32,7 @@ struct OptimizationState {
 
 impl OptimizationState {
     fn new() -> Self {
-        Self {
-            trials: Vec::new(),
-            best_performance: 0.0,
-            best_trial_id: None,
-        }
+        Self { trials: Vec::new(), best_performance: 0.0, best_trial_id: None }
     }
 
     fn save(&self, path: &str) -> Result<()> {
@@ -82,8 +78,18 @@ fn run_trial(
     let gamma = config.get("gamma").map(|v| v.as_f64()).unwrap_or(0.99);
     let num_envs = config.get("num_envs").and_then(|v| v.as_i64()).unwrap_or(16) as usize;
 
-    tracing::info!("Trial {}: n_steps={}, hidden={}, lr={:.5}, epochs={}, batch={}, ent={:.3}, gamma={:.3}, envs={}",
-        trial_id, n_steps, hidden_dim, learning_rate, n_epochs, batch_size, ent_coef, gamma, num_envs);
+    tracing::info!(
+        "Trial {}: n_steps={}, hidden={}, lr={:.5}, epochs={}, batch={}, ent={:.3}, gamma={:.3}, envs={}",
+        trial_id,
+        n_steps,
+        hidden_dim,
+        learning_rate,
+        n_epochs,
+        batch_size,
+        ent_coef,
+        gamma,
+        num_envs
+    );
 
     // Environment setup
     let env = CartPole::new();
@@ -226,9 +232,7 @@ fn run_trial(
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     tracing::info!("🔍 Starting CartPole Hyperparameter Optimization");
 
@@ -263,7 +267,8 @@ fn main() -> Result<()> {
 
     // Load or create optimization state
     let state_path = "cartpole_optimization_results.json";
-    let mut state = OptimizationState::load(state_path).unwrap_or_else(|_| OptimizationState::new());
+    let mut state =
+        OptimizationState::load(state_path).unwrap_or_else(|_| OptimizationState::new());
 
     let start_trial = state.trials.len();
     tracing::info!("Resuming from trial {}", start_trial);
@@ -291,7 +296,12 @@ fn main() -> Result<()> {
             if result.success {
                 let perf = result.get_metric("performance").unwrap_or(0.0);
                 let time = result.get_metric("training_time").unwrap_or(0.0);
-                tracing::info!("✅ Trial {} complete: performance={:.1}, time={:.1}s", trial_id, perf, time);
+                tracing::info!(
+                    "✅ Trial {} complete: performance={:.1}, time={:.1}s",
+                    trial_id,
+                    perf,
+                    time
+                );
 
                 if perf >= 450.0 {
                     tracing::info!("🎉 BREAKTHROUGH! Found 450+ configuration!");
@@ -305,16 +315,20 @@ fn main() -> Result<()> {
         state.add_trial(trial);
         state.save(state_path)?;
 
-        tracing::info!("Best so far: {:.1} (trial {})",
+        tracing::info!(
+            "Best so far: {:.1} (trial {})",
             state.best_performance,
-            state.best_trial_id.unwrap_or(0));
+            state.best_trial_id.unwrap_or(0)
+        );
     }
 
     tracing::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     tracing::info!("🏁 Optimization Complete!");
-    tracing::info!("Best performance: {:.1} (trial {})",
+    tracing::info!(
+        "Best performance: {:.1} (trial {})",
         state.best_performance,
-        state.best_trial_id.unwrap_or(0));
+        state.best_trial_id.unwrap_or(0)
+    );
 
     if let Some(best_id) = state.best_trial_id {
         if let Some(best_trial) = state.trials.get(best_id) {

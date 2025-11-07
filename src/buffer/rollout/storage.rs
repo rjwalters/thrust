@@ -161,19 +161,41 @@ impl RolloutBuffer {
     }
 
     // Getters for raw data access
-    pub fn observations(&self) -> &[Vec<Vec<f32>>] { &self.observations }
-    pub fn actions(&self) -> &[Vec<i64>] { &self.actions }
-    pub fn rewards(&self) -> &[Vec<f32>] { &self.rewards }
-    pub fn values(&self) -> &[Vec<f32>] { &self.values }
-    pub fn log_probs(&self) -> &[Vec<f32>] { &self.log_probs }
-    pub fn terminated(&self) -> &[Vec<bool>] { &self.terminated }
-    pub fn truncated(&self) -> &[Vec<bool>] { &self.truncated }
-    pub fn advantages(&self) -> &[Vec<f32>] { &self.advantages }
-    pub fn returns(&self) -> &[Vec<f32>] { &self.returns }
+    pub fn observations(&self) -> &[Vec<Vec<f32>>] {
+        &self.observations
+    }
+    pub fn actions(&self) -> &[Vec<i64>] {
+        &self.actions
+    }
+    pub fn rewards(&self) -> &[Vec<f32>] {
+        &self.rewards
+    }
+    pub fn values(&self) -> &[Vec<f32>] {
+        &self.values
+    }
+    pub fn log_probs(&self) -> &[Vec<f32>] {
+        &self.log_probs
+    }
+    pub fn terminated(&self) -> &[Vec<bool>] {
+        &self.terminated
+    }
+    pub fn truncated(&self) -> &[Vec<bool>] {
+        &self.truncated
+    }
+    pub fn advantages(&self) -> &[Vec<f32>] {
+        &self.advantages
+    }
+    pub fn returns(&self) -> &[Vec<f32>] {
+        &self.returns
+    }
 
     // Mutable getters for advantage/return computation
-    pub fn advantages_mut(&mut self) -> &mut [Vec<f32>] { &mut self.advantages }
-    pub fn returns_mut(&mut self) -> &mut [Vec<f32>] { &mut self.returns }
+    pub fn advantages_mut(&mut self) -> &mut [Vec<f32>] {
+        &mut self.advantages
+    }
+    pub fn returns_mut(&mut self) -> &mut [Vec<f32>] {
+        &mut self.returns
+    }
 
     /// Get mutable references to both advantages and returns
     /// This is needed to avoid double mutable borrow in GAE computation
@@ -232,14 +254,7 @@ impl RolloutBatch {
             }
         }
 
-        Self {
-            observations,
-            actions,
-            old_log_probs,
-            old_values,
-            advantages,
-            returns,
-        }
+        Self { observations, actions, old_log_probs, old_values, advantages, returns }
     }
 
     /// Get batch size

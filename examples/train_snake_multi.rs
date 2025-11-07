@@ -13,13 +13,11 @@
 //! cargo run --example train_snake_multi --release -- --cuda
 //! ```
 
-use anyhow::Result;
 use std::path::PathBuf;
-use tch::{nn, nn::OptimizerConfig, Device, Tensor};
-use thrust_rl::{
-    env::snake::SnakeEnv,
-    policy::snake_cnn::SnakeCNN,
-};
+
+use anyhow::Result;
+use tch::{Device, Tensor, nn, nn::OptimizerConfig};
+use thrust_rl::{env::snake::SnakeEnv, policy::snake_cnn::SnakeCNN};
 
 #[derive(Debug)]
 struct Args {
@@ -97,7 +95,15 @@ impl RolloutBuffer {
         self.dones.clear();
     }
 
-    fn add(&mut self, obs: Vec<f32>, action: i64, log_prob: f32, reward: f32, value: f32, done: bool) {
+    fn add(
+        &mut self,
+        obs: Vec<f32>,
+        action: i64,
+        log_prob: f32,
+        reward: f32,
+        value: f32,
+        done: bool,
+    ) {
         self.observations.push(obs);
         self.actions.push(action);
         self.log_probs.push(log_prob);
@@ -240,14 +246,15 @@ fn main() -> Result<()> {
                 let result = envs[env_idx].step_multi(&env_actions);
 
                 // Store transitions for all agents
-                // Give full reward to each agent (not divided) - they all contribute to the outcome
+                // Give full reward to each agent (not divided) - they all contribute to the
+                // outcome
                 for agent_id in 0..args.num_agents {
                     let obs_idx_curr = env_idx * args.num_agents + agent_id;
                     rollout_buffer.add(
                         all_obs[obs_idx_curr].clone(),
                         actions_vec[obs_idx_curr],
                         log_probs_vec[obs_idx_curr],
-                        result.reward,  // Full reward, not divided
+                        result.reward, // Full reward, not divided
                         values_vec[obs_idx_curr],
                         result.terminated || result.truncated,
                     );
@@ -274,16 +281,11 @@ fn main() -> Result<()> {
 
         // Normalize advantages
         let mean_adv = advantages.iter().sum::<f32>() / advantages.len() as f32;
-        let std_adv = (advantages
-            .iter()
-            .map(|a| (a - mean_adv).powi(2))
-            .sum::<f32>()
+        let std_adv = (advantages.iter().map(|a| (a - mean_adv).powi(2)).sum::<f32>()
             / advantages.len() as f32)
             .sqrt();
-        let norm_advantages: Vec<f32> = advantages
-            .iter()
-            .map(|a| (a - mean_adv) / (std_adv + 1e-8))
-            .collect();
+        let norm_advantages: Vec<f32> =
+            advantages.iter().map(|a| (a - mean_adv) / (std_adv + 1e-8)).collect();
 
         // PPO update
         let buffer_size = rollout_buffer.len();
@@ -296,55 +298,56 @@ fn main() -> Result<()> {
             // Mini-batch updates
             for chunk in indices.chunks(args.minibatch_size) {
                 // Prepare batch
-                let batch_obs: Vec<Vec<f32>> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.observations[i].clone())
-                    .collect();
-                let batch_actions: Vec<i64> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.actions[i])
-                    .collect();
-                let batch_old_log_probs: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.log_probs[i])
-                    .collect();
-                let batch_advantages: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| norm_advantages[i])
-                    .collect();
-                let batch_returns: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| returns[i])
-                    .collect();
+                let batch_obs: Vec<Vec<f32>> =
+                    chunk.iter().map(|&i| rollout_buffer.observations[i].clone()).collect();
+                let batch_actions: Vec<i64> =
+                    chunk.iter().map(|&i| rollout_buffer.actions[i]).collect();
+                let batch_old_log_probs: Vec<f32> =
+                    chunk.iter().map(|&i| rollout_buffer.log_probs[i]).collect();
+                let batch_advantages: Vec<f32> =
+                    chunk.iter().map(|&i| norm_advantages[i]).collect();
+                let batch_returns: Vec<f32> = chunk.iter().map(|&i| returns[i]).collect();
 
                 // Convert to tensors
                 let obs_flat: Vec<f32> = batch_obs.iter().flatten().copied().collect();
                 let obs_tensor = Tensor::from_slice(&obs_flat)
-                    .reshape([chunk.len() as i64, 5, args.grid_height as i64, args.grid_width as i64])
+                    .reshape([
+                        chunk.len() as i64,
+                        5,
+                        args.grid_height as i64,
+                        args.grid_width as i64,
+                    ])
                     .to_device(device);
 
                 let actions_tensor = Tensor::from_slice(&batch_actions).to_device(device);
-                let old_log_probs_tensor = Tensor::from_slice(&batch_old_log_probs).to_device(device);
+                let old_log_probs_tensor =
+                    Tensor::from_slice(&batch_old_log_probs).to_device(device);
                 let advantages_tensor = Tensor::from_slice(&batch_advantages).to_device(device);
                 let returns_tensor = Tensor::from_slice(&batch_returns).to_device(device);
 
                 // Forward pass
                 let (logits, values) = policy.forward(&obs_tensor);
                 let log_probs_all = logits.log_softmax(-1, tch::Kind::Float);
-                let new_log_probs = log_probs_all.gather(1, &actions_tensor.unsqueeze(1), false).squeeze_dim(1);
+                let new_log_probs =
+                    log_probs_all.gather(1, &actions_tensor.unsqueeze(1), false).squeeze_dim(1);
 
                 // PPO loss
                 let ratio = (&new_log_probs - &old_log_probs_tensor).exp();
                 let surr1 = &ratio * &advantages_tensor;
-                let surr2 = ratio.clamp(1.0 - args.clip_param, 1.0 + args.clip_param) * &advantages_tensor;
+                let surr2 =
+                    ratio.clamp(1.0 - args.clip_param, 1.0 + args.clip_param) * &advantages_tensor;
                 let policy_loss = -surr1.min_other(&surr2).mean(tch::Kind::Float);
 
                 // Value loss
-                let value_loss = (&values.squeeze_dim(1) - &returns_tensor).pow_tensor_scalar(2).mean(tch::Kind::Float);
+                let value_loss = (&values.squeeze_dim(1) - &returns_tensor)
+                    .pow_tensor_scalar(2)
+                    .mean(tch::Kind::Float);
 
                 // Entropy bonus
                 let probs = logits.softmax(-1, tch::Kind::Float);
-                let entropy = -(probs * log_probs_all).sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float).mean(tch::Kind::Float);
+                let entropy = -(probs * log_probs_all)
+                    .sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float)
+                    .mean(tch::Kind::Float);
 
                 // Total loss
                 let loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
@@ -371,7 +374,8 @@ fn main() -> Result<()> {
 
         // Save checkpoint
         if (epoch + 1) % args.save_interval == 0 {
-            let checkpoint_path = args.output.with_extension(format!("epoch{}.safetensors", epoch + 1));
+            let checkpoint_path =
+                args.output.with_extension(format!("epoch{}.safetensors", epoch + 1));
             vs.save(&checkpoint_path)?;
             println!("Saved checkpoint to {:?}", checkpoint_path);
         }

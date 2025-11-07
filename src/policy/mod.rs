@@ -4,6 +4,7 @@
 //! networks.
 
 pub mod inference;
+pub mod universal_inference;
 
 #[cfg(feature = "training")]
 pub mod mlp;

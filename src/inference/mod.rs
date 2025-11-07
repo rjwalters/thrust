@@ -5,8 +5,8 @@
 //! libtorch/tch-rs, implementing only forward pass for trained models.
 
 pub mod nn;
-pub mod weights;
 pub mod snake;
+pub mod weights;
 
 use serde::{Deserialize, Serialize};
 
@@ -50,23 +50,12 @@ impl ExportedModel {
         policy_head: LayerWeights,
         value_head: Option<LayerWeights>,
     ) -> Self {
-        Self {
-            input_dim,
-            output_dim,
-            hidden_dim,
-            feature_extractor,
-            policy_head,
-            value_head,
-        }
+        Self { input_dim, output_dim, hidden_dim, feature_extractor, policy_head, value_head }
     }
 
     /// Run inference on the model
     pub fn predict(&self, observation: &[f32]) -> Vec<f32> {
-        assert_eq!(
-            observation.len(),
-            self.input_dim,
-            "Input dimension mismatch"
-        );
+        assert_eq!(observation.len(), self.input_dim, "Input dimension mismatch");
 
         // Feature extraction with ReLU
         let features = self.feature_extractor.forward(observation);
@@ -98,20 +87,16 @@ impl ExportedModel {
 
 impl LayerWeights {
     /// Create new layer weights
-    pub fn new(weights: Vec<f32>, biases: Vec<f32>, in_features: usize, out_features: usize) -> Self {
-        assert_eq!(
-            weights.len(),
-            in_features * out_features,
-            "Weight matrix size mismatch"
-        );
+    pub fn new(
+        weights: Vec<f32>,
+        biases: Vec<f32>,
+        in_features: usize,
+        out_features: usize,
+    ) -> Self {
+        assert_eq!(weights.len(), in_features * out_features, "Weight matrix size mismatch");
         assert_eq!(biases.len(), out_features, "Bias vector size mismatch");
 
-        Self {
-            weights,
-            biases,
-            in_features,
-            out_features,
-        }
+        Self { weights, biases, in_features, out_features }
     }
 
     /// Forward pass through a linear layer

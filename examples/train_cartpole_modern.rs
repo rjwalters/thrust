@@ -16,7 +16,7 @@
 use anyhow::Result;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
-    env::{cartpole::CartPole, pool::EnvPool, Environment},
+    env::{Environment, cartpole::CartPole, pool::EnvPool},
     policy::{
         inference::TrainingMetadata,
         mlp::{Activation, MlpConfig, MlpPolicy},
@@ -26,9 +26,7 @@ use thrust_rl::{
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     tracing::info!("🚀 Starting Modern CartPole PPO Training");
 
@@ -36,11 +34,11 @@ fn main() -> Result<()> {
     let training_start = std::time::Instant::now();
 
     // Hyperparameters - optimized for best performance with LR annealing
-    const NUM_ENVS: usize = 16;  // More parallel envs for better sampling
-    const NUM_STEPS: usize = 256;  // Our optimal rollout length
-    const TOTAL_TIMESTEPS: usize = 1_000_000;  // Train for 1M steps with LR decay
-    const INITIAL_LEARNING_RATE: f64 = 0.0003;  // Start at 3e-4
-    const HIDDEN_DIM: i64 = 128;  // Larger network
+    const NUM_ENVS: usize = 16; // More parallel envs for better sampling
+    const NUM_STEPS: usize = 256; // Our optimal rollout length
+    const TOTAL_TIMESTEPS: usize = 1_000_000; // Train for 1M steps with LR decay
+    const INITIAL_LEARNING_RATE: f64 = 0.0003; // Start at 3e-4
+    const HIDDEN_DIM: i64 = 128; // Larger network
 
     // Environment dimensions
     let env = CartPole::new();
@@ -69,7 +67,7 @@ fn main() -> Result<()> {
         num_layers: 2,
         hidden_dim: HIDDEN_DIM,
         use_orthogonal_init: true,
-        activation: Activation::ReLU,  // Try ReLU instead of Tanh
+        activation: Activation::ReLU, // Try ReLU instead of Tanh
     };
     let mut policy = MlpPolicy::with_config(obs_dim, action_dim, config);
     let device = policy.device();
@@ -180,16 +178,11 @@ fn main() -> Result<()> {
         let obs_tensor = tch::Tensor::from_slice(&batch.observations)
             .reshape([batch_size as i64, obs_dim])
             .to_device(device);
-        let actions_tensor = tch::Tensor::from_slice(&batch.actions)
-            .to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs)
-            .to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values)
-            .to_device(device);
-        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages)
-            .to_device(device);
-        let returns_tensor = tch::Tensor::from_slice(&batch.returns)
-            .to_device(device);
+        let actions_tensor = tch::Tensor::from_slice(&batch.actions).to_device(device);
+        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs).to_device(device);
+        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values).to_device(device);
+        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages).to_device(device);
+        let returns_tensor = tch::Tensor::from_slice(&batch.returns).to_device(device);
 
         // Train
         let stats = trainer.train_step_with_policy(
@@ -270,7 +263,9 @@ fn main() -> Result<()> {
             "Modern RL training: ReLU activation, 128 hidden units, n_steps=256, lr=0.0003->0 (linear decay), \
              no obs normalization (inference compatible). \
              Achieved {:.1} steps/episode in {:.1}s ({:.0} steps/sec).",
-            final_avg, training_secs, trainer.total_steps() as f64 / training_secs
+            final_avg,
+            training_secs,
+            trainer.total_steps() as f64 / training_secs
         )),
     };
     exported_model.metadata = Some(metadata);

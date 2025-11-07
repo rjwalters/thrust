@@ -3,8 +3,9 @@
 //! Extends the base Environment trait to support multiple agents playing
 //! simultaneously in the same game instance.
 
-use crate::env::Environment;
 use std::collections::HashMap;
+
+use crate::env::Environment;
 
 /// Multi-agent environment trait
 ///
@@ -65,29 +66,17 @@ impl MultiAgentResult {
         terminated: Vec<bool>,
         truncated: Vec<bool>,
     ) -> Self {
-        Self {
-            observations,
-            rewards,
-            terminated,
-            truncated,
-            info: HashMap::new(),
-        }
+        Self { observations, rewards, terminated, truncated, info: HashMap::new() }
     }
 
     /// Check if all agents are done (either terminated or truncated)
     pub fn all_done(&self) -> bool {
-        self.terminated
-            .iter()
-            .zip(&self.truncated)
-            .all(|(term, trunc)| *term || *trunc)
+        self.terminated.iter().zip(&self.truncated).all(|(term, trunc)| *term || *trunc)
     }
 
     /// Check if any agent is done
     pub fn any_done(&self) -> bool {
-        self.terminated
-            .iter()
-            .zip(&self.truncated)
-            .any(|(term, trunc)| *term || *trunc)
+        self.terminated.iter().zip(&self.truncated).any(|(term, trunc)| *term || *trunc)
     }
 }
 
@@ -112,9 +101,9 @@ impl MultiAgentResult {
 //             Ok(MockObs)
 //         }
 //
-//         fn step(&mut self, _action: Self::Action) -> Result<crate::env::StepResult<Self::Observation>> {
-//             Ok(crate::env::StepResult {
-//                 observation: MockObs,
+//         fn step(&mut self, _action: Self::Action) ->
+// Result<crate::env::StepResult<Self::Observation>> {             
+// Ok(crate::env::StepResult {                 observation: MockObs,
 //                 reward: 0.0,
 //                 terminated: false,
 //                 truncated: false,
@@ -146,8 +135,8 @@ impl MultiAgentResult {
 //             MockObs
 //         }
 //
-//         fn step_multi(&mut self, actions: &[Self::Action]) -> MultiAgentResult<Self> {
-//             MultiAgentResult::new(
+//         fn step_multi(&mut self, actions: &[Self::Action]) ->
+// MultiAgentResult<Self> {             MultiAgentResult::new(
 //                 vec![MockObs; actions.len()],
 //                 vec![1.0; actions.len()],
 //                 vec![false; actions.len()],

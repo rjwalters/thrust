@@ -21,7 +21,7 @@
 use anyhow::Result;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
-    env::{cartpole::CartPole, pool::EnvPool, Environment},
+    env::{Environment, cartpole::CartPole, pool::EnvPool},
     policy::{
         inference::TrainingMetadata,
         mlp::{Activation, MlpConfig, MlpPolicy},
@@ -31,9 +31,7 @@ use thrust_rl::{
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     tracing::info!("🚀 Starting CartPole PPO Training (SB3 Config)");
 
@@ -42,10 +40,10 @@ fn main() -> Result<()> {
 
     // Hyperparameters - matching Stable-Baselines3 exactly
     const NUM_ENVS: usize = 8;
-    const NUM_STEPS: usize = 32;  // Much shorter rollouts!
-    const TOTAL_TIMESTEPS: usize = 100_000;  // Only 100k needed!
-    const INITIAL_LEARNING_RATE: f64 = 0.001;  // 4x higher than before
-    const HIDDEN_DIM: i64 = 64;  // Use default network size
+    const NUM_STEPS: usize = 32; // Much shorter rollouts!
+    const TOTAL_TIMESTEPS: usize = 100_000; // Only 100k needed!
+    const INITIAL_LEARNING_RATE: f64 = 0.001; // 4x higher than before
+    const HIDDEN_DIM: i64 = 64; // Use default network size
 
     // Environment dimensions
     let env = CartPole::new();
@@ -74,7 +72,7 @@ fn main() -> Result<()> {
         num_layers: 2,
         hidden_dim: HIDDEN_DIM,
         use_orthogonal_init: true,
-        activation: Activation::Tanh,  // SB3 uses Tanh
+        activation: Activation::Tanh, // SB3 uses Tanh
     };
     let mut policy = MlpPolicy::with_config(obs_dim, action_dim, config);
     let device = policy.device();
@@ -182,16 +180,11 @@ fn main() -> Result<()> {
         let obs_tensor = tch::Tensor::from_slice(&batch.observations)
             .reshape([batch_size as i64, obs_dim])
             .to_device(device);
-        let actions_tensor = tch::Tensor::from_slice(&batch.actions)
-            .to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs)
-            .to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values)
-            .to_device(device);
-        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages)
-            .to_device(device);
-        let returns_tensor = tch::Tensor::from_slice(&batch.returns)
-            .to_device(device);
+        let actions_tensor = tch::Tensor::from_slice(&batch.actions).to_device(device);
+        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs).to_device(device);
+        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values).to_device(device);
+        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages).to_device(device);
+        let returns_tensor = tch::Tensor::from_slice(&batch.returns).to_device(device);
 
         // Train
         let stats = trainer.train_step_with_policy(
@@ -273,7 +266,9 @@ fn main() -> Result<()> {
             "SB3-matched training: n_steps=32, batch_size=256, n_epochs=20, lr=0.001->0 (linear decay), \
              gamma=0.98, gae_lambda=0.8, ent_coef=0.0, Tanh activation. \
              Achieved {:.1} steps/episode in {:.1}s ({:.0} steps/sec).",
-            final_avg, training_secs, trainer.total_steps() as f64 / training_secs
+            final_avg,
+            training_secs,
+            trainer.total_steps() as f64 / training_secs
         )),
     };
     exported_model.metadata = Some(metadata);
@@ -290,7 +285,9 @@ fn main() -> Result<()> {
     } else if final_avg >= 300.0 {
         tracing::info!("👍 GOOD! Solid performance achieved!");
     } else {
-        tracing::info!("💡 Performance below target - may need more training or hyperparameter tuning");
+        tracing::info!(
+            "💡 Performance below target - may need more training or hyperparameter tuning"
+        );
     }
 
     Ok(())

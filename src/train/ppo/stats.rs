@@ -146,13 +146,19 @@ impl AggregatedStats {
 
         // Update running average (exponential moving average with alpha=0.1)
         let alpha = 0.1;
-        self.running_avg.policy_loss = alpha * stats.policy_loss + (1.0 - alpha) * self.running_avg.policy_loss;
-        self.running_avg.value_loss = alpha * stats.value_loss + (1.0 - alpha) * self.running_avg.value_loss;
+        self.running_avg.policy_loss =
+            alpha * stats.policy_loss + (1.0 - alpha) * self.running_avg.policy_loss;
+        self.running_avg.value_loss =
+            alpha * stats.value_loss + (1.0 - alpha) * self.running_avg.value_loss;
         self.running_avg.entropy = alpha * stats.entropy + (1.0 - alpha) * self.running_avg.entropy;
-        self.running_avg.total_loss = alpha * stats.total_loss + (1.0 - alpha) * self.running_avg.total_loss;
-        self.running_avg.clip_fraction = alpha * stats.clip_fraction + (1.0 - alpha) * self.running_avg.clip_fraction;
-        self.running_avg.approx_kl = alpha * stats.approx_kl + (1.0 - alpha) * self.running_avg.approx_kl;
-        self.running_avg.explained_var = alpha * stats.explained_var + (1.0 - alpha) * self.running_avg.explained_var;
+        self.running_avg.total_loss =
+            alpha * stats.total_loss + (1.0 - alpha) * self.running_avg.total_loss;
+        self.running_avg.clip_fraction =
+            alpha * stats.clip_fraction + (1.0 - alpha) * self.running_avg.clip_fraction;
+        self.running_avg.approx_kl =
+            alpha * stats.approx_kl + (1.0 - alpha) * self.running_avg.approx_kl;
+        self.running_avg.explained_var =
+            alpha * stats.explained_var + (1.0 - alpha) * self.running_avg.explained_var;
 
         // Update best losses
         if stats.policy_loss < self.best_policy_loss {

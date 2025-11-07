@@ -11,9 +11,9 @@
 //! ```
 
 use anyhow::Result;
-use tch::{nn, nn::OptimizerConfig, Device, Tensor};
+use tch::{Device, Tensor, nn, nn::OptimizerConfig};
 use thrust_rl::{
-    env::{snake::SnakeEnv, Environment},
+    env::{Environment, snake::SnakeEnv},
     policy::snake_cnn::SnakeCNN,
 };
 
@@ -48,7 +48,15 @@ impl RolloutBuffer {
         self.dones.clear();
     }
 
-    fn add(&mut self, obs: Vec<f32>, action: i64, log_prob: f32, reward: f32, value: f32, done: bool) {
+    fn add(
+        &mut self,
+        obs: Vec<f32>,
+        action: i64,
+        log_prob: f32,
+        reward: f32,
+        value: f32,
+        done: bool,
+    ) {
         self.observations.push(obs);
         self.actions.push(action);
         self.log_probs.push(log_prob);
@@ -92,16 +100,14 @@ fn compute_advantages(
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     tracing::info!("🐍 Starting Single-Agent Snake PPO Training");
 
     // Hyperparameters
-    const NUM_ENVS: usize = 16;  // Parallel environments
-    const NUM_STEPS: usize = 512;  // Steps per rollout
-    const TOTAL_TIMESTEPS: usize = 2_000_000;  // 2M timesteps
+    const NUM_ENVS: usize = 16; // Parallel environments
+    const NUM_STEPS: usize = 512; // Steps per rollout
+    const TOTAL_TIMESTEPS: usize = 2_000_000; // 2M timesteps
     const LEARNING_RATE: f64 = 0.0003;
     const GRID_WIDTH: i32 = 20;
     const GRID_HEIGHT: i32 = 20;
@@ -116,7 +122,8 @@ fn main() -> Result<()> {
     // Create single-agent snake environment (1 snake)
     let env = SnakeEnv::new(GRID_WIDTH, GRID_HEIGHT);
 
-    // Grid observations are 5 channels: own body, own head, other bodies, other heads, food
+    // Grid observations are 5 channels: own body, own head, other bodies, other
+    // heads, food
     let channels = 5i64;
     let height = GRID_HEIGHT as i64;
     let width = GRID_WIDTH as i64;
@@ -129,9 +136,8 @@ fn main() -> Result<()> {
     tracing::info!("  Total timesteps: {}", TOTAL_TIMESTEPS);
 
     // Create environment pool
-    let mut envs: Vec<SnakeEnv> = (0..NUM_ENVS)
-        .map(|_| SnakeEnv::new(GRID_WIDTH, GRID_HEIGHT))
-        .collect();
+    let mut envs: Vec<SnakeEnv> =
+        (0..NUM_ENVS).map(|_| SnakeEnv::new(GRID_WIDTH, GRID_HEIGHT)).collect();
 
     // Create CNN policy
     tracing::info!("Creating CNN policy...");
@@ -146,18 +152,22 @@ fn main() -> Result<()> {
     let num_updates = TOTAL_TIMESTEPS / (NUM_STEPS * NUM_ENVS);
     tracing::info!("Starting training loop ({} updates)...", num_updates);
 
-    // Initialize observations - reset() modifies in place, then get grid observations
+    // Initialize observations - reset() modifies in place, then get grid
+    // observations
     for env in &mut envs {
         env.reset();
     }
     // Get grid observations for single-agent Snake (agent_id=0)
-    let mut observations: Vec<Vec<f32>> = envs.iter().map(|env| env.get_grid_observation(0)).collect();
+    let mut observations: Vec<Vec<f32>> =
+        envs.iter().map(|env| env.get_grid_observation(0)).collect();
 
     // Verify observation size
     if observations[0].len() != (channels as usize) * (height as usize) * (width as usize) {
-        panic!("Observation size mismatch! Expected {} but got {}",
+        panic!(
+            "Observation size mismatch! Expected {} but got {}",
             (channels as usize) * (height as usize) * (width as usize),
-            observations[0].len());
+            observations[0].len()
+        );
     }
     let mut buffer = RolloutBuffer::new();
     let mut total_episodes = 0;
@@ -200,7 +210,8 @@ fn main() -> Result<()> {
                     envs[env_id].reset();
                 }
 
-                // Always get grid observation (step() returns simple features, but we need grid)
+                // Always get grid observation (step() returns simple features, but we need
+                // grid)
                 observations[env_id] = envs[env_id].get_grid_observation(0);
             }
 
@@ -208,20 +219,16 @@ fn main() -> Result<()> {
         }
 
         // Compute advantages
-        let (advantages, returns) = compute_advantages(
-            &buffer.rewards,
-            &buffer.values,
-            &buffer.dones,
-            GAMMA,
-            GAE_LAMBDA,
-        );
+        let (advantages, returns) =
+            compute_advantages(&buffer.rewards, &buffer.values, &buffer.dones, GAMMA, GAE_LAMBDA);
 
         // Normalize advantages
         let adv_mean = advantages.iter().sum::<f32>() / advantages.len() as f32;
-        let adv_std = (advantages.iter().map(|a| (a - adv_mean).powi(2)).sum::<f32>() / advantages.len() as f32).sqrt();
-        let advantages_normalized: Vec<f32> = advantages.iter()
-            .map(|a| (a - adv_mean) / (adv_std + 1e-8))
-            .collect();
+        let adv_std = (advantages.iter().map(|a| (a - adv_mean).powi(2)).sum::<f32>()
+            / advantages.len() as f32)
+            .sqrt();
+        let advantages_normalized: Vec<f32> =
+            advantages.iter().map(|a| (a - adv_mean) / (adv_std + 1e-8)).collect();
 
         // PPO update
         let batch_size = buffer.len();
@@ -241,29 +248,32 @@ fn main() -> Result<()> {
                 let mb_indices = &indices[mb * MINIBATCH_SIZE..(mb + 1) * MINIBATCH_SIZE];
 
                 // Prepare minibatch
-                let mb_obs: Vec<f32> = mb_indices.iter()
+                let mb_obs: Vec<f32> = mb_indices
+                    .iter()
                     .flat_map(|&i| buffer.observations[i].iter())
                     .copied()
                     .collect();
                 let mb_actions: Vec<i64> = mb_indices.iter().map(|&i| buffer.actions[i]).collect();
-                let mb_old_log_probs: Vec<f32> = mb_indices.iter().map(|&i| buffer.log_probs[i]).collect();
-                let mb_advantages: Vec<f32> = mb_indices.iter().map(|&i| advantages_normalized[i]).collect();
+                let mb_old_log_probs: Vec<f32> =
+                    mb_indices.iter().map(|&i| buffer.log_probs[i]).collect();
+                let mb_advantages: Vec<f32> =
+                    mb_indices.iter().map(|&i| advantages_normalized[i]).collect();
                 let mb_returns: Vec<f32> = mb_indices.iter().map(|&i| returns[i]).collect();
 
                 let mb_obs_tensor = Tensor::from_slice(&mb_obs)
                     .reshape([MINIBATCH_SIZE as i64, channels, height, width])
                     .to_device(device);
                 let mb_actions_tensor = Tensor::from_slice(&mb_actions).to_device(device);
-                let mb_old_log_probs_tensor = Tensor::from_slice(&mb_old_log_probs).to_device(device);
+                let mb_old_log_probs_tensor =
+                    Tensor::from_slice(&mb_old_log_probs).to_device(device);
                 let mb_advantages_tensor = Tensor::from_slice(&mb_advantages).to_device(device);
                 let mb_returns_tensor = Tensor::from_slice(&mb_returns).to_device(device);
 
                 // Forward pass
                 let (logits, values) = policy.forward(&mb_obs_tensor);
                 let log_probs_all = logits.log_softmax(-1, tch::Kind::Float);
-                let new_log_probs = log_probs_all
-                    .gather(1, &mb_actions_tensor.unsqueeze(1), false)
-                    .squeeze_dim(1);
+                let new_log_probs =
+                    log_probs_all.gather(1, &mb_actions_tensor.unsqueeze(1), false).squeeze_dim(1);
 
                 // Policy loss (PPO clipped objective)
                 let ratio = (&new_log_probs - &mb_old_log_probs_tensor).exp();
@@ -278,7 +288,9 @@ fn main() -> Result<()> {
 
                 // Entropy bonus
                 let probs = logits.softmax(-1, tch::Kind::Float);
-                let entropy = -(probs * log_probs_all).sum_dim_intlist(-1, false, tch::Kind::Float).mean(tch::Kind::Float);
+                let entropy = -(probs * log_probs_all)
+                    .sum_dim_intlist(-1, false, tch::Kind::Float)
+                    .mean(tch::Kind::Float);
 
                 // Total loss
                 let loss = &policy_loss + &value_loss * VALUE_COEF - &entropy * ENTROPY_COEF;

@@ -8,11 +8,11 @@
 //! - P(action=0 | obs=0) should increase
 //! - P(action=1 | obs=1) should increase
 
+use tch::{Device, Kind, Tensor};
 use thrust_rl::{
     policy::mlp::MlpPolicy,
     train::ppo::{PPOConfig, PPOTrainer},
 };
-use tch::{Device, Kind, Tensor};
 
 #[test]
 fn test_ppo_learns_from_synthetic_data() {
@@ -23,23 +23,24 @@ fn test_ppo_learns_from_synthetic_data() {
     let device = policy.device();
 
     // Create synthetic training batch
-    // 8 samples: 4 with obs=0 (should learn action=0), 4 with obs=1 (should learn action=1)
+    // 8 samples: 4 with obs=0 (should learn action=0), 4 with obs=1 (should learn
+    // action=1)
     let observations = Tensor::from_slice(&[
-        0.0_f32, 0.0, 0.0, 0.0,  // obs=0
-        1.0, 1.0, 1.0, 1.0,      // obs=1
+        0.0_f32, 0.0, 0.0, 0.0, // obs=0
+        1.0, 1.0, 1.0, 1.0, // obs=1
     ])
     .view([8, 1])
     .to_device(device);
 
     let actions = Tensor::from_slice(&[
-        0_i64, 0, 0, 0,  // action=0 for obs=0
-        1, 1, 1, 1,      // action=1 for obs=1
+        0_i64, 0, 0, 0, // action=0 for obs=0
+        1, 1, 1, 1, // action=1 for obs=1
     ])
     .to_device(device);
 
     // OLD log probs (all equal - uniform random policy initially)
     let old_log_probs = Tensor::from_slice(&[
-        -0.693_f32, -0.693, -0.693, -0.693,  // log(0.5)
+        -0.693_f32, -0.693, -0.693, -0.693, // log(0.5)
         -0.693, -0.693, -0.693, -0.693,
     ])
     .to_device(device);
@@ -49,17 +50,14 @@ fn test_ppo_learns_from_synthetic_data() {
 
     // ADVANTAGES: High positive advantage for correct actions
     let advantages = Tensor::from_slice(&[
-        10.0_f32, 10.0, 10.0, 10.0,  // action=0 for obs=0 is good
-        10.0, 10.0, 10.0, 10.0,      // action=1 for obs=1 is good
+        10.0_f32, 10.0, 10.0, 10.0, // action=0 for obs=0 is good
+        10.0, 10.0, 10.0, 10.0, // action=1 for obs=1 is good
     ])
     .to_device(device);
 
     // RETURNS (doesn't matter much for this test)
-    let returns = Tensor::from_slice(&[
-        10.0_f32, 10.0, 10.0, 10.0,
-        10.0, 10.0, 10.0, 10.0,
-    ])
-    .to_device(device);
+    let returns =
+        Tensor::from_slice(&[10.0_f32, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]).to_device(device);
 
     // Measure initial policy probabilities
     let (initial_logits, _) = policy.forward(&observations);
@@ -126,8 +124,10 @@ fn test_ppo_learns_from_synthetic_data() {
 
         match result {
             Ok(stats) => {
-                println!("PPO update {}: policy_loss={:.4}, value_loss={:.4}, entropy={:.4}",
-                         i, stats.policy_loss, stats.value_loss, stats.entropy);
+                println!(
+                    "PPO update {}: policy_loss={:.4}, value_loss={:.4}, entropy={:.4}",
+                    i, stats.policy_loss, stats.value_loss, stats.entropy
+                );
             }
             Err(e) => {
                 panic!("PPO update failed: {}", e);
@@ -147,7 +147,8 @@ fn test_ppo_learns_from_synthetic_data() {
     println!("  P(action=1 | obs=1) = {:.4}", obs_1_probs_after[1]);
 
     // ASSERTIONS: Policy should have learned from advantages
-    // With advantages of +10 for correct actions, probabilities should increase significantly
+    // With advantages of +10 for correct actions, probabilities should increase
+    // significantly
     let delta_0 = obs_0_probs_after[0] - obs_0_probs_before[0];
     let delta_1 = obs_1_probs_after[1] - obs_1_probs_before[1];
 

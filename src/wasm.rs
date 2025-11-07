@@ -7,7 +7,7 @@
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "wasm")]
-use crate::env::{Environment, cartpole::CartPole, snake::SnakeEnv, simple_bandit::SimpleBandit};
+use crate::env::{Environment, cartpole::CartPole, simple_bandit::SimpleBandit, snake::SnakeEnv};
 
 /// WASM bindings for CartPole environment
 #[cfg(feature = "wasm")]
@@ -26,13 +26,7 @@ impl WasmCartPole {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         console_error_panic_hook::set_once();
-        Self {
-            env: CartPole::new(),
-            episode: 0,
-            episode_steps: 0,
-            best_score: 0,
-            policy: None,
-        }
+        Self { env: CartPole::new(), episode: 0, episode_steps: 0, best_score: 0, policy: None }
     }
 
     /// Reset the environment and start a new episode
@@ -100,9 +94,8 @@ impl WasmCartPole {
     /// The JSON should contain the InferenceModel structure
     #[wasm_bindgen]
     pub fn load_policy_json(&mut self, json: &str) -> Result<(), JsValue> {
-        let policy: crate::policy::inference::InferenceModel =
-            serde_json::from_str(json)
-                .map_err(|e| JsValue::from_str(&format!("Failed to parse policy JSON: {}", e)))?;
+        let policy: crate::policy::inference::InferenceModel = serde_json::from_str(json)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse policy JSON: {}", e)))?;
 
         self.policy = Some(policy);
         Ok(())
@@ -142,11 +135,7 @@ impl WasmSnake {
     #[wasm_bindgen(constructor)]
     pub fn new(width: i32, height: i32, num_agents: usize) -> Self {
         console_error_panic_hook::set_once();
-        Self {
-            env: SnakeEnv::new_multi(width, height, num_agents),
-            episode: 0,
-            policy: None,
-        }
+        Self { env: SnakeEnv::new_multi(width, height, num_agents), episode: 0, policy: None }
     }
 
     /// Reset the environment
@@ -200,7 +189,8 @@ impl WasmSnake {
     }
 
     /// Get all snake positions for rendering
-    /// Returns flattened array: [num_snakes, len0, x0, y0, x1, y1, ..., len1, x0, y0, ...]
+    /// Returns flattened array: [num_snakes, len0, x0, y0, x1, y1, ..., len1,
+    /// x0, y0, ...]
     #[wasm_bindgen]
     pub fn get_snake_positions(&self) -> Vec<i32> {
         let mut positions = Vec::new();
@@ -237,16 +227,16 @@ impl WasmSnake {
     /// The JSON should contain the SnakeCNNInference model structure
     #[wasm_bindgen]
     pub fn load_policy_json(&mut self, json: &str) -> Result<(), JsValue> {
-        let policy: crate::inference::snake::SnakeCNNInference =
-            serde_json::from_str(json)
-                .map_err(|e| JsValue::from_str(&format!("Failed to parse policy JSON: {}", e)))?;
+        let policy: crate::inference::snake::SnakeCNNInference = serde_json::from_str(json)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse policy JSON: {}", e)))?;
 
         self.policy = Some(policy);
         Ok(())
     }
 
     /// Get policy action for a specific agent using the loaded model
-    /// Returns action index (0=up, 1=down, 2=left, 3=right) or -1 if no policy loaded
+    /// Returns action index (0=up, 1=down, 2=left, 3=right) or -1 if no policy
+    /// loaded
     #[wasm_bindgen]
     pub fn get_policy_action(&self, agent_id: usize) -> i32 {
         if let Some(ref policy) = self.policy {
@@ -296,6 +286,7 @@ impl WasmSimpleBandit {
         self.env.reset();
         self.episode += 1;
         self.episode_steps = 0;
+        self.successes = 0;
         self.env.get_observation()
     }
 

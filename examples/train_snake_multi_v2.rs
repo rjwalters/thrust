@@ -19,13 +19,11 @@
 //! cargo run --example train_snake_multi_v2 --release -- --mode independent --cuda
 //! ```
 
-use anyhow::Result;
 use std::path::PathBuf;
-use tch::{nn, nn::OptimizerConfig, Device, Tensor};
-use thrust_rl::{
-    env::snake::SnakeEnv,
-    policy::snake_cnn::SnakeCNN,
-};
+
+use anyhow::Result;
+use tch::{Device, Tensor, nn, nn::OptimizerConfig};
+use thrust_rl::{env::snake::SnakeEnv, policy::snake_cnn::SnakeCNN};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrainingMode {
@@ -70,7 +68,7 @@ impl Default for Args {
             gamma: 0.99,
             clip_param: 0.2,
             value_coef: 0.5,
-            entropy_coef: 0.01,
+            entropy_coef: 0.03,  // Increased from 0.01 for better exploration (sparse rewards)
             ppo_epochs: 4,
             minibatch_size: 64,
             output: PathBuf::from("models/snake_policy.safetensors"),
@@ -114,7 +112,16 @@ impl RolloutBuffer {
         self.agent_ids.clear();
     }
 
-    fn add(&mut self, obs: Vec<f32>, action: i64, log_prob: f32, reward: f32, value: f32, done: bool, agent_id: usize) {
+    fn add(
+        &mut self,
+        obs: Vec<f32>,
+        action: i64,
+        log_prob: f32,
+        reward: f32,
+        value: f32,
+        done: bool,
+        agent_id: usize,
+    ) {
         self.observations.push(obs);
         self.actions.push(action);
         self.log_probs.push(log_prob);
@@ -293,7 +300,8 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                     .collect();
 
                 // Step environment with per-agent rewards
-                let (agent_rewards, terminated, truncated) = envs[env_idx].step_multi_agents(&env_actions);
+                let (agent_rewards, terminated, truncated) =
+                    envs[env_idx].step_multi_agents(&env_actions);
 
                 // Store transitions for each agent with individualized rewards
                 for agent_id in 0..args.num_agents {
@@ -302,7 +310,7 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                         all_obs[obs_idx_curr].clone(),
                         actions_vec[obs_idx_curr],
                         log_probs_vec[obs_idx_curr],
-                        agent_rewards[agent_id],  // Individual reward!
+                        agent_rewards[agent_id], // Individual reward!
                         values_vec[obs_idx_curr],
                         terminated || truncated,
                         agent_id,
@@ -332,16 +340,11 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
 
         // Normalize advantages
         let mean_adv = advantages.iter().sum::<f32>() / advantages.len() as f32;
-        let std_adv = (advantages
-            .iter()
-            .map(|a| (a - mean_adv).powi(2))
-            .sum::<f32>()
+        let std_adv = (advantages.iter().map(|a| (a - mean_adv).powi(2)).sum::<f32>()
             / advantages.len() as f32)
             .sqrt();
-        let norm_advantages: Vec<f32> = advantages
-            .iter()
-            .map(|a| (a - mean_adv) / (std_adv + 1e-8))
-            .collect();
+        let norm_advantages: Vec<f32> =
+            advantages.iter().map(|a| (a - mean_adv) / (std_adv + 1e-8)).collect();
 
         // PPO update
         let buffer_size = rollout_buffer.len();
@@ -354,55 +357,56 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
             // Mini-batch updates
             for chunk in indices.chunks(args.minibatch_size) {
                 // Prepare batch
-                let batch_obs: Vec<Vec<f32>> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.observations[i].clone())
-                    .collect();
-                let batch_actions: Vec<i64> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.actions[i])
-                    .collect();
-                let batch_old_log_probs: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.log_probs[i])
-                    .collect();
-                let batch_advantages: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| norm_advantages[i])
-                    .collect();
-                let batch_returns: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| returns[i])
-                    .collect();
+                let batch_obs: Vec<Vec<f32>> =
+                    chunk.iter().map(|&i| rollout_buffer.observations[i].clone()).collect();
+                let batch_actions: Vec<i64> =
+                    chunk.iter().map(|&i| rollout_buffer.actions[i]).collect();
+                let batch_old_log_probs: Vec<f32> =
+                    chunk.iter().map(|&i| rollout_buffer.log_probs[i]).collect();
+                let batch_advantages: Vec<f32> =
+                    chunk.iter().map(|&i| norm_advantages[i]).collect();
+                let batch_returns: Vec<f32> = chunk.iter().map(|&i| returns[i]).collect();
 
                 // Convert to tensors
                 let obs_flat: Vec<f32> = batch_obs.iter().flatten().copied().collect();
                 let obs_tensor = Tensor::from_slice(&obs_flat)
-                    .reshape([chunk.len() as i64, 5, args.grid_height as i64, args.grid_width as i64])
+                    .reshape([
+                        chunk.len() as i64,
+                        5,
+                        args.grid_height as i64,
+                        args.grid_width as i64,
+                    ])
                     .to_device(device);
 
                 let actions_tensor = Tensor::from_slice(&batch_actions).to_device(device);
-                let old_log_probs_tensor = Tensor::from_slice(&batch_old_log_probs).to_device(device);
+                let old_log_probs_tensor =
+                    Tensor::from_slice(&batch_old_log_probs).to_device(device);
                 let advantages_tensor = Tensor::from_slice(&batch_advantages).to_device(device);
                 let returns_tensor = Tensor::from_slice(&batch_returns).to_device(device);
 
                 // Forward pass
                 let (logits, values) = policy.forward(&obs_tensor);
                 let log_probs_all = logits.log_softmax(-1, tch::Kind::Float);
-                let new_log_probs = log_probs_all.gather(1, &actions_tensor.unsqueeze(1), false).squeeze_dim(1);
+                let new_log_probs =
+                    log_probs_all.gather(1, &actions_tensor.unsqueeze(1), false).squeeze_dim(1);
 
                 // PPO loss
                 let ratio = (&new_log_probs - &old_log_probs_tensor).exp();
                 let surr1 = &ratio * &advantages_tensor;
-                let surr2 = ratio.clamp(1.0 - args.clip_param, 1.0 + args.clip_param) * &advantages_tensor;
+                let surr2 =
+                    ratio.clamp(1.0 - args.clip_param, 1.0 + args.clip_param) * &advantages_tensor;
                 let policy_loss = -surr1.min_other(&surr2).mean(tch::Kind::Float);
 
                 // Value loss
-                let value_loss = (&values.squeeze_dim(1) - &returns_tensor).pow_tensor_scalar(2).mean(tch::Kind::Float);
+                let value_loss = (&values.squeeze_dim(1) - &returns_tensor)
+                    .pow_tensor_scalar(2)
+                    .mean(tch::Kind::Float);
 
                 // Entropy bonus
                 let probs = logits.softmax(-1, tch::Kind::Float);
-                let entropy = -(probs * log_probs_all).sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float).mean(tch::Kind::Float);
+                let entropy = -(probs * log_probs_all)
+                    .sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float)
+                    .mean(tch::Kind::Float);
 
                 // Total loss
                 let loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
@@ -429,7 +433,8 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
 
         // Save checkpoint
         if (epoch + 1) % args.save_interval == 0 {
-            let checkpoint_path = args.output.with_extension(format!("shared_epoch{}.safetensors", epoch + 1));
+            let checkpoint_path =
+                args.output.with_extension(format!("shared_epoch{}.safetensors", epoch + 1));
             vs.save(&checkpoint_path)?;
             println!("Saved checkpoint to {:?}", checkpoint_path);
         }
@@ -470,9 +475,8 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
         .collect();
 
     // One buffer per agent
-    let mut rollout_buffers: Vec<RolloutBuffer> = (0..args.num_agents)
-        .map(|_| RolloutBuffer::new())
-        .collect();
+    let mut rollout_buffers: Vec<RolloutBuffer> =
+        (0..args.num_agents).map(|_| RolloutBuffer::new()).collect();
 
     let mut total_episodes = 0;
     let mut total_steps = 0;
@@ -506,9 +510,8 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
                         .reshape([1, 5, args.grid_height as i64, args.grid_width as i64])
                         .to_device(device);
 
-                    let (action, log_prob, value) = tch::no_grad(|| {
-                        policies[agent_id].sample_action(&obs_tensor)
-                    });
+                    let (action, log_prob, value) =
+                        tch::no_grad(|| policies[agent_id].sample_action(&obs_tensor));
 
                     let action_val: i64 = action.int64_value(&[0, 0]);
                     let log_prob_val: f32 = log_prob.double_value(&[0, 0]) as f32;
@@ -521,7 +524,8 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
                 }
 
                 // Step environment with per-agent rewards
-                let (agent_rewards, terminated, truncated) = envs[env_idx].step_multi_agents(&env_actions);
+                let (agent_rewards, terminated, truncated) =
+                    envs[env_idx].step_multi_agents(&env_actions);
 
                 // Store transitions in each agent's buffer
                 for agent_id in 0..args.num_agents {
@@ -529,7 +533,7 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
                         env_obs[agent_id].clone(),
                         env_actions[agent_id],
                         env_log_probs[agent_id],
-                        agent_rewards[agent_id],  // Individual reward!
+                        agent_rewards[agent_id], // Individual reward!
                         env_values[agent_id],
                         terminated || truncated,
                         agent_id,
@@ -563,16 +567,11 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
 
             // Normalize advantages
             let mean_adv = advantages.iter().sum::<f32>() / advantages.len().max(1) as f32;
-            let std_adv = (advantages
-                .iter()
-                .map(|a| (a - mean_adv).powi(2))
-                .sum::<f32>()
+            let std_adv = (advantages.iter().map(|a| (a - mean_adv).powi(2)).sum::<f32>()
                 / advantages.len().max(1) as f32)
                 .sqrt();
-            let norm_advantages: Vec<f32> = advantages
-                .iter()
-                .map(|a| (a - mean_adv) / (std_adv + 1e-8))
-                .collect();
+            let norm_advantages: Vec<f32> =
+                advantages.iter().map(|a| (a - mean_adv) / (std_adv + 1e-8)).collect();
 
             // PPO update for this agent
             let buffer_size = buffer.len();
@@ -583,58 +582,60 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
 
                 for chunk in indices.chunks(args.minibatch_size.min(buffer_size)) {
                     // Prepare batch
-                    let batch_obs: Vec<Vec<f32>> = chunk
-                        .iter()
-                        .map(|&i| buffer.observations[i].clone())
-                        .collect();
-                    let batch_actions: Vec<i64> = chunk
-                        .iter()
-                        .map(|&i| buffer.actions[i])
-                        .collect();
-                    let batch_old_log_probs: Vec<f32> = chunk
-                        .iter()
-                        .map(|&i| buffer.log_probs[i])
-                        .collect();
-                    let batch_advantages: Vec<f32> = chunk
-                        .iter()
-                        .map(|&i| norm_advantages[i])
-                        .collect();
-                    let batch_returns: Vec<f32> = chunk
-                        .iter()
-                        .map(|&i| returns[i])
-                        .collect();
+                    let batch_obs: Vec<Vec<f32>> =
+                        chunk.iter().map(|&i| buffer.observations[i].clone()).collect();
+                    let batch_actions: Vec<i64> =
+                        chunk.iter().map(|&i| buffer.actions[i]).collect();
+                    let batch_old_log_probs: Vec<f32> =
+                        chunk.iter().map(|&i| buffer.log_probs[i]).collect();
+                    let batch_advantages: Vec<f32> =
+                        chunk.iter().map(|&i| norm_advantages[i]).collect();
+                    let batch_returns: Vec<f32> = chunk.iter().map(|&i| returns[i]).collect();
 
                     // Convert to tensors
                     let obs_flat: Vec<f32> = batch_obs.iter().flatten().copied().collect();
                     let obs_tensor = Tensor::from_slice(&obs_flat)
-                        .reshape([chunk.len() as i64, 5, args.grid_height as i64, args.grid_width as i64])
+                        .reshape([
+                            chunk.len() as i64,
+                            5,
+                            args.grid_height as i64,
+                            args.grid_width as i64,
+                        ])
                         .to_device(device);
 
                     let actions_tensor = Tensor::from_slice(&batch_actions).to_device(device);
-                    let old_log_probs_tensor = Tensor::from_slice(&batch_old_log_probs).to_device(device);
+                    let old_log_probs_tensor =
+                        Tensor::from_slice(&batch_old_log_probs).to_device(device);
                     let advantages_tensor = Tensor::from_slice(&batch_advantages).to_device(device);
                     let returns_tensor = Tensor::from_slice(&batch_returns).to_device(device);
 
                     // Forward pass
                     let (logits, values) = policies[agent_id].forward(&obs_tensor);
                     let log_probs_all = logits.log_softmax(-1, tch::Kind::Float);
-                    let new_log_probs = log_probs_all.gather(1, &actions_tensor.unsqueeze(1), false).squeeze_dim(1);
+                    let new_log_probs =
+                        log_probs_all.gather(1, &actions_tensor.unsqueeze(1), false).squeeze_dim(1);
 
                     // PPO loss
                     let ratio = (&new_log_probs - &old_log_probs_tensor).exp();
                     let surr1 = &ratio * &advantages_tensor;
-                    let surr2 = ratio.clamp(1.0 - args.clip_param, 1.0 + args.clip_param) * &advantages_tensor;
+                    let surr2 = ratio.clamp(1.0 - args.clip_param, 1.0 + args.clip_param)
+                        * &advantages_tensor;
                     let policy_loss = -surr1.min_other(&surr2).mean(tch::Kind::Float);
 
                     // Value loss
-                    let value_loss = (&values.squeeze_dim(1) - &returns_tensor).pow_tensor_scalar(2).mean(tch::Kind::Float);
+                    let value_loss = (&values.squeeze_dim(1) - &returns_tensor)
+                        .pow_tensor_scalar(2)
+                        .mean(tch::Kind::Float);
 
                     // Entropy bonus
                     let probs = logits.softmax(-1, tch::Kind::Float);
-                    let entropy = -(probs * log_probs_all).sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float).mean(tch::Kind::Float);
+                    let entropy = -(probs * log_probs_all)
+                        .sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float)
+                        .mean(tch::Kind::Float);
 
                     // Total loss
-                    let loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
+                    let loss =
+                        policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
 
                     // Backward pass
                     optimizers[agent_id].zero_grad();
@@ -660,8 +661,11 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
         // Save checkpoints for all agents
         if (epoch + 1) % args.save_interval == 0 {
             for agent_id in 0..args.num_agents {
-                let checkpoint_path = args.output
-                    .with_file_name(format!("snake_policy_agent{}_epoch{}.safetensors", agent_id, epoch + 1));
+                let checkpoint_path = args.output.with_file_name(format!(
+                    "snake_policy_agent{}_epoch{}.safetensors",
+                    agent_id,
+                    epoch + 1
+                ));
                 var_stores[agent_id].save(&checkpoint_path)?;
             }
             println!("Saved checkpoints for epoch {}", epoch + 1);
@@ -670,7 +674,8 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
 
     // Save final models
     for agent_id in 0..args.num_agents {
-        let final_path = args.output
+        let final_path = args
+            .output
             .with_file_name(format!("snake_policy_independent_agent{}.safetensors", agent_id));
         var_stores[agent_id].save(&final_path)?;
     }

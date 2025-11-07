@@ -3,8 +3,9 @@
 //! This module handles individual snake behavior, movement,
 //! collision detection, and growth mechanics.
 
-use super::types::{Direction, Position};
 use std::collections::VecDeque;
+
+use super::types::{Direction, Position};
 
 /// Individual snake in the game
 #[derive(Debug, Clone)]
@@ -29,14 +30,7 @@ impl Snake {
         let mut body = VecDeque::new();
         body.push_back(start_pos);
 
-        Self {
-            id,
-            head: start_pos,
-            body,
-            direction: start_direction,
-            length: 1,
-            alive: true,
-        }
+        Self { id, head: start_pos, body, direction: start_direction, length: 1, alive: true }
     }
 
     /// Move snake in current direction
@@ -143,9 +137,7 @@ impl Food {
             let pos = Position::new(x, y);
 
             // Check if position is occupied by any snake
-            let occupied = snakes.iter().any(|snake| {
-                snake.get_all_positions().contains(&pos)
-            });
+            let occupied = snakes.iter().any(|snake| snake.get_all_positions().contains(&pos));
 
             if !occupied {
                 return Self::new(pos);

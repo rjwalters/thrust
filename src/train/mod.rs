@@ -4,4 +4,7 @@
 
 pub mod ppo;
 
-pub use ppo::{PPOConfig, PPOTrainer, TrainingStats, AggregatedStats, compute_gae, compute_policy_loss, compute_value_loss, generate_minibatch_indices};
+pub use ppo::{
+    AggregatedStats, PPOConfig, PPOTrainer, TrainingStats, compute_gae, compute_policy_loss,
+    compute_value_loss, generate_minibatch_indices,
+};

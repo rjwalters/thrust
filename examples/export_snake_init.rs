@@ -4,7 +4,7 @@
 //! Useful for testing the inference pipeline before training is complete.
 
 use anyhow::Result;
-use tch::{nn, Device};
+use tch::{Device, nn};
 use thrust_rl::policy::snake_cnn::SnakeCNN;
 
 fn main() -> Result<()> {
@@ -30,7 +30,7 @@ fn main() -> Result<()> {
     println!("✅ Saved PyTorch model to: {}", output_model_path);
 
     // Now export to JSON using the export script logic
-    use tch::{Tensor, Kind};
+    use tch::{Kind, Tensor};
 
     // Helper function to convert a 4D tensor to Vec<Vec<Vec<Vec<f32>>>>
     fn tensor_to_4d(tensor: &Tensor) -> Vec<Vec<Vec<Vec<f32>>>> {
@@ -100,13 +100,17 @@ fn main() -> Result<()> {
     let conv3_weight = tensor_to_4d(variables.get("conv3.weight").expect("Missing conv3.weight"));
     let conv3_bias = tensor_to_1d(variables.get("conv3.bias").expect("Missing conv3.bias"));
 
-    let fc_common_weight = tensor_to_2d(variables.get("fc_common.weight").expect("Missing fc_common.weight"));
-    let fc_common_bias = tensor_to_1d(variables.get("fc_common.bias").expect("Missing fc_common.bias"));
+    let fc_common_weight =
+        tensor_to_2d(variables.get("fc_common.weight").expect("Missing fc_common.weight"));
+    let fc_common_bias =
+        tensor_to_1d(variables.get("fc_common.bias").expect("Missing fc_common.bias"));
 
-    let fc_policy_weight = tensor_to_2d(variables.get("policy.weight").expect("Missing policy.weight"));
+    let fc_policy_weight =
+        tensor_to_2d(variables.get("policy.weight").expect("Missing policy.weight"));
     let fc_policy_bias = tensor_to_1d(variables.get("policy.bias").expect("Missing policy.bias"));
 
-    let fc_value_weight = tensor_to_2d(variables.get("value.weight").expect("Missing value.weight"));
+    let fc_value_weight =
+        tensor_to_2d(variables.get("value.weight").expect("Missing value.weight"));
     let fc_value_bias = tensor_to_1d(variables.get("value.bias").expect("Missing value.bias"));
 
     // Create inference model

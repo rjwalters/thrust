@@ -3,7 +3,7 @@
 //! This module defines the configuration parameters for PPO training
 //! and provides validation and builder pattern methods.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// PPO configuration parameters
 ///

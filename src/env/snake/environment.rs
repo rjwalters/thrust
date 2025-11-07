@@ -3,10 +3,14 @@
 //! This module implements the SnakeEnv struct and the Environment trait
 //! for both single-agent and multi-agent snake games.
 
-use super::{snake::Snake, types::{Direction, Position, GameState, Cell}};
-use crate::env::{Environment, SpaceInfo, SpaceType, StepResult, StepInfo};
 use anyhow::Result;
 use rand::Rng;
+
+use super::{
+    snake::Snake,
+    types::{Cell, Direction, GameState, Position},
+};
+use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 
 /// Multi-agent Snake environment
 #[derive(Debug, Clone)]
@@ -39,9 +43,9 @@ impl SnakeEnv {
         // Create snakes in different corners
         let mut snakes = Vec::new();
         let positions = [
-            (width / 4, height / 4, Direction::Right),      // Top-left
-            (3 * width / 4, height / 4, Direction::Left),   // Top-right
-            (width / 4, 3 * height / 4, Direction::Right),  // Bottom-left
+            (width / 4, height / 4, Direction::Right),     // Top-left
+            (3 * width / 4, height / 4, Direction::Left),  // Top-right
+            (width / 4, 3 * height / 4, Direction::Right), // Bottom-left
             (3 * width / 4, 3 * height / 4, Direction::Left), // Bottom-right
         ];
 
@@ -52,10 +56,7 @@ impl SnakeEnv {
         }
 
         // Generate initial food
-        let food_pos = Position::new(
-            rng.gen_range(0..width),
-            rng.gen_range(0..height),
-        );
+        let food_pos = Position::new(rng.gen_range(0..width), rng.gen_range(0..height));
 
         Self {
             width,
@@ -95,10 +96,7 @@ impl SnakeEnv {
         }
 
         // Generate new food
-        self.food = Position::new(
-            rng.gen_range(0..self.width),
-            rng.gen_range(0..self.height),
-        );
+        self.food = Position::new(rng.gen_range(0..self.width), rng.gen_range(0..self.height));
 
         self.episode += 1;
         self.steps = 0;
@@ -106,8 +104,8 @@ impl SnakeEnv {
     }
 
     /// Execute multi-agent step with actions for all snakes
-    /// Returns a single StepResult with summed rewards (for backward compatibility)
-    /// Use step_multi_agents for per-agent rewards
+    /// Returns a single StepResult with summed rewards (for backward
+    /// compatibility) Use step_multi_agents for per-agent rewards
     pub fn step_multi(&mut self, actions: &[i64]) -> StepResult {
         if self.done {
             return StepResult {
@@ -154,14 +152,14 @@ impl SnakeEnv {
             // Check wall collision
             if self.snakes[i].collides_with_wall(self.width, self.height) {
                 self.snakes[i].alive = false;
-                total_reward -= 0.5;  // Reduced death penalty
+                total_reward -= 0.5; // Reduced death penalty
                 continue;
             }
 
             // Check self collision
             if self.snakes[i].collides_with_self() {
                 self.snakes[i].alive = false;
-                total_reward -= 0.5;  // Reduced death penalty
+                total_reward -= 0.5; // Reduced death penalty
                 continue;
             }
 
@@ -173,7 +171,7 @@ impl SnakeEnv {
                 // Check if snake i's head collides with snake j's body
                 if self.snakes[j].get_all_positions().contains(&self.snakes[i].head) {
                     self.snakes[i].alive = false;
-                    total_reward -= 0.5;  // Reduced death penalty
+                    total_reward -= 0.5; // Reduced death penalty
                     break;
                 }
             }
@@ -184,7 +182,7 @@ impl SnakeEnv {
 
             // Check food collection
             if self.snakes[i].eats_food(&self.food) {
-                total_reward += 10.0;  // Increased food reward significantly
+                total_reward += 10.0; // Increased food reward significantly
                 self.snakes[i].grow();
 
                 // Generate new food
@@ -231,7 +229,8 @@ impl SnakeEnv {
 
                     // Reward for moving closer (+0.1), penalty for moving away (-0.1)
                     // Normalized by grid size to keep rewards consistent
-                    let distance_reward = distance_delta / (self.width.max(self.height) as f32) * 2.0;
+                    let distance_reward =
+                        distance_delta / (self.width.max(self.height) as f32) * 2.0;
                     total_reward += distance_reward;
                 }
             }
@@ -303,7 +302,7 @@ impl SnakeEnv {
             // Check self collision
             if self.snakes[i].collides_with_self() {
                 self.snakes[i].alive = false;
-                agent_rewards[i] -= 0.5;  // Reduced death penalty
+                agent_rewards[i] -= 0.5; // Reduced death penalty
                 continue;
             }
 
@@ -315,7 +314,7 @@ impl SnakeEnv {
                 // Check if snake i's head collides with snake j's body
                 if self.snakes[j].get_all_positions().contains(&self.snakes[i].head) {
                     self.snakes[i].alive = false;
-                    agent_rewards[i] -= 0.5;  // Reduced death penalty
+                    agent_rewards[i] -= 0.5; // Reduced death penalty
                     break;
                 }
             }
@@ -326,7 +325,7 @@ impl SnakeEnv {
 
             // Check food collection
             if self.snakes[i].eats_food(&self.food) {
-                agent_rewards[i] += 10.0;  // Food reward goes only to this snake
+                agent_rewards[i] += 10.0; // Food reward goes only to this snake
                 self.snakes[i].grow();
 
                 // Generate new food
@@ -372,7 +371,8 @@ impl SnakeEnv {
 
                     // Reward for moving closer, penalty for moving away
                     // Normalized by grid size to keep rewards consistent
-                    let distance_reward = distance_delta / (self.width.max(self.height) as f32) * 2.0;
+                    let distance_reward =
+                        distance_delta / (self.width.max(self.height) as f32) * 2.0;
                     agent_rewards[i] += distance_reward;
                 }
             }
@@ -428,8 +428,13 @@ impl SnakeEnv {
         }
 
         // Channel 1: Own snake head
-        if own_snake.head.x >= 0 && own_snake.head.x < self.width && own_snake.head.y >= 0 && own_snake.head.y < self.height {
-            let head_idx = (own_snake.head.y as usize) * (self.width as usize) + (own_snake.head.x as usize);
+        if own_snake.head.x >= 0
+            && own_snake.head.x < self.width
+            && own_snake.head.y >= 0
+            && own_snake.head.y < self.height
+        {
+            let head_idx =
+                (own_snake.head.y as usize) * (self.width as usize) + (own_snake.head.x as usize);
             obs[grid_size + head_idx] = 1.0;
         }
 
@@ -438,7 +443,9 @@ impl SnakeEnv {
             if id != snake_id {
                 for pos in &snake.body {
                     if pos.x >= 0 && pos.x < self.width && pos.y >= 0 && pos.y < self.height {
-                        let idx = 2 * grid_size + (pos.y as usize) * (self.width as usize) + (pos.x as usize);
+                        let idx = 2 * grid_size
+                            + (pos.y as usize) * (self.width as usize)
+                            + (pos.x as usize);
                         obs[idx] = 1.0;
                     }
                 }
@@ -446,21 +453,27 @@ impl SnakeEnv {
         }
 
         // Channel 3: Food
-        if self.food.x >= 0 && self.food.x < self.width && self.food.y >= 0 && self.food.y < self.height {
-            let food_idx = 3 * grid_size + (self.food.y as usize) * (self.width as usize) + (self.food.x as usize);
+        if self.food.x >= 0
+            && self.food.x < self.width
+            && self.food.y >= 0
+            && self.food.y < self.height
+        {
+            let food_idx = 3 * grid_size
+                + (self.food.y as usize) * (self.width as usize)
+                + (self.food.x as usize);
             obs[food_idx] = 1.0;
         }
 
         // Channel 4: Walls (boundaries)
         // Top and bottom walls
         for x in 0..self.width as usize {
-            obs[4 * grid_size + 0 * (self.width as usize) + x] = 1.0;  // Top
-            obs[4 * grid_size + ((self.height as usize - 1) * (self.width as usize)) + x] = 1.0;  // Bottom
+            obs[4 * grid_size + 0 * (self.width as usize) + x] = 1.0; // Top
+            obs[4 * grid_size + ((self.height as usize - 1) * (self.width as usize)) + x] = 1.0; // Bottom
         }
         // Left and right walls
         for y in 0..self.height as usize {
-            obs[4 * grid_size + y * (self.width as usize) + 0] = 1.0;  // Left
-            obs[4 * grid_size + y * (self.width as usize) + (self.width as usize - 1)] = 1.0;  // Right
+            obs[4 * grid_size + y * (self.width as usize) + 0] = 1.0; // Left
+            obs[4 * grid_size + y * (self.width as usize) + (self.width as usize - 1)] = 1.0; // Right
         }
 
         obs
@@ -484,9 +497,12 @@ impl SnakeEnv {
         };
 
         vec![
-            dx, dy,
-            direction_onehot[0], direction_onehot[1],
-            direction_onehot[2], direction_onehot[3],
+            dx,
+            dy,
+            direction_onehot[0],
+            direction_onehot[1],
+            direction_onehot[2],
+            direction_onehot[3],
         ]
     }
 

@@ -33,15 +33,15 @@
 //! ```
 
 pub mod environment;
+pub mod learner;
 pub mod matchmaking;
+pub mod messages;
 pub mod population;
 pub mod simulator;
-pub mod learner;
-pub mod messages;
 
 pub use environment::{MultiAgentEnvironment, MultiAgentResult};
-pub use matchmaking::{Matchmaker, MatchmakingStrategy};
-pub use population::{Agent, AgentId, Population, PopulationConfig, LearningMode};
-pub use simulator::GameSimulator;
 pub use learner::PolicyLearner;
-pub use messages::{Experience, PolicyUpdate, TrainingStats, ControlMessage};
+pub use matchmaking::{Matchmaker, MatchmakingStrategy};
+pub use messages::{ControlMessage, Experience, PolicyUpdate, TrainingStats};
+pub use population::{Agent, AgentId, LearningMode, Population, PopulationConfig};
+pub use simulator::GameSimulator;

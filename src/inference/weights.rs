@@ -1,10 +1,14 @@
 //! Weight export/import utilities for trained models
 
-use super::ExportedModel;
+use std::{
+    fs::File,
+    io::{Read, Write},
+    path::Path,
+};
+
 use anyhow::Result;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::path::Path;
+
+use super::ExportedModel;
 
 impl ExportedModel {
     /// Save model to JSON file
@@ -48,8 +52,9 @@ impl ExportedModel {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     fn create_test_model() -> ExportedModel {
         let feature_weights = LayerWeights::new(vec![1.0, 0.0, 0.0, 1.0], vec![0.0, 0.0], 2, 2);

@@ -22,12 +22,7 @@ impl RunningMeanStd {
     /// * `size` - Dimension of observations
     /// * `epsilon` - Small constant for numerical stability
     pub fn new(size: usize, epsilon: f32) -> Self {
-        Self {
-            mean: vec![0.0; size],
-            var: vec![1.0; size],
-            count: 1e-4,
-            epsilon,
-        }
+        Self { mean: vec![0.0; size], var: vec![1.0; size], count: 1e-4, epsilon }
     }
 
     /// Update statistics with a batch of observations
@@ -101,9 +96,7 @@ impl RunningMeanStd {
             .iter()
             .zip(&self.mean)
             .zip(&self.var)
-            .map(|((&obs, &mean), &var)| {
-                (obs - mean) / (var.sqrt() + self.epsilon)
-            })
+            .map(|((&obs, &mean), &var)| (obs - mean) / (var.sqrt() + self.epsilon))
             .collect()
     }
 
@@ -142,11 +135,7 @@ mod tests {
         let mut normalizer = RunningMeanStd::new(2, 1e-8);
 
         // Update with some data
-        let data = vec![
-            vec![1.0, 2.0],
-            vec![2.0, 4.0],
-            vec![3.0, 6.0],
-        ];
+        let data = vec![vec![1.0, 2.0], vec![2.0, 4.0], vec![3.0, 6.0]];
         normalizer.update(&data);
 
         // Mean should be approximately [2.0, 4.0]
@@ -166,10 +155,7 @@ mod tests {
     fn test_normalize_batch() {
         let mut normalizer = RunningMeanStd::new(2, 1e-8);
 
-        let mut batch = vec![
-            vec![0.0, 0.0],
-            vec![1.0, 1.0],
-        ];
+        let mut batch = vec![vec![0.0, 0.0], vec![1.0, 1.0]];
 
         normalizer.update(&batch);
         normalizer.normalize_batch(&mut batch);

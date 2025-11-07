@@ -11,11 +11,11 @@
 //!
 //! Results are saved to `snake_optimization_results.json` after each trial.
 
+use std::{collections::HashMap, fs};
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fs;
-use tch::{nn, nn::OptimizerConfig, Device, Tensor};
+use tch::{Device, Tensor, nn, nn::OptimizerConfig};
 use thrust_rl::{
     env::snake::SnakeEnv,
     optimize::{ParameterValue, SearchSpace, Trial, TrialResult},
@@ -31,11 +31,7 @@ struct OptimizationState {
 
 impl OptimizationState {
     fn new() -> Self {
-        Self {
-            trials: Vec::new(),
-            best_performance: f64::NEG_INFINITY,
-            best_trial_id: None,
-        }
+        Self { trials: Vec::new(), best_performance: f64::NEG_INFINITY, best_trial_id: None }
     }
 
     fn save(&self, path: &str) -> Result<()> {
@@ -95,7 +91,15 @@ impl RolloutBuffer {
         self.dones.clear();
     }
 
-    fn add(&mut self, obs: Vec<f32>, action: i64, log_prob: f32, reward: f32, value: f32, done: bool) {
+    fn add(
+        &mut self,
+        obs: Vec<f32>,
+        action: i64,
+        log_prob: f32,
+        reward: f32,
+        value: f32,
+        done: bool,
+    ) {
         self.observations.push(obs);
         self.actions.push(action);
         self.log_probs.push(log_prob);
@@ -150,9 +154,11 @@ fn run_trial(
     let grid_size = config.get("grid_size").and_then(|v| v.as_i64()).unwrap_or(20) as i32;
 
     let learning_rate = config.get("learning_rate").map(|v| v.as_f64()).unwrap_or(3e-4);
-    let steps_per_rollout = config.get("steps_per_rollout").and_then(|v| v.as_i64()).unwrap_or(512) as usize;
+    let steps_per_rollout =
+        config.get("steps_per_rollout").and_then(|v| v.as_i64()).unwrap_or(512) as usize;
     let ppo_epochs = config.get("ppo_epochs").and_then(|v| v.as_i64()).unwrap_or(4) as usize;
-    let minibatch_size = config.get("minibatch_size").and_then(|v| v.as_i64()).unwrap_or(64) as usize;
+    let minibatch_size =
+        config.get("minibatch_size").and_then(|v| v.as_i64()).unwrap_or(64) as usize;
 
     let gamma = config.get("gamma").map(|v| v.as_f64()).unwrap_or(0.99);
     let gae_lambda = config.get("gae_lambda").map(|v| v.as_f64()).unwrap_or(0.95);
@@ -160,9 +166,21 @@ fn run_trial(
     let value_coef = config.get("value_coef").map(|v| v.as_f64()).unwrap_or(0.5);
     let entropy_coef = config.get("entropy_coef").map(|v| v.as_f64()).unwrap_or(0.01);
 
-    tracing::info!("Trial {}: envs={}, grid={}, lr={:.5}, steps={}, ppo_epochs={}, batch={}, gamma={:.3}, lambda={:.3}, clip={:.2}, vf={:.2}, ent={:.4}",
-        trial_id, num_envs, grid_size, learning_rate, steps_per_rollout, ppo_epochs, minibatch_size,
-        gamma, gae_lambda, clip_param, value_coef, entropy_coef);
+    tracing::info!(
+        "Trial {}: envs={}, grid={}, lr={:.5}, steps={}, ppo_epochs={}, batch={}, gamma={:.3}, lambda={:.3}, clip={:.2}, vf={:.2}, ent={:.4}",
+        trial_id,
+        num_envs,
+        grid_size,
+        learning_rate,
+        steps_per_rollout,
+        ppo_epochs,
+        minibatch_size,
+        gamma,
+        gae_lambda,
+        clip_param,
+        value_coef,
+        entropy_coef
+    );
 
     // Create variable store and policy
     let vs = nn::VarStore::new(device);
@@ -277,16 +295,11 @@ fn run_trial(
 
         // Normalize advantages
         let mean_adv = advantages.iter().sum::<f32>() / advantages.len() as f32;
-        let std_adv = (advantages
-            .iter()
-            .map(|a| (a - mean_adv).powi(2))
-            .sum::<f32>()
+        let std_adv = (advantages.iter().map(|a| (a - mean_adv).powi(2)).sum::<f32>()
             / advantages.len() as f32)
             .sqrt();
-        let norm_advantages: Vec<f32> = advantages
-            .iter()
-            .map(|a| (a - mean_adv) / (std_adv + 1e-8))
-            .collect();
+        let norm_advantages: Vec<f32> =
+            advantages.iter().map(|a| (a - mean_adv) / (std_adv + 1e-8)).collect();
 
         // PPO update
         let buffer_size = rollout_buffer.len();
@@ -299,26 +312,15 @@ fn run_trial(
             // Mini-batch updates
             for chunk in indices.chunks(minibatch_size) {
                 // Prepare batch
-                let batch_obs: Vec<Vec<f32>> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.observations[i].clone())
-                    .collect();
-                let batch_actions: Vec<i64> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.actions[i])
-                    .collect();
-                let batch_old_log_probs: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| rollout_buffer.log_probs[i])
-                    .collect();
-                let batch_advantages: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| norm_advantages[i])
-                    .collect();
-                let batch_returns: Vec<f32> = chunk
-                    .iter()
-                    .map(|&i| returns[i])
-                    .collect();
+                let batch_obs: Vec<Vec<f32>> =
+                    chunk.iter().map(|&i| rollout_buffer.observations[i].clone()).collect();
+                let batch_actions: Vec<i64> =
+                    chunk.iter().map(|&i| rollout_buffer.actions[i]).collect();
+                let batch_old_log_probs: Vec<f32> =
+                    chunk.iter().map(|&i| rollout_buffer.log_probs[i]).collect();
+                let batch_advantages: Vec<f32> =
+                    chunk.iter().map(|&i| norm_advantages[i]).collect();
+                let batch_returns: Vec<f32> = chunk.iter().map(|&i| returns[i]).collect();
 
                 // Convert to tensors
                 let obs_flat: Vec<f32> = batch_obs.iter().flatten().copied().collect();
@@ -327,14 +329,16 @@ fn run_trial(
                     .to_device(device);
 
                 let actions_tensor = Tensor::from_slice(&batch_actions).to_device(device);
-                let old_log_probs_tensor = Tensor::from_slice(&batch_old_log_probs).to_device(device);
+                let old_log_probs_tensor =
+                    Tensor::from_slice(&batch_old_log_probs).to_device(device);
                 let advantages_tensor = Tensor::from_slice(&batch_advantages).to_device(device);
                 let returns_tensor = Tensor::from_slice(&batch_returns).to_device(device);
 
                 // Forward pass
                 let (logits, values) = policy.forward(&obs_tensor);
                 let log_probs_all = logits.log_softmax(-1, tch::Kind::Float);
-                let new_log_probs = log_probs_all.gather(1, &actions_tensor.unsqueeze(1), false).squeeze_dim(1);
+                let new_log_probs =
+                    log_probs_all.gather(1, &actions_tensor.unsqueeze(1), false).squeeze_dim(1);
 
                 // PPO loss
                 let ratio = (&new_log_probs - &old_log_probs_tensor).exp();
@@ -343,11 +347,15 @@ fn run_trial(
                 let policy_loss = -surr1.min_other(&surr2).mean(tch::Kind::Float);
 
                 // Value loss
-                let value_loss = (&values.squeeze_dim(1) - &returns_tensor).pow_tensor_scalar(2).mean(tch::Kind::Float);
+                let value_loss = (&values.squeeze_dim(1) - &returns_tensor)
+                    .pow_tensor_scalar(2)
+                    .mean(tch::Kind::Float);
 
                 // Entropy bonus
                 let probs = logits.softmax(-1, tch::Kind::Float);
-                let entropy = -(probs * log_probs_all).sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float).mean(tch::Kind::Float);
+                let entropy = -(probs * log_probs_all)
+                    .sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float)
+                    .mean(tch::Kind::Float);
 
                 // Total loss
                 let loss = policy_loss + value_coef * value_loss - entropy_coef * entropy;
@@ -361,16 +369,16 @@ fn run_trial(
 
         // Log progress every 10 rollouts
         if (rollout_idx + 1) % 10 == 0 {
-            let recent_rewards: Vec<f32> = total_episode_rewards
-                .iter()
-                .rev()
-                .take(20)
-                .copied()
-                .collect();
+            let recent_rewards: Vec<f32> =
+                total_episode_rewards.iter().rev().take(20).copied().collect();
             if !recent_rewards.is_empty() {
                 let mean_reward = recent_rewards.iter().sum::<f32>() / recent_rewards.len() as f32;
-                tracing::info!("  Rollout {}/{} | Recent mean reward: {:.2}",
-                    rollout_idx + 1, num_rollouts, mean_reward);
+                tracing::info!(
+                    "  Rollout {}/{} | Recent mean reward: {:.2}",
+                    rollout_idx + 1,
+                    num_rollouts,
+                    mean_reward
+                );
             }
         }
     }
@@ -390,17 +398,20 @@ fn run_trial(
     metrics.insert("total_episodes".to_string(), total_episodes as f64);
     metrics.insert("num_rewards_collected".to_string(), total_episode_rewards.len() as f64);
 
-    tracing::info!("Trial {} complete: performance={:.2}, episodes={}, time={:.1}s",
-        trial_id, final_performance, total_episodes, duration);
+    tracing::info!(
+        "Trial {} complete: performance={:.2}, episodes={}, time={:.1}s",
+        trial_id,
+        final_performance,
+        total_episodes,
+        duration
+    );
 
     Ok(TrialResult::success(metrics, duration))
 }
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     tracing::info!("🔍 Starting Snake Hyperparameter Optimization");
 
@@ -441,7 +452,8 @@ fn main() -> Result<()> {
 
     // Load or create optimization state
     let state_path = "snake_optimization_results.json";
-    let mut state = OptimizationState::load(state_path).unwrap_or_else(|_| OptimizationState::new());
+    let mut state =
+        OptimizationState::load(state_path).unwrap_or_else(|_| OptimizationState::new());
 
     let start_trial = state.trials.len();
     tracing::info!("Resuming from trial {}", start_trial);
@@ -469,7 +481,12 @@ fn main() -> Result<()> {
             if result.success {
                 let perf = result.get_metric("performance").unwrap_or(0.0);
                 let time = result.get_metric("training_time").unwrap_or(0.0);
-                tracing::info!("✅ Trial {} complete: performance={:.2}, time={:.1}s", trial_id, perf, time);
+                tracing::info!(
+                    "✅ Trial {} complete: performance={:.2}, time={:.1}s",
+                    trial_id,
+                    perf,
+                    time
+                );
 
                 if perf >= 50.0 {
                     tracing::info!("🎉 HIGH PERFORMANCE! Found 50+ mean reward configuration!");
@@ -483,16 +500,20 @@ fn main() -> Result<()> {
         state.add_trial(trial);
         state.save(state_path)?;
 
-        tracing::info!("Best so far: {:.2} (trial {})",
+        tracing::info!(
+            "Best so far: {:.2} (trial {})",
             state.best_performance,
-            state.best_trial_id.unwrap_or(0));
+            state.best_trial_id.unwrap_or(0)
+        );
     }
 
     tracing::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     tracing::info!("🏁 Optimization Complete!");
-    tracing::info!("Best performance: {:.2} (trial {})",
+    tracing::info!(
+        "Best performance: {:.2} (trial {})",
         state.best_performance,
-        state.best_trial_id.unwrap_or(0));
+        state.best_trial_id.unwrap_or(0)
+    );
 
     if let Some(best_id) = state.best_trial_id {
         if let Some(best_trial) = state.trials.get(best_id) {

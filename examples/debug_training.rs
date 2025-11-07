@@ -1,7 +1,7 @@
-///! Debug script to check if gradients are flowing properly
+/// ! Debug script to check if gradients are flowing properly
 use anyhow::Result;
-use thrust_rl::policy::mlp::MlpPolicy;
 use tch::{Kind, Tensor};
+use thrust_rl::policy::mlp::MlpPolicy;
 
 fn main() -> Result<()> {
     println!("🔍 Debugging gradient flow...\n");

@@ -23,27 +23,27 @@ pub struct SnakeCNNInference {
 
     // Conv layer 1: input_channels -> 32 channels, 3x3 kernel
     pub conv1_weight: Vec<Vec<Vec<Vec<f32>>>>, // [32, input_channels, 3, 3]
-    pub conv1_bias: Vec<f32>, // [32]
+    pub conv1_bias: Vec<f32>,                  // [32]
 
     // Conv layer 2: 32 -> 64 channels, 3x3 kernel
     pub conv2_weight: Vec<Vec<Vec<Vec<f32>>>>, // [64, 32, 3, 3]
-    pub conv2_bias: Vec<f32>, // [64]
+    pub conv2_bias: Vec<f32>,                  // [64]
 
     // Conv layer 3: 64 -> 64 channels, 3x3 kernel
     pub conv3_weight: Vec<Vec<Vec<Vec<f32>>>>, // [64, 64, 3, 3]
-    pub conv3_bias: Vec<f32>, // [64]
+    pub conv3_bias: Vec<f32>,                  // [64]
 
     // FC common: 64*grid_width*grid_height -> 256
     pub fc_common_weight: Vec<Vec<f32>>, // [256, flat_size]
-    pub fc_common_bias: Vec<f32>, // [256]
+    pub fc_common_bias: Vec<f32>,        // [256]
 
     // Policy head: 256 -> num_actions
     pub fc_policy_weight: Vec<Vec<f32>>, // [num_actions, 256]
-    pub fc_policy_bias: Vec<f32>, // [num_actions]
+    pub fc_policy_bias: Vec<f32>,        // [num_actions]
 
     // Value head: 256 -> 1
     pub fc_value_weight: Vec<Vec<f32>>, // [1, 256]
-    pub fc_value_bias: Vec<f32>, // [1]
+    pub fc_value_bias: Vec<f32>,        // [1]
 }
 
 impl SnakeCNNInference {
@@ -64,7 +64,7 @@ impl SnakeCNNInference {
     /// Apply 2D convolution with padding=1
     fn conv2d(
         &self,
-        input: &[Vec<Vec<f32>>],  // [in_channels, height, width]
+        input: &[Vec<Vec<f32>>],       // [in_channels, height, width]
         weight: &[Vec<Vec<Vec<f32>>>], // [out_channels, in_channels, 3, 3]
         bias: &[f32],
     ) -> Vec<Vec<Vec<f32>>> {
@@ -89,7 +89,7 @@ impl SnakeCNNInference {
 
                                 if ih >= 0 && ih < height as i32 && iw >= 0 && iw < width as i32 {
                                     sum += input[in_c][ih as usize][iw as usize]
-                                         * weight[out_c][in_c][kh][kw];
+                                        * weight[out_c][in_c][kh][kw];
                                 }
                             }
                         }
@@ -119,16 +119,19 @@ impl SnakeCNNInference {
     /// Forward pass: compute action logits and value
     ///
     /// # Arguments
-    /// * `grid` - Input grid [channels, height, width] flattened as [c0_pixels..., c1_pixels..., ...]
+    /// * `grid` - Input grid [channels, height, width] flattened as
+    ///   [c0_pixels..., c1_pixels..., ...]
     ///
     /// # Returns
-    /// * `(logits, value)` - Action logits [num_actions] and state value (scalar)
+    /// * `(logits, value)` - Action logits [num_actions] and state value
+    ///   (scalar)
     pub fn forward(&self, grid: &[f32]) -> (Vec<f32>, f32) {
         let grid_size = self.grid_width * self.grid_height;
         assert_eq!(grid.len(), self.input_channels * grid_size);
 
         // Reshape input to [channels, height, width]
-        let mut input = vec![vec![vec![0.0; self.grid_width]; self.grid_height]; self.input_channels];
+        let mut input =
+            vec![vec![vec![0.0; self.grid_width]; self.grid_height]; self.input_channels];
         for c in 0..self.input_channels {
             for h in 0..self.grid_height {
                 for w in 0..self.grid_width {
@@ -196,7 +199,8 @@ impl SnakeCNNInference {
     pub fn get_action(&self, grid: &[f32]) -> usize {
         let (logits, _value) = self.forward(grid);
 
-        logits.iter()
+        logits
+            .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(idx, _)| idx)
@@ -304,7 +308,11 @@ impl InferenceModel {
     fn activate(&self, x: f32) -> f32 {
         match self.activation {
             InferenceActivation::ReLU => {
-                if x < 0.0 { 0.0 } else { x }
+                if x < 0.0 {
+                    0.0
+                } else {
+                    x
+                }
             }
             InferenceActivation::Tanh => x.tanh(),
         }
@@ -316,7 +324,8 @@ impl InferenceModel {
     /// * `obs` - Observation vector [obs_dim]
     ///
     /// # Returns
-    /// * `(logits, value)` - Action logits [action_dim] and state value (scalar)
+    /// * `(logits, value)` - Action logits [action_dim] and state value
+    ///   (scalar)
     pub fn forward(&self, obs: &[f32]) -> (Vec<f32>, f32) {
         assert_eq!(obs.len(), self.obs_dim, "Observation dimension mismatch");
 
@@ -376,7 +385,8 @@ impl InferenceModel {
         let probs: Vec<f32> = exp_logits.iter().map(|&x| x / sum_exp).collect();
 
         // For deterministic behavior (useful for demo), just take argmax
-        probs.iter()
+        probs
+            .iter()
             .enumerate()
             .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
             .map(|(idx, _)| idx)

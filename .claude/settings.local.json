@@ -75,7 +75,11 @@
       "Bash(python3:*)",
       "Bash(scp:*)",
       "Bash(git submodule add:*)",
-      "Bash(LIBTORCH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch/lib cargo +nightly run:*)"
+      "Bash(LIBTORCH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch/lib cargo +nightly run:*)",
+      "Bash(LIBTORCH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch/lib cargo:*)",
+      "Bash(git mv:*)",
+      "Bash(cargo test:*)",
+      "WebFetch(domain:iclr-blog-track.github.io)"
     ],
     "deny": [],
     "ask": []

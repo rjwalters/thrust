@@ -1,10 +1,10 @@
-///! Debug CartPole environment and policy outputs
+/// ! Debug CartPole environment and policy outputs
 use anyhow::Result;
+use tch::{Kind, Tensor};
 use thrust_rl::{
-    env::{cartpole::CartPole, Environment},
+    env::{Environment, cartpole::CartPole},
     policy::mlp::MlpPolicy,
 };
-use tch::{Kind, Tensor};
 
 fn main() -> Result<()> {
     println!("🔍 Debugging CartPole training...\n");
@@ -74,7 +74,9 @@ fn main() -> Result<()> {
     let (logits, _) = policy.forward(&test_obs);
     let log_probs_all = logits.log_softmax(-1, Kind::Float);
     let probs = log_probs_all.exp();
-    let entropy = -(probs * log_probs_all).sum_dim_intlist(-1, false, Kind::Float).mean(Kind::Float);
+    let entropy = -(probs * log_probs_all)
+        .sum_dim_intlist(-1, false, Kind::Float)
+        .mean(Kind::Float);
     let entropy_val: f64 = entropy.try_into()?;
 
     println!("  Policy entropy: {:.4}", entropy_val);

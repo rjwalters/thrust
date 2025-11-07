@@ -12,16 +12,14 @@
 use anyhow::Result;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
-    env::{cartpole::CartPole, pool::EnvPool, Environment},
+    env::{Environment, cartpole::CartPole, pool::EnvPool},
     policy::mlp::MlpPolicy,
     train::ppo::{PPOConfig, PPOTrainer},
 };
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     tracing::info!("🚀 Starting CartPole PPO Training");
 
@@ -59,7 +57,8 @@ fn main() -> Result<()> {
     // Create optimizer
     let optimizer = policy.optimizer(LEARNING_RATE);
 
-    // Create PPO trainer - we create a dummy policy since we'll manage policy separately
+    // Create PPO trainer - we create a dummy policy since we'll manage policy
+    // separately
     let config = PPOConfig::new()
         .learning_rate(LEARNING_RATE)
         .n_epochs(4)
@@ -155,16 +154,11 @@ fn main() -> Result<()> {
         let obs_tensor = tch::Tensor::from_slice(&batch.observations)
             .reshape([batch_size as i64, obs_dim])
             .to_device(device);
-        let actions_tensor = tch::Tensor::from_slice(&batch.actions)
-            .to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs)
-            .to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values)
-            .to_device(device);
-        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages)
-            .to_device(device);
-        let returns_tensor = tch::Tensor::from_slice(&batch.returns)
-            .to_device(device);
+        let actions_tensor = tch::Tensor::from_slice(&batch.actions).to_device(device);
+        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs).to_device(device);
+        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values).to_device(device);
+        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages).to_device(device);
+        let returns_tensor = tch::Tensor::from_slice(&batch.returns).to_device(device);
 
         // Train
         let stats = trainer.train_step_with_policy(

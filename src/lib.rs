@@ -20,7 +20,8 @@
 pub mod env;
 
 /// Policy and neural network implementations
-/// inference submodule available for WASM, training modules require training feature
+/// inference submodule available for WASM, training modules require training
+/// feature
 pub mod policy;
 
 /// Experience buffers and replay management (requires training feature)

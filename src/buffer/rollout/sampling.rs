@@ -15,18 +15,15 @@ use super::storage::RolloutBuffer;
 /// * `batch_size` - Desired size of each minibatch
 ///
 /// # Returns
-/// Vector of vectors, where each inner vector contains indices for one minibatch
+/// Vector of vectors, where each inner vector contains indices for one
+/// minibatch
 pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<Vec<usize>> {
-    use rand::seq::SliceRandom;
-    use rand::thread_rng;
+    use rand::{seq::SliceRandom, thread_rng};
 
     let mut indices: Vec<usize> = (0..buffer_size).collect();
     indices.shuffle(&mut thread_rng());
 
-    indices
-        .chunks(batch_size)
-        .map(|chunk| chunk.to_vec())
-        .collect()
+    indices.chunks(batch_size).map(|chunk| chunk.to_vec()).collect()
 }
 
 /// Sample a minibatch from the rollout buffer
@@ -37,10 +34,7 @@ pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<
 ///
 /// # Returns
 /// Minibatch data suitable for training
-pub fn sample_minibatch(
-    buffer: &RolloutBuffer,
-    indices: &[usize],
-) -> Minibatch {
+pub fn sample_minibatch(buffer: &RolloutBuffer, indices: &[usize]) -> Minibatch {
     let batch_size = indices.len();
 
     let mut observations = vec![0.0; batch_size * buffer.shape().2];
@@ -51,36 +45,17 @@ pub fn sample_minibatch(
     let mut returns = vec![0.0; batch_size];
 
     // Flatten buffer data
-    let flat_obs = buffer.observations().iter()
-        .flatten()
-        .flatten()
-        .cloned()
-        .collect::<Vec<f32>>();
+    let flat_obs = buffer.observations().iter().flatten().flatten().cloned().collect::<Vec<f32>>();
 
-    let flat_actions = buffer.actions().iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<i64>>();
+    let flat_actions = buffer.actions().iter().flatten().cloned().collect::<Vec<i64>>();
 
-    let flat_log_probs = buffer.log_probs().iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<f32>>();
+    let flat_log_probs = buffer.log_probs().iter().flatten().cloned().collect::<Vec<f32>>();
 
-    let flat_values = buffer.values().iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<f32>>();
+    let flat_values = buffer.values().iter().flatten().cloned().collect::<Vec<f32>>();
 
-    let flat_advantages = buffer.advantages().iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<f32>>();
+    let flat_advantages = buffer.advantages().iter().flatten().cloned().collect::<Vec<f32>>();
 
-    let flat_returns = buffer.returns().iter()
-        .flatten()
-        .cloned()
-        .collect::<Vec<f32>>();
+    let flat_returns = buffer.returns().iter().flatten().cloned().collect::<Vec<f32>>();
 
     // Sample the minibatch
     for (i, &idx) in indices.iter().enumerate() {
@@ -182,12 +157,7 @@ impl<'a> MinibatchIterator<'a> {
                 .collect()
         };
 
-        Self {
-            buffer,
-            batch_size,
-            indices,
-            current_batch: 0,
-        }
+        Self { buffer, batch_size, indices, current_batch: 0 }
     }
 }
 
@@ -217,8 +187,7 @@ impl<'a> Iterator for MinibatchIterator<'a> {
 /// # Returns
 /// Vector of shuffled indices
 pub fn shuffle_indices(size: usize) -> Vec<usize> {
-    use rand::seq::SliceRandom;
-    use rand::thread_rng;
+    use rand::{seq::SliceRandom, thread_rng};
 
     let mut indices: Vec<usize> = (0..size).collect();
     indices.shuffle(&mut thread_rng());

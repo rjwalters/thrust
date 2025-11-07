@@ -30,7 +30,11 @@ pub fn compute_policy_loss(
     let policy_loss = -policy_loss_1.minimum(&policy_loss_2).mean(Kind::Float);
 
     // Compute fraction of clipped updates
-    let clip_fraction = (&ratio - 1.0).abs().greater(clip_range).to_kind(tch::Kind::Float).mean(Kind::Float);
+    let clip_fraction = (&ratio - 1.0)
+        .abs()
+        .greater(clip_range)
+        .to_kind(tch::Kind::Float)
+        .mean(Kind::Float);
 
     // Approximate KL divergence for early stopping
     let approx_kl = (old_log_probs - log_probs).mean(Kind::Float);
@@ -73,10 +77,7 @@ pub fn compute_value_loss(
         1.0 - residual_var_val / var_returns_val
     };
 
-    (
-        value_loss,
-        explained_var,
-    )
+    (value_loss, explained_var)
 }
 
 /// Compute entropy loss (negative entropy for maximization)
@@ -97,18 +98,15 @@ pub fn compute_entropy_loss(entropy: &Tensor) -> Tensor {
 /// * `batch_size` - Desired size of each minibatch
 ///
 /// # Returns
-/// Vector of vectors, where each inner vector contains indices for one minibatch
+/// Vector of vectors, where each inner vector contains indices for one
+/// minibatch
 pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<Vec<usize>> {
-    use rand::seq::SliceRandom;
-    use rand::thread_rng;
+    use rand::{seq::SliceRandom, thread_rng};
 
     let mut indices: Vec<usize> = (0..buffer_size).collect();
     indices.shuffle(&mut thread_rng());
 
-    indices
-        .chunks(batch_size)
-        .map(|chunk| chunk.to_vec())
-        .collect()
+    indices.chunks(batch_size).map(|chunk| chunk.to_vec()).collect()
 }
 
 /// Compute Generalized Advantage Estimation (GAE)
@@ -205,16 +203,14 @@ fn compute_gae_single_env(
     advantages.reverse();
     returns.reverse();
 
-    (
-        Tensor::from_slice(&advantages),
-        Tensor::from_slice(&returns),
-    )
+    (Tensor::from_slice(&advantages), Tensor::from_slice(&returns))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tch::Tensor;
+
+    use super::*;
 
     #[test]
     fn test_compute_policy_loss() {
@@ -224,7 +220,8 @@ mod tests {
         let advantages = Tensor::from_slice(&[1.0, -1.0, 0.5]);
         let clip_range = 0.2;
 
-        let (loss, clip_frac, kl) = compute_policy_loss(&log_probs, &old_log_probs, &advantages, clip_range);
+        let (loss, clip_frac, kl) =
+            compute_policy_loss(&log_probs, &old_log_probs, &advantages, clip_range);
 
         // Loss should be a scalar tensor
         assert_eq!(loss.size().len(), 0);
@@ -241,7 +238,8 @@ mod tests {
         let returns = Tensor::from_slice(&[1.2, 2.1, 0.6]);
         let clip_range_vf = 0.2;
 
-        let (loss, explained_var) = compute_value_loss(&values, &old_values, &returns, clip_range_vf);
+        let (loss, explained_var) =
+            compute_value_loss(&values, &old_values, &returns, clip_range_vf);
 
         // Loss should be a scalar tensor
         assert_eq!(loss.size().len(), 0);

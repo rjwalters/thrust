@@ -34,30 +34,34 @@ Our goal is to create the fastest, safest, and most ergonomic reinforcement lear
 
 ## 🚧 Project Status
 
-**🔧 Pre-alpha** - Under active development. Core infrastructure being implemented.
+**🎯 Alpha** - Core training infrastructure complete. Working on production features.
 
-**Current milestone:** Phase 1 - Foundation (PPO + CartPole)
-**Target date:** Q1 2025
-**Progress:** 15% complete
+**Current milestone:** Phase 2 - Multi-Agent & WASM (60% complete)
+**Latest:** Universal inference system, live demos, multiple environments
+**Progress:** Phase 1 Complete ✅
 
-See [WORKPLAN.md](WORKPLAN.md) for detailed development schedule.
+See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 
 ## 🎯 Roadmap
 
-### Phase 1: Foundation (In Progress)
-- [ ] Experience buffer implementation
-- [ ] Policy wrapper (tch-rs)
-- [ ] Serial vectorization
-- [ ] CartPole environment
-- [ ] Basic PPO training loop
-- [ ] Checkpoint saving/loading
+### Phase 1: Foundation (Complete ✅)
+- [x] Experience buffer implementation
+- [x] Policy wrapper (tch-rs)
+- [x] EnvPool vectorization
+- [x] CartPole environment (301.6 avg reward achieved)
+- [x] PPO training loop with GPU support
+- [x] Checkpoint saving/loading
+- [x] Snake environment (multi-agent support)
+- [x] SimpleBandit environment (contextual bandits)
 
-### Phase 2: Performance
-- [ ] Async vectorization (Tokio)
-- [ ] Shared memory buffers
-- [ ] CUDA advantage kernel
-- [ ] Snake environment (multi-agent)
-- [ ] GPU optimizations
+### Phase 2: Multi-Agent & WASM (In Progress - 60%)
+- [x] Multi-agent training infrastructure
+- [x] Population-based training design
+- [x] Pure Rust inference (no PyTorch in production)
+- [x] Universal inference system (JSON model format)
+- [ ] Complete WASM bindings
+- [ ] Browser-based demos
+- [ ] Multi-agent communication channels
 
 ### Phase 3: Features
 - [ ] LSTM policy support
@@ -91,12 +95,13 @@ See [WORKPLAN.md](WORKPLAN.md) for detailed development schedule.
 └─────────────────────────────────────────────────┘
 ```
 
-## 🎮 Planned Environments
+## 🎮 Environments
 
-- **CartPole** - Classic control benchmark
-- **Snake** - Multi-agent grid world
-- **Asteroids** - Continuous action space game
-- More to come!
+- **CartPole** ✅ - Classic control benchmark (solved: 301.6 avg reward)
+- **Snake** ✅ - Multi-agent grid world with torus wrapping
+- **SimpleBandit** ✅ - Contextual multi-armed bandits
+- **Bucket Brigade** 🚧 - Cooperative multi-agent coordination
+- More coming soon!
 
 ## 📚 Inspiration
 

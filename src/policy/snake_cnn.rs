@@ -3,7 +3,7 @@
 //! A compact convolutional network designed for multi-agent Snake gameplay.
 //! Uses spatial convolutions to process the grid and make decisions.
 
-use tch::{nn, nn::Module, Device, Tensor};
+use tch::{Device, Tensor, nn, nn::Module};
 
 /// CNN policy network for Snake
 #[derive(Debug)]
@@ -42,10 +42,7 @@ impl SnakeCNN {
             input_channels,
             32,
             3,
-            nn::ConvConfig {
-                padding: 1,
-                ..Default::default()
-            },
+            nn::ConvConfig { padding: 1, ..Default::default() },
         );
 
         let conv2 = nn::conv2d(
@@ -53,10 +50,7 @@ impl SnakeCNN {
             32,
             64,
             3,
-            nn::ConvConfig {
-                padding: 1,
-                ..Default::default()
-            },
+            nn::ConvConfig { padding: 1, ..Default::default() },
         );
 
         let conv3 = nn::conv2d(
@@ -64,10 +58,7 @@ impl SnakeCNN {
             64,
             64,
             3,
-            nn::ConvConfig {
-                padding: 1,
-                ..Default::default()
-            },
+            nn::ConvConfig { padding: 1, ..Default::default() },
         );
 
         // Calculate flattened size after convolutions
@@ -83,14 +74,7 @@ impl SnakeCNN {
         // Value head (outputs single value)
         let fc_value = nn::linear(vs / "value", 256, 1, Default::default());
 
-        Self {
-            conv1,
-            conv2,
-            conv3,
-            fc_common,
-            fc_policy,
-            fc_value,
-        }
+        Self { conv1, conv2, conv3, fc_common, fc_policy, fc_value }
     }
 
     /// Forward pass through the network
@@ -136,8 +120,7 @@ impl SnakeCNN {
         let (logits, values) = self.forward(grid);
         let probs = logits.softmax(-1, tch::Kind::Float);
         let action = probs.multinomial(1, true);
-        let log_prob = logits.log_softmax(-1, tch::Kind::Float)
-            .gather(1, &action, false);
+        let log_prob = logits.log_softmax(-1, tch::Kind::Float).gather(1, &action, false);
         (action, log_prob, values)
     }
 
@@ -165,8 +148,12 @@ impl SnakeCNN {
     ///
     /// Extracts all weights and biases from the PyTorch model and converts them
     /// to a pure Rust format that can be used in WebAssembly.
-    pub fn export_for_inference(&self, grid_width: usize, grid_height: usize) -> crate::policy::inference::SnakeCNNInference {
-        use tch::{Tensor, Device, Kind};
+    pub fn export_for_inference(
+        &self,
+        grid_width: usize,
+        grid_height: usize,
+    ) -> crate::policy::inference::SnakeCNNInference {
+        use tch::{Device, Kind, Tensor};
 
         // Helper function to convert a 4D tensor to Vec<Vec<Vec<Vec<f32>>>>
         fn tensor_to_4d(tensor: &Tensor) -> Vec<Vec<Vec<Vec<f32>>>> {
@@ -220,9 +207,10 @@ impl SnakeCNN {
         }
 
         // Get layer references (we need to extract weights from the modules)
-        // For now, create a dummy structure - we'll need to properly extract from VarStore
-        let input_channels = 5;  // Fixed for Snake
-        let num_actions = 4;      // Fixed for Snake (4 directions)
+        // For now, create a dummy structure - we'll need to properly extract from
+        // VarStore
+        let input_channels = 5; // Fixed for Snake
+        let num_actions = 4; // Fixed for Snake (4 directions)
 
         // Note: This is a placeholder. In a real implementation, you'd need to:
         // 1. Store a VarStore reference in SnakeCNN

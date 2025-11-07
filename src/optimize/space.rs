@@ -1,7 +1,8 @@
 //! Parameter space definitions for hyperparameter optimization
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 
 /// A parameter value (can be continuous or discrete)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,17 +35,9 @@ impl ParameterValue {
 #[derive(Debug, Clone)]
 pub enum Parameter {
     /// Continuous parameter with min, max, and optional log scale
-    Continuous {
-        name: String,
-        min: f64,
-        max: f64,
-        log_scale: bool,
-    },
+    Continuous { name: String, min: f64, max: f64, log_scale: bool },
     /// Discrete parameter with allowed values
-    Discrete {
-        name: String,
-        values: Vec<i64>,
-    },
+    Discrete { name: String, values: Vec<i64> },
 }
 
 impl Parameter {
@@ -112,28 +105,25 @@ pub struct SearchSpace {
 impl SearchSpace {
     /// Create a new empty search space
     pub fn new() -> Self {
-        Self {
-            parameters: Vec::new(),
-        }
+        Self { parameters: Vec::new() }
     }
 
     /// Add a continuous parameter
-    pub fn add_continuous(mut self, name: impl Into<String>, min: f64, max: f64, log_scale: bool) -> Self {
-        self.parameters.push(Parameter::Continuous {
-            name: name.into(),
-            min,
-            max,
-            log_scale,
-        });
+    pub fn add_continuous(
+        mut self,
+        name: impl Into<String>,
+        min: f64,
+        max: f64,
+        log_scale: bool,
+    ) -> Self {
+        self.parameters
+            .push(Parameter::Continuous { name: name.into(), min, max, log_scale });
         self
     }
 
     /// Add a discrete parameter
     pub fn add_discrete(mut self, name: impl Into<String>, values: Vec<i64>) -> Self {
-        self.parameters.push(Parameter::Discrete {
-            name: name.into(),
-            values,
-        });
+        self.parameters.push(Parameter::Discrete { name: name.into(), values });
         self
     }
 
@@ -144,22 +134,14 @@ impl SearchSpace {
 
     /// Sample a random configuration
     pub fn sample(&self) -> HashMap<String, ParameterValue> {
-        self.parameters
-            .iter()
-            .map(|p| (p.name().to_string(), p.sample()))
-            .collect()
+        self.parameters.iter().map(|p| (p.name().to_string(), p.sample())).collect()
     }
 
     /// Normalize a configuration to [0, 1]^d vector (for GP)
     pub fn normalize(&self, config: &HashMap<String, ParameterValue>) -> Vec<f64> {
         self.parameters
             .iter()
-            .map(|p| {
-                config
-                    .get(p.name())
-                    .map(|v| p.normalize(v))
-                    .unwrap_or(0.5)
-            })
+            .map(|p| config.get(p.name()).map(|v| p.normalize(v)).unwrap_or(0.5))
             .collect()
     }
 

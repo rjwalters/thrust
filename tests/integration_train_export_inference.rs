@@ -11,8 +11,8 @@
 use anyhow::Result;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
-    env::{cartpole::CartPole, pool::EnvPool, Environment},
-    policy::{mlp::MlpPolicy, inference::InferenceModel},
+    env::{Environment, cartpole::CartPole, pool::EnvPool},
+    policy::{inference::InferenceModel, mlp::MlpPolicy},
     train::ppo::{PPOConfig, PPOTrainer},
 };
 
@@ -21,7 +21,7 @@ fn test_train_export_load_inference() -> Result<()> {
     // Use small hyperparameters for fast test
     const NUM_ENVS: usize = 4;
     const NUM_STEPS: usize = 64;
-    const TOTAL_TIMESTEPS: usize = 512;  // Very short training
+    const TOTAL_TIMESTEPS: usize = 512; // Very short training
     const LEARNING_RATE: f64 = 3e-4;
 
     // Environment dimensions
@@ -215,9 +215,7 @@ fn test_train_export_load_inference() -> Result<()> {
     println!("\n=== Step 5: Comparing PyTorch vs Pure Rust ===");
 
     // Get prediction from original PyTorch policy
-    let obs_tensor = tch::Tensor::from_slice(&test_obs)
-        .reshape([1, obs_dim])
-        .to_device(device);
+    let obs_tensor = tch::Tensor::from_slice(&test_obs).reshape([1, obs_dim]).to_device(device);
     let (torch_logits, torch_value) = policy.forward(&obs_tensor);
     let torch_logits_vec: Vec<f32> = Vec::try_from(torch_logits.squeeze())?;
     let torch_value_f32: f32 = f64::try_from(torch_value.squeeze())? as f32;
@@ -228,7 +226,8 @@ fn test_train_export_load_inference() -> Result<()> {
     println!("Pure Rust value: {}", _value);
 
     // Check that outputs are close (allow some numerical difference)
-    let max_logit_diff = torch_logits_vec.iter()
+    let max_logit_diff = torch_logits_vec
+        .iter()
         .zip(action_logits.iter())
         .map(|(a, b)| (a - b).abs())
         .fold(0.0f32, f32::max);
