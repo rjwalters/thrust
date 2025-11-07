@@ -346,6 +346,12 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
         let norm_advantages: Vec<f32> =
             advantages.iter().map(|a| (a - mean_adv) / (std_adv + 1e-8)).collect();
 
+        // Track training metrics across all PPO epochs
+        let mut total_policy_loss = 0.0;
+        let mut total_value_loss = 0.0;
+        let mut total_entropy = 0.0;
+        let mut num_updates = 0;
+
         // PPO update
         let buffer_size = rollout_buffer.len();
         for _ in 0..args.ppo_epochs {
@@ -411,6 +417,12 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                 // Total loss
                 let loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
 
+                // Track metrics (convert to f64 for accumulation)
+                total_policy_loss += f64::try_from(&policy_loss).unwrap_or(0.0);
+                total_value_loss += f64::try_from(&value_loss).unwrap_or(0.0);
+                total_entropy += f64::try_from(&entropy).unwrap_or(0.0);
+                num_updates += 1;
+
                 // Backward pass
                 opt.zero_grad();
                 loss.backward();
@@ -418,16 +430,51 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
             }
         }
 
+        // Compute average metrics
+        let avg_policy_loss = total_policy_loss / num_updates as f64;
+        let avg_value_loss = total_value_loss / num_updates as f64;
+        let avg_entropy = total_entropy / num_updates as f64;
+
+        // Compute explained variance: 1 - Var(returns - values) / Var(returns)
+        let mean_returns = returns.iter().sum::<f32>() / returns.len() as f32;
+        let var_returns = returns.iter().map(|r| (r - mean_returns).powi(2)).sum::<f32>() / returns.len() as f32;
+        let residuals: Vec<f32> = returns.iter().zip(&rollout_buffer.values)
+            .map(|(r, v)| r - v)
+            .collect();
+        let mean_residuals = residuals.iter().sum::<f32>() / residuals.len() as f32;
+        let var_residuals = residuals.iter().map(|r| (r - mean_residuals).powi(2)).sum::<f32>() / residuals.len() as f32;
+        let explained_var = if var_returns > 1e-8 {
+            1.0 - (var_residuals / var_returns)
+        } else {
+            0.0
+        };
+
         // Logging
         if !episode_rewards.is_empty() {
             let mean_reward = episode_rewards.iter().sum::<f32>() / episode_rewards.len() as f32;
             println!(
-                "[SHARED] Epoch {}/{} | Episodes: {} | Steps: {} | Mean Reward: {:.2}",
+                "[SHARED] Epoch {}/{} | Episodes: {} | Steps: {} | Reward: {:.2} | Policy Loss: {:.4} | Value Loss: {:.4} | Entropy: {:.3} | ExpVar: {:.3}",
                 epoch + 1,
                 args.epochs,
                 total_episodes,
                 total_steps,
-                mean_reward
+                mean_reward,
+                avg_policy_loss,
+                avg_value_loss,
+                avg_entropy,
+                explained_var
+            );
+        } else {
+            // Still log metrics even if no episodes completed
+            println!(
+                "[SHARED] Epoch {}/{} | Steps: {} | Policy Loss: {:.4} | Value Loss: {:.4} | Entropy: {:.3} | ExpVar: {:.3}",
+                epoch + 1,
+                args.epochs,
+                total_steps,
+                avg_policy_loss,
+                avg_value_loss,
+                avg_entropy,
+                explained_var
             );
         }
 
@@ -573,6 +620,12 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
             let norm_advantages: Vec<f32> =
                 advantages.iter().map(|a| (a - mean_adv) / (std_adv + 1e-8)).collect();
 
+            // Track training metrics for this agent
+            let mut total_policy_loss = 0.0;
+            let mut total_value_loss = 0.0;
+            let mut total_entropy = 0.0;
+            let mut num_updates = 0;
+
             // PPO update for this agent
             let buffer_size = buffer.len();
             for _ in 0..args.ppo_epochs {
@@ -637,11 +690,47 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
                     let loss =
                         policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
 
+                    // Track metrics
+                    total_policy_loss += f64::try_from(&policy_loss).unwrap_or(0.0);
+                    total_value_loss += f64::try_from(&value_loss).unwrap_or(0.0);
+                    total_entropy += f64::try_from(&entropy).unwrap_or(0.0);
+                    num_updates += 1;
+
                     // Backward pass
                     optimizers[agent_id].zero_grad();
                     loss.backward();
                     optimizers[agent_id].step();
                 }
+            }
+
+            // Log metrics for this agent (could aggregate across agents if desired)
+            if agent_id == 0 && epoch % 10 == 0 {
+                let avg_policy_loss = total_policy_loss / num_updates.max(1) as f64;
+                let avg_value_loss = total_value_loss / num_updates.max(1) as f64;
+                let avg_entropy = total_entropy / num_updates.max(1) as f64;
+
+                // Compute explained variance for agent 0
+                let mean_returns = returns.iter().sum::<f32>() / returns.len().max(1) as f32;
+                let var_returns = returns.iter().map(|r| (r - mean_returns).powi(2)).sum::<f32>() / returns.len().max(1) as f32;
+                let residuals: Vec<f32> = returns.iter().zip(&buffer.values)
+                    .map(|(r, v)| r - v)
+                    .collect();
+                let mean_residuals = residuals.iter().sum::<f32>() / residuals.len().max(1) as f32;
+                let var_residuals = residuals.iter().map(|r| (r - mean_residuals).powi(2)).sum::<f32>() / residuals.len().max(1) as f32;
+                let explained_var = if var_returns > 1e-8 {
+                    1.0 - (var_residuals / var_returns)
+                } else {
+                    0.0
+                };
+
+                println!(
+                    "[INDEPENDENT] Agent {} | Policy Loss: {:.4} | Value Loss: {:.4} | Entropy: {:.3} | ExpVar: {:.3}",
+                    agent_id,
+                    avg_policy_loss,
+                    avg_value_loss,
+                    avg_entropy,
+                    explained_var
+                );
             }
         }
 
