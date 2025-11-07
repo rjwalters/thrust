@@ -146,11 +146,19 @@ fn main() -> Result<()> {
     let num_updates = TOTAL_TIMESTEPS / (NUM_STEPS * NUM_ENVS);
     tracing::info!("Starting training loop ({} updates)...", num_updates);
 
-    // Initialize observations - reset() modifies in place, then get observations
+    // Initialize observations - reset() modifies in place, then get grid observations
     for env in &mut envs {
         env.reset();
     }
+    // Get grid observations for single-agent Snake (agent_id=0)
     let mut observations: Vec<Vec<f32>> = envs.iter().map(|env| env.get_grid_observation(0)).collect();
+
+    // Verify observation size
+    if observations[0].len() != (channels as usize) * (height as usize) * (width as usize) {
+        panic!("Observation size mismatch! Expected {} but got {}",
+            (channels as usize) * (height as usize) * (width as usize),
+            observations[0].len());
+    }
     let mut buffer = RolloutBuffer::new();
     let mut total_episodes = 0;
     let mut total_steps = 0;
