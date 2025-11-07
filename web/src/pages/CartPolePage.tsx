@@ -135,6 +135,28 @@ export default function CartPolePage() {
 						</div>
 					</div>
 
+					{modelInfo?.metadata?.hyperparameters && (
+						<div className="mt-4">
+							<h3 className="font-semibold mb-2">Hyperparameters</h3>
+							<div className="bg-gray-50 p-3 rounded text-xs font-mono">
+								<div className="grid grid-cols-2 gap-x-4 gap-y-1">
+									{Object.entries(modelInfo.metadata.hyperparameters)
+										.sort(([a], [b]) => a.localeCompare(b))
+										.map(([key, value]) => (
+											<div key={key} className="flex justify-between">
+												<span className="text-gray-600">{key}:</span>
+												<span className="font-semibold ml-2">
+													{typeof value === 'number' && value < 1 && value > 0
+														? value.toFixed(6)
+														: String(value)}
+												</span>
+											</div>
+										))}
+								</div>
+							</div>
+						</div>
+					)}
+
 					<div className="mt-4 p-4 bg-blue-50 rounded-lg">
 						<p className="text-sm text-blue-900">
 							<strong>Status:</strong> {cartpole.modelLoaded ? "Model loaded successfully" : "Loading model..."}
