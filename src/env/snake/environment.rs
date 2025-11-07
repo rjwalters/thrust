@@ -117,6 +117,18 @@ impl SnakeEnv {
             };
         }
 
+        // Store previous distances to food for reward shaping
+        let mut prev_distances: Vec<f32> = Vec::new();
+        for snake in &self.snakes {
+            if snake.is_alive() {
+                let dx = (snake.head.x - self.food.x) as f32;
+                let dy = (snake.head.y - self.food.y) as f32;
+                prev_distances.push((dx * dx + dy * dy).sqrt());
+            } else {
+                prev_distances.push(f32::MAX); // Dead snakes don't get distance rewards
+            }
+        }
+
         // Apply actions and move all snakes
         for (i, &action) in actions.iter().enumerate() {
             if i < self.snakes.len() && self.snakes[i].is_alive() {
@@ -206,6 +218,19 @@ impl SnakeEnv {
                 if self.snakes[i].body.len() > 3 {
                     let length_bonus = 0.1 * ((self.snakes[i].body.len() - 3) as f32);
                     total_reward += length_bonus;
+                }
+
+                // Distance-based reward shaping: reward getting closer to food
+                if i < prev_distances.len() {
+                    let dx = (self.snakes[i].head.x - self.food.x) as f32;
+                    let dy = (self.snakes[i].head.y - self.food.y) as f32;
+                    let current_distance = (dx * dx + dy * dy).sqrt();
+                    let distance_delta = prev_distances[i] - current_distance;
+
+                    // Reward for moving closer (+0.1), penalty for moving away (-0.1)
+                    // Normalized by grid size to keep rewards consistent
+                    let distance_reward = distance_delta / (self.width.max(self.height) as f32) * 2.0;
+                    total_reward += distance_reward;
                 }
             }
         }
