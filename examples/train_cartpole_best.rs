@@ -13,20 +13,19 @@
 //! cargo run --example train_cartpole_best --release -- --checkpoint cartpole_checkpoint_3480k.pt
 //! ```
 
-use anyhow::Result;
 use std::collections::HashMap;
+
+use anyhow::Result;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
-    env::{cartpole::CartPole, pool::EnvPool, Environment},
+    env::{Environment, cartpole::CartPole, pool::EnvPool},
     policy::{inference::TrainingMetadata, mlp::MlpPolicy},
     train::ppo::{PPOConfig, PPOTrainer},
 };
 
 fn main() -> Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -42,12 +41,13 @@ fn main() -> Result<()> {
         tracing::info!("🚀 Starting CartPole PPO Training (Best Quality)");
     }
 
-    // Hyperparameters - Validated through 3.5M-step stability testing (Trial #0, 445.3 steps/ep)
-    const NUM_ENVS: usize = 8;  // Optimal number of parallel environments
-    const NUM_STEPS: usize = 128;  // Optimal rollout length
-    const TOTAL_TIMESTEPS: usize = 5_000_000;  // Extended training for 450+ steps target
-    const LEARNING_RATE: f64 = 0.000247;  // Validated learning rate (survived 3.5M steps)
-    const CHECKPOINT_INTERVAL_SECS: u64 = 300;  // Save checkpoint every 5 minutes
+    // Hyperparameters - Validated through 3.5M-step stability testing (Trial #0,
+    // 445.3 steps/ep)
+    const NUM_ENVS: usize = 8; // Optimal number of parallel environments
+    const NUM_STEPS: usize = 128; // Optimal rollout length
+    const TOTAL_TIMESTEPS: usize = 5_000_000; // Extended training for 450+ steps target
+    const LEARNING_RATE: f64 = 0.000247; // Validated learning rate (survived 3.5M steps)
+    const CHECKPOINT_INTERVAL_SECS: u64 = 300; // Save checkpoint every 5 minutes
 
     // Environment dimensions
     let env = CartPole::new();
@@ -72,7 +72,7 @@ fn main() -> Result<()> {
 
     // Create policy with optimized network size
     tracing::info!("Creating MLP policy...");
-    let mut policy = MlpPolicy::new(obs_dim, action_dim, 256);  // Larger network (validated)
+    let mut policy = MlpPolicy::new(obs_dim, action_dim, 256); // Larger network (validated)
 
     // Load checkpoint if provided
     if let Some(path) = checkpoint_path {
@@ -87,7 +87,8 @@ fn main() -> Result<()> {
     // Create optimizer
     let optimizer = policy.optimizer(LEARNING_RATE);
 
-    // Create PPO trainer with validated hyperparameters (445.3 steps/ep @ 3.5M steps)
+    // Create PPO trainer with validated hyperparameters (445.3 steps/ep @ 3.5M
+    // steps)
     let config = PPOConfig::new()
         .learning_rate(LEARNING_RATE)
         .n_epochs(20)  // More epochs for better learning
@@ -95,6 +96,7 @@ fn main() -> Result<()> {
         .gamma(0.9717)  // Validated gamma value
         .gae_lambda(0.95)
         .clip_range(0.2)
+        .clip_range_vf(f64::INFINITY)  // No value function clipping (standard PPO)
         .vf_coef(2.0)  // INCREASED from 0.5 to 2.0 to fix value function convergence
         .ent_coef(0.0151)  // Higher entropy to prevent collapse
         .max_grad_norm(0.5);
@@ -183,16 +185,11 @@ fn main() -> Result<()> {
         let obs_tensor = tch::Tensor::from_slice(&batch.observations)
             .reshape([batch_size as i64, obs_dim])
             .to_device(device);
-        let actions_tensor = tch::Tensor::from_slice(&batch.actions)
-            .to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs)
-            .to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values)
-            .to_device(device);
-        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages)
-            .to_device(device);
-        let returns_tensor = tch::Tensor::from_slice(&batch.returns)
-            .to_device(device);
+        let actions_tensor = tch::Tensor::from_slice(&batch.actions).to_device(device);
+        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs).to_device(device);
+        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values).to_device(device);
+        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages).to_device(device);
+        let returns_tensor = tch::Tensor::from_slice(&batch.returns).to_device(device);
 
         // Train
         let stats = trainer.train_step_with_policy(
@@ -217,7 +214,7 @@ fn main() -> Result<()> {
             };
 
             tracing::info!(
-                "Update {}/{} | Steps: {} | Episodes: {} | Avg Steps/Ep: {:.1} | Loss: {:.3} | Policy: {:.3} | Value: {:.3} | Entropy: {:.3}",
+                "Update {}/{} | Steps: {} | Episodes: {} | Avg Steps/Ep: {:.1} | Loss: {:.3} | Policy: {:.3} | Value: {:.3} | Entropy: {:.3} | ExpVar: {:.3}",
                 update + 1,
                 num_updates,
                 timesteps,
@@ -227,6 +224,7 @@ fn main() -> Result<()> {
                 stats.policy_loss,
                 stats.value_loss,
                 stats.entropy,
+                stats.explained_var,
             );
         }
 
@@ -245,7 +243,11 @@ fn main() -> Result<()> {
             if let Err(e) = policy.save(&checkpoint_path_pt) {
                 tracing::warn!("Failed to save PyTorch checkpoint {}: {}", checkpoint_path_pt, e);
             } else {
-                tracing::info!("💾 PyTorch checkpoint saved: {} (avg steps/ep: {:.1})", checkpoint_path_pt, avg_steps);
+                tracing::info!(
+                    "💾 PyTorch checkpoint saved: {} (avg steps/ep: {:.1})",
+                    checkpoint_path_pt,
+                    avg_steps
+                );
             }
 
             // Save JSON export for web deployment
@@ -254,7 +256,10 @@ fn main() -> Result<()> {
             if let Err(e) = exported_model.save_json(&checkpoint_path_json) {
                 tracing::warn!("Failed to save JSON checkpoint {}: {}", checkpoint_path_json, e);
             } else {
-                tracing::info!("💾 JSON checkpoint saved: {} (for web deployment)", checkpoint_path_json);
+                tracing::info!(
+                    "💾 JSON checkpoint saved: {} (for web deployment)",
+                    checkpoint_path_json
+                );
             }
 
             last_checkpoint = std::time::Instant::now();

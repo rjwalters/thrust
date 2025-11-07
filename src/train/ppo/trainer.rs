@@ -2,9 +2,10 @@
 //!
 //! This module contains the main PPOTrainer struct and its training methods.
 
-use super::{config::PPOConfig, loss::*, stats::TrainingStats};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use tch::Tensor;
+
+use super::{config::PPOConfig, loss::*, stats::TrainingStats};
 
 /// PPO Trainer for policy optimization
 ///
@@ -113,19 +114,14 @@ impl<P> PPOTrainer<P> {
         let mut stats_sum = TrainingStats::zeros();
         let mut num_updates = 0;
 
-        // Smart advantage normalization: only normalize when variance is sufficient
-        // When std is too low, normalization centering destroys the learning signal
+        // Advantage normalization: standard practice in PPO to stabilize training
+        // Normalize to zero mean and unit variance across the entire batch
         let adv_mean = advantages.mean(tch::Kind::Float);
         let adv_std = advantages.std(false);
-        let adv_std_val: f64 = f64::try_from(&adv_std).unwrap_or(1e-8);
 
-        let advantages_normalized = if adv_std_val > 1e-4 {
-            // Sufficient variance: normalize to stabilize training
-            (advantages - adv_mean) / (adv_std + 1e-8)
-        } else {
-            // Low variance: skip normalization to preserve learning signal
-            advantages.shallow_clone()
-        };
+        // Always normalize advantages (standard in all PPO implementations)
+        // This ensures that positive and negative advantages are balanced
+        let advantages_normalized = (advantages - adv_mean) / (adv_std + 1e-8);
 
         // Multiple epochs over the data
         for epoch in 0..self.config.n_epochs {
@@ -137,18 +133,18 @@ impl<P> PPOTrainer<P> {
                 let indices_tensor = Tensor::from_slice(&indices_i64);
 
                 // Sample minibatch
-                let mb_obs = observations
-                    .index_select(0, &indices_tensor.to_device(observations.device()));
-                let mb_actions = actions
-                    .index_select(0, &indices_tensor.to_device(actions.device()));
+                let mb_obs =
+                    observations.index_select(0, &indices_tensor.to_device(observations.device()));
+                let mb_actions =
+                    actions.index_select(0, &indices_tensor.to_device(actions.device()));
                 let mb_old_log_probs = old_log_probs
                     .index_select(0, &indices_tensor.to_device(old_log_probs.device()));
-                let mb_old_values = old_values
-                    .index_select(0, &indices_tensor.to_device(old_values.device()));
+                let mb_old_values =
+                    old_values.index_select(0, &indices_tensor.to_device(old_values.device()));
                 let mb_advantages = advantages_normalized
                     .index_select(0, &indices_tensor.to_device(advantages_normalized.device()));
-                let mb_returns = returns
-                    .index_select(0, &indices_tensor.to_device(returns.device()));
+                let mb_returns =
+                    returns.index_select(0, &indices_tensor.to_device(returns.device()));
 
                 // Forward pass
                 let (log_probs, entropy, values) = forward_fn(&mb_obs, &mb_actions);
