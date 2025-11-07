@@ -63,6 +63,13 @@ impl Position {
         Self::new(self.x + dx, self.y + dy)
     }
 
+    /// Wrap position to fit within bounds (torus/wraparound boundaries)
+    pub fn wrap(&self, width: i32, height: i32) -> Self {
+        let wrapped_x = ((self.x % width) + width) % width;
+        let wrapped_y = ((self.y % height) + height) % height;
+        Self::new(wrapped_x, wrapped_y)
+    }
+
     /// Check if position is within bounds
     pub fn in_bounds(&self, width: i32, height: i32) -> bool {
         self.x >= 0 && self.x < width && self.y >= 0 && self.y < height

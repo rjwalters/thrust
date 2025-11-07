@@ -53,6 +53,20 @@ impl Snake {
         }
     }
 
+    /// Move snake in current direction with wraparound boundaries (torus)
+    pub fn move_forward_wrap(&mut self, width: i32, height: i32) {
+        let new_head = self.head.add_direction(self.direction).wrap(width, height);
+
+        // Add new head position
+        self.body.push_front(new_head);
+        self.head = new_head;
+
+        // Remove tail if not growing
+        if self.body.len() > self.length {
+            self.body.pop_back();
+        }
+    }
+
     /// Change direction (with validation)
     pub fn change_direction(&mut self, new_direction: Direction) {
         // Prevent immediate reversal

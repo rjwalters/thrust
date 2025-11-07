@@ -131,12 +131,12 @@ impl SnakeEnv {
             }
         }
 
-        // Apply actions and move all snakes
+        // Apply actions and move all snakes (with wraparound boundaries)
         for (i, &action) in actions.iter().enumerate() {
             if i < self.snakes.len() && self.snakes[i].is_alive() {
                 let new_direction = Direction::from_action(action);
                 self.snakes[i].change_direction(new_direction);
-                self.snakes[i].move_forward();
+                self.snakes[i].move_forward_wrap(self.width, self.height);
             }
         }
 
@@ -277,12 +277,12 @@ impl SnakeEnv {
             }
         }
 
-        // Apply actions and move all snakes
+        // Apply actions and move all snakes (with wraparound boundaries)
         for (i, &action) in actions.iter().enumerate() {
             if i < self.snakes.len() && self.snakes[i].is_alive() {
                 let new_direction = Direction::from_action(action);
                 self.snakes[i].change_direction(new_direction);
-                self.snakes[i].move_forward();
+                self.snakes[i].move_forward_wrap(self.width, self.height);
             }
         }
 
@@ -297,12 +297,8 @@ impl SnakeEnv {
                 continue;
             }
 
-            // Check wall collision
-            if self.snakes[i].collides_with_wall(self.width, self.height) {
-                self.snakes[i].alive = false;
-                agent_rewards[i] -= 0.5;  // Reduced death penalty
-                continue;
-            }
+            // Wall collision removed - using torus/wraparound boundaries
+            // Snakes now wrap around the edges instead of dying
 
             // Check self collision
             if self.snakes[i].collides_with_self() {
