@@ -11,7 +11,7 @@ export default function BucketBrigadePage() {
 	const archetypes = ["firefighter", "coordinator", "hero", "free_rider"];
 
 	const visualization = (
-		<div className="w-full h-[640px] relative">
+		<div className="w-full h-[640px] relative flex items-center justify-center">
 			<Town houses={houses} numAgents={numAgents} archetypes={archetypes} />
 		</div>
 	);

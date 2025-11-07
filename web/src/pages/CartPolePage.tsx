@@ -44,7 +44,7 @@ export default function CartPolePage() {
 	}, []);
 
 	const visualization = cartpole.state ? (
-		<div className="w-full h-[600px]">
+		<div className="w-full h-[600px] flex items-center justify-center">
 			<CartPole3D state={cartpole.state} />
 		</div>
 	) : (

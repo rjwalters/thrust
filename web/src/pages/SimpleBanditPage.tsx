@@ -7,7 +7,7 @@ export default function SimpleBanditPage() {
 	const bandit = useSimpleBandit();
 
 	const visualization = bandit.state ? (
-		<div className="w-full h-[600px]">
+		<div className="w-full h-[600px] flex items-center justify-center">
 			<SimpleBanditVisualization state={bandit.state} />
 		</div>
 	) : (

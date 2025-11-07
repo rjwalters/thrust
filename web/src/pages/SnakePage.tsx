@@ -7,9 +7,11 @@ export default function SnakePage() {
 	const snake = useSnake();
 
 	const visualization = snake.state ? (
-		<SnakePixi state={snake.state} />
+		<div className="w-full flex items-center justify-center">
+			<SnakePixi state={snake.state} />
+		</div>
 	) : (
-		<div className="flex items-center justify-center w-[520px] h-[520px]">
+		<div className="flex items-center justify-center w-full h-[520px]">
 			<div className="text-gray-500">Loading...</div>
 		</div>
 	);
