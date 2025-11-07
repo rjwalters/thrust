@@ -11,7 +11,7 @@
 //! if PPO is implemented correctly. If it doesn't converge reliably, there's a bug.
 
 use super::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
-use rand::Rng;
+use rand::{Rng, SeedableRng};
 
 /// Simple contextual bandit for testing PPO correctness
 #[derive(Debug)]
@@ -19,7 +19,7 @@ pub struct SimpleBandit {
     state: f32,
     steps: usize,
     max_steps: usize,
-    rng: rand::rngs::ThreadRng,
+    rng: rand::rngs::StdRng,
 }
 
 impl SimpleBandit {
@@ -29,7 +29,7 @@ impl SimpleBandit {
             state: 0.0,
             steps: 0,
             max_steps: 100,
-            rng: rand::thread_rng(),
+            rng: rand::rngs::StdRng::from_entropy(),
         }
     }
 }
