@@ -13,7 +13,7 @@ export default function Home() {
 					</p>
 				</div>
 
-				<div className="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+				<div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
 					<Link
 						to="/cartpole"
 						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
@@ -47,6 +47,46 @@ export default function Home() {
 							<span className="bg-white/20 px-3 py-1 rounded-full">Pixi.js</span>
 							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
 								Multi-Agent
+							</span>
+						</div>
+					</Link>
+
+					<Link
+						to="/bandit"
+						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
+					>
+						<h2 className="text-3xl font-bold text-white mb-4">SimpleBandit</h2>
+						<p className="text-white/80 mb-4">
+							A contextual bandit environment where you choose actions to match the
+							current state. Test your decision-making skills!
+						</p>
+						<div className="text-sm text-white/60">
+							<span className="bg-white/20 px-3 py-1 rounded-full">
+								Interactive
+							</span>
+							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
+								Bandit
+							</span>
+						</div>
+					</Link>
+
+					<Link
+						to="/bucket-brigade"
+						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
+					>
+						<h2 className="text-3xl font-bold text-white mb-4">
+							Bucket Brigade
+						</h2>
+						<p className="text-white/80 mb-4">
+							Multi-agent cooperative environment where agents work together to
+							fight fires. Features a dedicated visualizer.
+						</p>
+						<div className="text-sm text-white/60">
+							<span className="bg-white/20 px-3 py-1 rounded-full">
+								Multi-Agent
+							</span>
+							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
+								Cooperation
 							</span>
 						</div>
 					</Link>

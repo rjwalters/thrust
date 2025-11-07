@@ -7,7 +7,7 @@
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "wasm")]
-use crate::env::{Environment, cartpole::CartPole, snake::SnakeEnv};
+use crate::env::{Environment, cartpole::CartPole, snake::SnakeEnv, simple_bandit::SimpleBandit};
 
 /// WASM bindings for CartPole environment
 #[cfg(feature = "wasm")]
@@ -261,6 +261,94 @@ impl WasmSnake {
     #[wasm_bindgen]
     pub fn has_policy(&self) -> bool {
         self.policy.is_some()
+    }
+}
+
+/// WASM bindings for SimpleBandit environment
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub struct WasmSimpleBandit {
+    env: SimpleBandit,
+    episode: u32,
+    episode_steps: u32,
+    total_reward: f64,
+    successes: u32,
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+impl WasmSimpleBandit {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        console_error_panic_hook::set_once();
+        Self {
+            env: SimpleBandit::new(),
+            episode: 0,
+            episode_steps: 0,
+            total_reward: 0.0,
+            successes: 0,
+        }
+    }
+
+    /// Reset the environment and start a new episode
+    #[wasm_bindgen]
+    pub fn reset(&mut self) -> Vec<f32> {
+        self.env.reset();
+        self.episode += 1;
+        self.episode_steps = 0;
+        self.env.get_observation()
+    }
+
+    /// Take a step in the environment
+    /// Returns: [state, reward, terminated]
+    #[wasm_bindgen]
+    pub fn step(&mut self, action: i32) -> Vec<f32> {
+        let result = self.env.step(action as i64);
+        self.episode_steps += 1;
+        self.total_reward += result.reward as f64;
+
+        if result.reward > 0.0 {
+            self.successes += 1;
+        }
+
+        let mut output = result.observation.clone();
+        output.push(result.reward);
+        output.push(if result.terminated { 1.0 } else { 0.0 });
+        output
+    }
+
+    /// Get current episode number
+    #[wasm_bindgen]
+    pub fn get_episode(&self) -> u32 {
+        self.episode
+    }
+
+    /// Get total steps in current episode
+    #[wasm_bindgen]
+    pub fn get_steps(&self) -> u32 {
+        self.episode_steps
+    }
+
+    /// Get current success rate (percentage)
+    #[wasm_bindgen]
+    pub fn get_success_rate(&self) -> f32 {
+        if self.episode_steps == 0 {
+            0.0
+        } else {
+            (self.successes as f32 / self.episode_steps as f32) * 100.0
+        }
+    }
+
+    /// Get total reward
+    #[wasm_bindgen]
+    pub fn get_total_reward(&self) -> f32 {
+        self.total_reward as f32
+    }
+
+    /// Get the current state
+    #[wasm_bindgen]
+    pub fn get_state(&self) -> Vec<f32> {
+        self.env.get_observation()
     }
 }
 
