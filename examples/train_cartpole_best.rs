@@ -97,7 +97,7 @@ fn main() -> Result<()> {
         .gae_lambda(0.95)
         .clip_range(0.2)
         .clip_range_vf(f64::INFINITY)  // No value function clipping (standard PPO)
-        .vf_coef(2.0)  // INCREASED from 0.5 to 2.0 to fix value function convergence
+        .vf_coef(0.5)  // Standard value function coefficient (SB3, CleanRL)
         .ent_coef(0.0151)  // Higher entropy to prevent collapse
         .max_grad_norm(0.5);
 
