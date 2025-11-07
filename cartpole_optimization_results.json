@@ -1,0 +1,206 @@
+{
+  "trials": [
+    {
+      "id": 0,
+      "config": {
+        "n_steps": {
+          "Discrete": 256
+        },
+        "batch_size": {
+          "Discrete": 128
+        },
+        "n_epochs": {
+          "Discrete": 15
+        },
+        "num_envs": {
+          "Discrete": 16
+        },
+        "hidden_dim": {
+          "Discrete": 128
+        },
+        "ent_coef": {
+          "Continuous": 0.019435064442814277
+        },
+        "learning_rate": {
+          "Continuous": 0.0001842850944858226
+        },
+        "gamma": {
+          "Continuous": 0.9718001920269345
+        }
+      },
+      "result": {
+        "metrics": {
+          "training_time": 9.197104375,
+          "total_episodes": 4633.0,
+          "total_steps": 199981.0,
+          "performance": 43.164472264191666
+        },
+        "duration_secs": 9.197104375,
+        "success": true,
+        "error": null
+      }
+    },
+    {
+      "id": 1,
+      "config": {
+        "num_envs": {
+          "Discrete": 32
+        },
+        "hidden_dim": {
+          "Discrete": 64
+        },
+        "learning_rate": {
+          "Continuous": 0.0008134926675053311
+        },
+        "n_epochs": {
+          "Discrete": 5
+        },
+        "n_steps": {
+          "Discrete": 128
+        },
+        "ent_coef": {
+          "Continuous": 0.011692414042340482
+        },
+        "gamma": {
+          "Continuous": 0.9907182635169928
+        },
+        "batch_size": {
+          "Discrete": 64
+        }
+      },
+      "result": {
+        "metrics": {
+          "performance": 26.127496362914957,
+          "training_time": 1.9445964999999998,
+          "total_steps": 197550.0,
+          "total_episodes": 7561.0
+        },
+        "duration_secs": 1.9445964999999998,
+        "success": true,
+        "error": null
+      }
+    },
+    {
+      "id": 2,
+      "config": {
+        "n_epochs": {
+          "Discrete": 10
+        },
+        "batch_size": {
+          "Discrete": 64
+        },
+        "hidden_dim": {
+          "Discrete": 128
+        },
+        "learning_rate": {
+          "Continuous": 0.00035765880875479904
+        },
+        "ent_coef": {
+          "Continuous": 0.008095749547446424
+        },
+        "gamma": {
+          "Continuous": 0.9767510438263451
+        },
+        "num_envs": {
+          "Discrete": 32
+        },
+        "n_steps": {
+          "Discrete": 512
+        }
+      },
+      "result": {
+        "metrics": {
+          "total_episodes": 9441.0,
+          "performance": 20.870988242770892,
+          "training_time": 2.6665973750000003,
+          "total_steps": 197043.0
+        },
+        "duration_secs": 2.6665973750000003,
+        "success": true,
+        "error": null
+      }
+    },
+    {
+      "id": 3,
+      "config": {
+        "ent_coef": {
+          "Continuous": 0.002261933563575418
+        },
+        "batch_size": {
+          "Discrete": 256
+        },
+        "learning_rate": {
+          "Continuous": 0.00028806819611629003
+        },
+        "n_epochs": {
+          "Discrete": 15
+        },
+        "gamma": {
+          "Continuous": 0.9733097737620678
+        },
+        "hidden_dim": {
+          "Discrete": 256
+        },
+        "n_steps": {
+          "Discrete": 256
+        },
+        "num_envs": {
+          "Discrete": 32
+        }
+      },
+      "result": {
+        "metrics": {
+          "performance": 28.884373629586317,
+          "training_time": 16.768996584,
+          "total_steps": 197598.0,
+          "total_episodes": 6841.0
+        },
+        "duration_secs": 16.768996584,
+        "success": true,
+        "error": null
+      }
+    },
+    {
+      "id": 4,
+      "config": {
+        "batch_size": {
+          "Discrete": 64
+        },
+        "hidden_dim": {
+          "Discrete": 256
+        },
+        "learning_rate": {
+          "Continuous": 0.00021541215734828572
+        },
+        "n_steps": {
+          "Discrete": 256
+        },
+        "num_envs": {
+          "Discrete": 16
+        },
+        "gamma": {
+          "Continuous": 0.9897967119042868
+        },
+        "ent_coef": {
+          "Continuous": 0.005149149292134212
+        },
+        "n_epochs": {
+          "Discrete": 5
+        }
+      },
+      "result": {
+        "metrics": {
+          "training_time": 11.128243833,
+          "total_steps": 197473.0,
+          "total_episodes": 9119.0,
+          "performance": 21.655115692510144
+        },
+        "duration_secs": 11.128243833,
+        "success": true,
+        "error": null
+      }
+    }
+  ],
+  "best_performance": 43.164472264191666,
+  "best_trial_id": 0
+}

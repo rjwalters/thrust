@@ -54,7 +54,7 @@ export default function Home() {
 
 				<div className="mt-16 text-center">
 					<a
-						href="https://github.com/yourusername/thrust"
+						href="https://github.com/rjwalters/thrust"
 						className="inline-block bg-white/20 backdrop-blur-lg text-white px-8 py-3 rounded-full hover:bg-white/30 transition-all border border-white/20"
 					>
 						View on GitHub

@@ -70,7 +70,8 @@
       "Bash(/tmp/cargo_errors.txt)",
       "Bash(grep:*)",
       "Bash(xargs gh run watch:*)",
-      "Bash(LIBTORCH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch/lib cargo +nightly test:*)"
+      "Bash(LIBTORCH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch DYLD_LIBRARY_PATH=/opt/homebrew/Cellar/pytorch/2.9.0_1/libexec/lib/python3.14/site-packages/torch/lib cargo +nightly test:*)",
+      "Bash(./scripts/remote-optimize.sh:*)"
     ],
     "deny": [],
     "ask": []

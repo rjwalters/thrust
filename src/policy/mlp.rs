@@ -101,7 +101,9 @@ impl MlpPolicy {
     /// * `action_dim` - Number of discrete actions
     /// * `config` - Architecture configuration
     pub fn with_config(obs_dim: i64, action_dim: i64, config: MlpConfig) -> Self {
-        let vs = nn::VarStore::new(Device::cuda_if_available());
+        let device = Device::cuda_if_available();
+        tracing::info!("MlpPolicy using device: {:?}", device);
+        let vs = nn::VarStore::new(device);
         let root = vs.root();
 
         // Weight initialization - use orthogonal for hidden layers

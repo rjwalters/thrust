@@ -69,6 +69,8 @@ export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
 
 # IMPORTANT: Build must happen on this machine to detect CUDA at compile time
 echo "Building with CUDA support..."
+# Force rebuild to ensure CUDA detection
+cargo +nightly clean --release
 cargo +nightly build --example optimize_cartpole --release
 
 # Create log file with timestamp

@@ -1,16 +1,16 @@
-//! Modern CartPole PPO Training
+//! CartPole PPO Training - Hybrid Best Configuration
 //!
-//! This example demonstrates state-of-the-art training with:
-//! - Orthogonal weight initialization
-//! - Tanh activation (better for control tasks)
-//! - Optimized hyperparameters
+//! This combines what worked well from our experiments:
+//! - ReLU activation (better than Tanh for CartPole)
+//! - Larger network (128 hidden units)
+//! - SB3's training dynamics (short rollouts, LR decay, more epochs)
 //!
-//! Target: 450+ average episode length (near perfect)
+//! Target: 450+ average episode length
 //!
 //! # Usage
 //!
 //! ```bash
-//! cargo run --example train_cartpole_modern --release
+//! cargo run --example train_cartpole_hybrid --release
 //! ```
 
 use anyhow::Result;
@@ -30,17 +30,17 @@ fn main() -> Result<()> {
         .with_env_filter("info")
         .init();
 
-    tracing::info!("🚀 Starting Modern CartPole PPO Training");
+    tracing::info!("🚀 Starting CartPole PPO Training (Hybrid Config)");
 
     // Start timing
     let training_start = std::time::Instant::now();
 
-    // Hyperparameters - optimized for best performance with LR annealing
-    const NUM_ENVS: usize = 16;  // More parallel envs for better sampling
-    const NUM_STEPS: usize = 256;  // Our optimal rollout length
-    const TOTAL_TIMESTEPS: usize = 1_000_000;  // Train for 1M steps with LR decay
-    const INITIAL_LEARNING_RATE: f64 = 0.0003;  // Start at 3e-4
-    const HIDDEN_DIM: i64 = 128;  // Larger network
+    // Hyperparameters - hybrid approach
+    const NUM_ENVS: usize = 8;
+    const NUM_STEPS: usize = 64;  // Compromise: longer than SB3's 32, shorter than our 256
+    const TOTAL_TIMESTEPS: usize = 200_000;  // Train for 200k steps
+    const INITIAL_LEARNING_RATE: f64 = 0.0005;  // Between SB3 (0.001) and ours (0.00025)
+    const HIDDEN_DIM: i64 = 128;  // Keep our larger network
 
     // Environment dimensions
     let env = CartPole::new();
@@ -53,7 +53,7 @@ fn main() -> Result<()> {
         _ => panic!("Expected discrete action space"),
     };
 
-    tracing::info!("Environment: CartPole-v1 (Modern Training)");
+    tracing::info!("Environment: CartPole-v1 (Hybrid Configuration)");
     tracing::info!("  Observation dim: {}", obs_dim);
     tracing::info!("  Action dim: {}", action_dim);
     tracing::info!("  Num envs: {}", NUM_ENVS);
@@ -63,13 +63,13 @@ fn main() -> Result<()> {
     // Create environment pool
     let mut env_pool = EnvPool::new(CartPole::new, NUM_ENVS);
 
-    // Create policy with modern architecture
-    tracing::info!("Creating modern MLP policy...");
+    // Create policy with what worked: ReLU + orthogonal init + larger network
+    tracing::info!("Creating MLP policy...");
     let config = MlpConfig {
         num_layers: 2,
         hidden_dim: HIDDEN_DIM,
         use_orthogonal_init: true,
-        activation: Activation::ReLU,  // Try ReLU instead of Tanh
+        activation: Activation::ReLU,  // ReLU worked much better!
     };
     let mut policy = MlpPolicy::with_config(obs_dim, action_dim, config);
     let device = policy.device();
@@ -78,19 +78,16 @@ fn main() -> Result<()> {
     tracing::info!("  Activation: ReLU");
     tracing::info!("  Initialization: Orthogonal");
 
-    // Note: Observation normalization disabled for compatibility with inference
-    // let mut obs_normalizer = RunningMeanStd::new(obs_dim as usize, 1e-8);
-
-    // Create PPO trainer
+    // Create PPO trainer with hybrid hyperparameters
     let ppo_config = PPOConfig::new()
         .learning_rate(INITIAL_LEARNING_RATE)
-        .n_epochs(10)
-        .batch_size(128)  // Larger batch size for stability
-        .gamma(0.99)
-        .gae_lambda(0.95)
+        .n_epochs(15)  // More than our 10, less than SB3's 20
+        .batch_size(256)  // Large batch size from SB3
+        .gamma(0.99)  // Our value (works well)
+        .gae_lambda(0.95)  // Our value (works well)
         .clip_range(0.2)
         .vf_coef(0.5)
-        .ent_coef(0.01)
+        .ent_coef(0.005)  // Small entropy bonus (between 0.0 and 0.01)
         .max_grad_norm(0.5);
 
     let dummy_policy = MlpPolicy::with_config(obs_dim, action_dim, MlpConfig::default());
@@ -107,11 +104,11 @@ fn main() -> Result<()> {
     let num_updates = TOTAL_TIMESTEPS / (NUM_STEPS * NUM_ENVS);
 
     for update in 0..num_updates {
-        // Compute current learning rate (linear decay like SB3)
+        // Compute current learning rate (linear decay)
         let progress = (update * NUM_STEPS * NUM_ENVS) as f64 / TOTAL_TIMESTEPS as f64;
         let current_lr = INITIAL_LEARNING_RATE * (1.0 - progress);
 
-        // Update optimizer with new learning rate
+        // Create new optimizer with updated learning rate
         let optimizer = policy.optimizer(current_lr);
         trainer.set_optimizer(optimizer);
 
@@ -119,7 +116,7 @@ fn main() -> Result<()> {
         buffer.reset();
 
         for step in 0..NUM_STEPS {
-            // Convert to tensor (no normalization for inference compatibility)
+            // Convert to tensor (no normalization)
             let obs_flat: Vec<f32> = observations.iter().flatten().copied().collect();
             let obs_tensor = tch::Tensor::from_slice(&obs_flat)
                 .reshape([NUM_ENVS as i64, obs_dim])
@@ -162,7 +159,7 @@ fn main() -> Result<()> {
             trainer.increment_steps(NUM_ENVS);
         }
 
-        // Compute advantages (no normalization for inference compatibility)
+        // Compute advantages
         let obs_flat: Vec<f32> = observations.iter().flatten().copied().collect();
         let obs_tensor = tch::Tensor::from_slice(&obs_flat)
             .reshape([NUM_ENVS as i64, obs_dim])
@@ -204,7 +201,7 @@ fn main() -> Result<()> {
         )?;
 
         // Log progress
-        if update % 5 == 0 {
+        if update % 10 == 0 {
             let timesteps = trainer.total_steps();
             let episodes = trainer.total_episodes();
             let avg_steps_per_episode = if episodes > 0 {
@@ -248,7 +245,7 @@ fn main() -> Result<()> {
     tracing::info!("  Device: {:?}", device);
 
     // Save model
-    let save_path = "cartpole_model_modern.pt";
+    let save_path = "cartpole_model_hybrid.pt";
     policy.save(save_path)?;
     tracing::info!("💾 Model saved to {}", save_path);
 
@@ -264,30 +261,30 @@ fn main() -> Result<()> {
         training_time_secs: training_secs,
         device: format!("{:?}", device),
         environment: "CartPole-v1".to_string(),
-        algorithm: "PPO (Proximal Policy Optimization)".to_string(),
+        algorithm: "PPO (Hybrid config)".to_string(),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
         notes: Some(format!(
-            "Modern RL training: ReLU activation, 128 hidden units, n_steps=256, lr=0.0003->0 (linear decay), \
-             no obs normalization (inference compatible). \
+            "Hybrid training: ReLU activation, 128 hidden units, n_steps=64, batch_size=256, n_epochs=15, \
+             lr=0.0005->0 (linear decay), gamma=0.99, gae_lambda=0.95, ent_coef=0.005. \
              Achieved {:.1} steps/episode in {:.1}s ({:.0} steps/sec).",
             final_avg, training_secs, trainer.total_steps() as f64 / training_secs
         )),
     };
     exported_model.metadata = Some(metadata);
 
-    let json_path = "cartpole_model_modern.json";
+    let json_path = "cartpole_model_hybrid.json";
     exported_model.save_json(json_path)?;
     let file_size = std::fs::metadata(json_path)?.len();
     tracing::info!("✅ Model exported to {} ({} KB)", json_path, file_size / 1024);
 
     if final_avg >= 450.0 {
-        tracing::info!("🎉 EXCELLENT! Achieved near-perfect performance!");
+        tracing::info!("🎉 SUCCESS! Achieved 450+ performance!");
     } else if final_avg >= 400.0 {
         tracing::info!("🎊 GREAT! Strong performance achieved!");
     } else if final_avg >= 300.0 {
-        tracing::info!("👍 GOOD! Solid performance achieved!");
+        tracing::info!("👍 GOOD! Solid performance - best yet!");
     } else {
-        tracing::info!("💡 Consider training longer for better performance");
+        tracing::info!("💡 Continuing to improve...");
     }
 
     Ok(())
