@@ -64,16 +64,18 @@ fn main() -> Result<()> {
     // Create optimizer
     let optimizer = policy.optimizer(LEARNING_RATE);
 
-    // Create PPO trainer with simple config
+    // Create PPO trainer with config optimized for contextual bandits
+    // Key difference: gamma=0.0 and gae_lambda=0.0 disable GAE bootstrapping
+    // This gives simple advantages: A = r - V (no temporal dependencies)
     let config = PPOConfig::new()
         .learning_rate(LEARNING_RATE)
         .n_epochs(10)
         .batch_size(64)
-        .gamma(0.99)
-        .gae_lambda(0.95)
+        .gamma(0.0)  // No discount - SimpleBandit is a single-step contextual bandit
+        .gae_lambda(0.0)  // No GAE bootstrapping - states are independent
         .clip_range(0.2)
         .vf_coef(0.5)
-        .ent_coef(0.1)  // 10x higher to encourage exploration on this trivial task
+        .ent_coef(0.1)  // Higher entropy to encourage exploration
         .max_grad_norm(0.5);
 
     let dummy_policy = MlpPolicy::new(obs_dim, action_dim, 64);
@@ -155,7 +157,9 @@ fn main() -> Result<()> {
         let (_, _, last_values) = policy.get_action(&obs_tensor);
         let last_values_vec: Vec<f32> = Vec::try_from(last_values)?;
 
-        buffer.compute_advantages(&last_values_vec, 0.99, 0.95);
+        // Use gamma=0.0, gae_lambda=0.0 for contextual bandit (no temporal dependencies)
+        // This gives: A = r - V (simple advantage, no bootstrapping)
+        buffer.compute_advantages(&last_values_vec, 0.0, 0.0);
 
         // Get training batch
         let batch = buffer.get_batch();
