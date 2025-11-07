@@ -231,6 +231,9 @@ pub struct TrainingMetadata {
     /// Timestamp when trained
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+    /// Hyperparameters used for training
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hyperparameters: Option<std::collections::HashMap<String, serde_json::Value>>,
     /// Additional notes
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,

@@ -11,10 +11,11 @@
 //! ```
 
 use anyhow::Result;
+use std::collections::HashMap;
 use thrust_rl::{
     buffer::rollout::RolloutBuffer,
     env::{cartpole::CartPole, pool::EnvPool, Environment},
-    policy::mlp::MlpPolicy,
+    policy::{inference::TrainingMetadata, mlp::MlpPolicy},
     train::ppo::{PPOConfig, PPOTrainer},
 };
 
@@ -239,13 +240,43 @@ fn main() -> Result<()> {
     policy.save(save_path)?;
     tracing::info!("💾 Model saved to {}", save_path);
 
-    // Export model to JSON for web demo (bypasses PyTorch loading issues)
-    tracing::info!("🔄 Exporting model to JSON for web...");
-    let exported_model = policy.export_for_inference();
+    // Export model to JSON for web demo with metadata
+    tracing::info!("🔄 Exporting model to JSON with metadata...");
+    let mut exported_model = policy.export_for_inference();
+
+    // Create hyperparameters map
+    let mut hyperparameters = HashMap::new();
+    hyperparameters.insert("n_steps".to_string(), serde_json::json!(NUM_STEPS));
+    hyperparameters.insert("num_envs".to_string(), serde_json::json!(NUM_ENVS));
+    hyperparameters.insert("learning_rate".to_string(), serde_json::json!(LEARNING_RATE));
+    hyperparameters.insert("hidden_dim".to_string(), serde_json::json!(64));
+    hyperparameters.insert("n_epochs".to_string(), serde_json::json!(10));
+    hyperparameters.insert("batch_size".to_string(), serde_json::json!(128));
+    hyperparameters.insert("gamma".to_string(), serde_json::json!(0.9911));
+    hyperparameters.insert("ent_coef".to_string(), serde_json::json!(0.001006));
+    hyperparameters.insert("gae_lambda".to_string(), serde_json::json!(0.95));
+    hyperparameters.insert("clip_range".to_string(), serde_json::json!(0.2));
+
+    // Create training metadata
+    let metadata = TrainingMetadata {
+        total_steps: trainer.total_steps(),
+        total_episodes: trainer.total_episodes(),
+        final_performance: avg_steps,
+        training_time_secs: 0.0,  // Will be set by checkpoint logic
+        device: format!("{:?}", device),
+        environment: "CartPole-v1".to_string(),
+        algorithm: "PPO (GPU-optimized)".to_string(),
+        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        hyperparameters: Some(hyperparameters),
+        notes: Some("Trained with GPU-optimized hyperparameters from random search optimization".to_string()),
+    };
+
+    exported_model.metadata = Some(metadata);
+
     let json_path = "cartpole_model_best.json";
     exported_model.save_json(json_path)?;
     tracing::info!("✅ Model exported to {}", json_path);
-    tracing::info!("📦 File size: {} bytes", std::fs::metadata(json_path)?.len());
+    tracing::info!("📦 File size: {} KB", std::fs::metadata(json_path)?.len() / 1024);
 
     Ok(())
 }
