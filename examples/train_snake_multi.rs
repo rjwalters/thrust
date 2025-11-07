@@ -59,7 +59,7 @@ impl Default for Args {
             entropy_coef: 0.01,
             ppo_epochs: 4,
             minibatch_size: 64,
-            output: PathBuf::from("models/snake_policy.pt"),
+            output: PathBuf::from("models/snake_policy.safetensors"),
             save_interval: 10,
             cuda: true,
         }
@@ -371,7 +371,7 @@ fn main() -> Result<()> {
 
         // Save checkpoint
         if (epoch + 1) % args.save_interval == 0 {
-            let checkpoint_path = args.output.with_extension(format!("epoch{}.pt", epoch + 1));
+            let checkpoint_path = args.output.with_extension(format!("epoch{}.safetensors", epoch + 1));
             vs.save(&checkpoint_path)?;
             println!("Saved checkpoint to {:?}", checkpoint_path);
         }
