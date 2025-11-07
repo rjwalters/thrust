@@ -1,163 +1,103 @@
-import { useState, useEffect, useRef } from 'react';
-import type { WasmSimpleBandit } from "../lib/wasm";
-import { initWasm } from "../lib/wasm";
+import { Link } from "react-router-dom";
+import SimpleBanditVisualization from "../components/SimpleBandit/SimpleBanditVisualization";
+import SimpleBanditControls from "../components/SimpleBandit/SimpleBanditControls";
+import { useSimpleBandit } from "../components/SimpleBandit/useSimpleBandit";
+import Footer from "../components/Footer";
 
-const SimpleBanditPage = () => {
-    const [env, setEnv] = useState<WasmSimpleBandit | null>(null);
-    const [state, setState] = useState<number>(0);
-    const [episode, setEpisode] = useState<number>(0);
-    const [steps, setSteps] = useState<number>(0);
-    const [successRate, setSuccessRate] = useState<number>(0);
-    const [totalReward, setTotalReward] = useState<number>(0);
-    const [lastReward, setLastReward] = useState<number | null>(null);
-    const animationRef = useRef<number | undefined>(undefined);
+export default function SimpleBanditPage() {
+	const bandit = useSimpleBandit();
 
-    useEffect(() => {
-        const loadWasm = async () => {
-            try {
-                const wasm = await initWasm();
-                const newEnv = new wasm.WasmSimpleBandit();
-                setEnv(newEnv);
-                const initialState = newEnv.get_state();
-                setState(initialState[0]);
-            } catch (error) {
-                console.error('Failed to load WASM:', error);
-            }
-        };
+	return (
+		<div className="min-h-screen bg-gray-50">
+			<div className="container mx-auto px-4 py-8">
+				<Link
+					to="/"
+					className="text-indigo-600 hover:text-indigo-800 mb-4 inline-block"
+				>
+					← Back to Home
+				</Link>
+				<h1 className="text-4xl font-bold mb-8">SimpleBandit</h1>
 
-        loadWasm();
+				<div className="grid lg:grid-cols-[1fr_auto] gap-8">
+					{/* Visualization */}
+					<div className="bg-white rounded-lg shadow-lg overflow-hidden">
+						{bandit.state ? (
+							<div className="w-full h-[600px]">
+								<SimpleBanditVisualization state={bandit.state} />
+							</div>
+						) : (
+							<div className="flex items-center justify-center w-full h-[600px]">
+								<div className="text-gray-500">Loading...</div>
+							</div>
+						)}
+					</div>
 
-        return () => {
-            if (animationRef.current) {
-                cancelAnimationFrame(animationRef.current);
-            }
-        };
-    }, []);
+					{/* Controls */}
+					<div className="bg-white rounded-lg shadow-lg p-6 lg:w-80">
+						<h2 className="text-2xl font-bold mb-6">Controls</h2>
+						<SimpleBanditControls bandit={bandit} />
+					</div>
+				</div>
 
-    const reset = () => {
-        if (!env) return;
-        const newState = env.reset();
-        setState(newState[0]);
-        setEpisode(env.get_episode());
-        setSteps(env.get_steps());
-        setSuccessRate(env.get_success_rate());
-        setTotalReward(env.get_total_reward());
-        setLastReward(null);
-    };
+				{/* About Section */}
+				<div className="mt-8 bg-white rounded-lg shadow-lg p-6">
+					<h2 className="text-2xl font-bold mb-4">About SimpleBandit</h2>
+					<p className="text-gray-600 mb-4">
+						SimpleBandit is a contextual bandit environment where the agent must
+						learn to match actions to states. This is one of the simplest
+						reinforcement learning problems and serves as a great introduction to
+						the field.
+					</p>
 
-    const takeAction = (action: number) => {
-        if (!env) return;
+					<div className="grid md:grid-cols-2 gap-6">
+						<div>
+							<h3 className="font-semibold mb-2">Environment Details</h3>
+							<div className="bg-gray-50 p-3 rounded text-sm space-y-1">
+								<div className="flex justify-between">
+									<span className="text-gray-600">States:</span>
+									<span className="font-mono">2 (0 or 1)</span>
+								</div>
+								<div className="flex justify-between">
+									<span className="text-gray-600">Actions:</span>
+									<span className="font-mono">2 (0 or 1)</span>
+								</div>
+								<div className="flex justify-between">
+									<span className="text-gray-600">Episode Length:</span>
+									<span className="font-mono">100 steps</span>
+								</div>
+								<div className="flex justify-between">
+									<span className="text-gray-600">Reward:</span>
+									<span className="font-mono">+1 (correct) / 0 (wrong)</span>
+								</div>
+							</div>
+						</div>
 
-        const result = env.step(action);
-        const [newState, reward, terminated] = result;
+						<div>
+							<h3 className="font-semibold mb-2">Objective</h3>
+							<div className="bg-gray-50 p-3 rounded text-sm">
+								<p className="text-gray-700">
+									The goal is to choose the action that matches the current state:
+								</p>
+								<ul className="mt-2 space-y-1 text-gray-600">
+									<li>• State 0 → Choose Action 0</li>
+									<li>• State 1 → Choose Action 1</li>
+									<li>• Maximize your success rate!</li>
+								</ul>
+							</div>
+						</div>
+					</div>
 
-        setState(newState);
-        setSteps(env.get_steps());
-        setSuccessRate(env.get_success_rate());
-        setTotalReward(env.get_total_reward());
-        setLastReward(reward);
+					<div className="mt-4 p-4 bg-blue-50 rounded-lg">
+						<p className="text-sm text-blue-900">
+							<strong>Interactive Learning:</strong> This environment runs
+							entirely in your browser using WebAssembly. Make choices and see
+							immediate feedback!
+						</p>
+					</div>
+				</div>
 
-        if (terminated) {
-            setTimeout(reset, 1500);
-        }
-    };
-
-    const getStateColor = (s: number): string => {
-        return s === 0 ? 'bg-blue-500' : 'bg-green-500';
-    };
-
-    const getActionButtonClass = (action: number): string => {
-        const baseClass = 'px-8 py-4 rounded-lg font-bold text-white transition-all duration-200 hover:scale-105 active:scale-95';
-        const colorClass = action === 0 ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700';
-        return `${baseClass} ${colorClass}`;
-    };
-
-    return (
-        <div className="min-h-screen bg-gray-900 text-white p-8">
-            <div className="max-w-4xl mx-auto">
-                <h1 className="text-4xl font-bold mb-2 text-center">SimpleBandit</h1>
-                <p className="text-gray-400 text-center mb-8">
-                    A contextual bandit environment. Choose the action that matches the state!
-                </p>
-
-                {/* Stats Panel */}
-                <div className="grid grid-cols-4 gap-4 mb-8">
-                    <div className="bg-gray-800 rounded-lg p-4">
-                        <div className="text-gray-400 text-sm">Episode</div>
-                        <div className="text-2xl font-bold">{episode}</div>
-                    </div>
-                    <div className="bg-gray-800 rounded-lg p-4">
-                        <div className="text-gray-400 text-sm">Steps</div>
-                        <div className="text-2xl font-bold">{steps}</div>
-                    </div>
-                    <div className="bg-gray-800 rounded-lg p-4">
-                        <div className="text-gray-400 text-sm">Success Rate</div>
-                        <div className="text-2xl font-bold">{successRate.toFixed(1)}%</div>
-                    </div>
-                    <div className="bg-gray-800 rounded-lg p-4">
-                        <div className="text-gray-400 text-sm">Total Reward</div>
-                        <div className="text-2xl font-bold">{totalReward.toFixed(1)}</div>
-                    </div>
-                </div>
-
-                {/* Current State Display */}
-                <div className="bg-gray-800 rounded-lg p-8 mb-8">
-                    <div className="text-center mb-4">
-                        <div className="text-gray-400 text-sm mb-2">Current State</div>
-                        <div className={`inline-flex items-center justify-center w-32 h-32 rounded-full ${getStateColor(state)} text-6xl font-bold`}>
-                            {state}
-                        </div>
-                    </div>
-                    {lastReward !== null && (
-                        <div className={`text-center text-2xl font-bold ${lastReward > 0 ? 'text-green-400' : 'text-red-400'}`}>
-                            {lastReward > 0 ? '✓ Correct!' : '✗ Wrong'}
-                        </div>
-                    )}
-                </div>
-
-                {/* Action Buttons */}
-                <div className="grid grid-cols-2 gap-4 mb-8">
-                    <button
-                        onClick={() => takeAction(0)}
-                        disabled={!env}
-                        className={getActionButtonClass(0)}
-                    >
-                        Action 0
-                    </button>
-                    <button
-                        onClick={() => takeAction(1)}
-                        disabled={!env}
-                        className={getActionButtonClass(1)}
-                    >
-                        Action 1
-                    </button>
-                </div>
-
-                {/* Reset Button */}
-                <div className="text-center">
-                    <button
-                        onClick={reset}
-                        disabled={!env}
-                        className="px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold transition-all duration-200"
-                    >
-                        Reset Episode
-                    </button>
-                </div>
-
-                {/* Instructions */}
-                <div className="mt-8 bg-gray-800 rounded-lg p-6">
-                    <h2 className="text-xl font-bold mb-3">How to Play</h2>
-                    <ul className="space-y-2 text-gray-300">
-                        <li>• The state is shown in the circle (0 or 1)</li>
-                        <li>• Choose the action button that matches the current state</li>
-                        <li>• Correct choices give +1 reward, wrong choices give 0</li>
-                        <li>• Each episode lasts 100 steps</li>
-                        <li>• Try to achieve 100% success rate!</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-export default SimpleBanditPage;
+				<Footer />
+			</div>
+		</div>
+	);
+}
