@@ -4,8 +4,11 @@ interface SimpleBanditControlsProps {
 	bandit: UseSimpleBanditResult;
 }
 
-export default function SimpleBanditControls({ bandit }: SimpleBanditControlsProps) {
-	const { state, isRunning, isPaused, speed, start, pause, reset, setSpeed } = bandit;
+export default function SimpleBanditControls({
+	bandit,
+}: SimpleBanditControlsProps) {
+	const { state, isRunning, isPaused, speed, start, pause, reset, setSpeed } =
+		bandit;
 
 	if (!state) {
 		return (
@@ -104,7 +107,7 @@ export default function SimpleBanditControls({ bandit }: SimpleBanditControlsPro
 					<div className="text-sm text-gray-600 mb-3">Current State</div>
 					<div
 						className={`inline-flex items-center justify-center w-24 h-24 rounded-full ${getStateColor(
-							state.state
+							state.state,
 						)} text-5xl font-bold text-white shadow-lg`}
 					>
 						{state.state}

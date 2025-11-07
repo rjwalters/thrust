@@ -20,8 +20,8 @@ export default function Home() {
 					>
 						<h2 className="text-3xl font-bold text-white mb-4">SimpleBandit</h2>
 						<p className="text-white/80 mb-4">
-							A contextual bandit environment where you choose actions to match the
-							current state. Test your decision-making skills!
+							A contextual bandit environment where you choose actions to match
+							the current state. Test your decision-making skills!
 						</p>
 						<div className="text-sm text-white/60">
 							<span className="bg-white/20 px-3 py-1 rounded-full">
@@ -59,11 +59,13 @@ export default function Home() {
 						<h2 className="text-3xl font-bold text-white mb-4">Snake Game</h2>
 						<p className="text-white/80 mb-4">
 							Classic Snake game with 4 AI agents competing for food.
-							Hardware-accelerated rendering using Pixi.js with collision detection
-							between snakes.
+							Hardware-accelerated rendering using Pixi.js with collision
+							detection between snakes.
 						</p>
 						<div className="text-sm text-white/60">
-							<span className="bg-white/20 px-3 py-1 rounded-full">Pixi.js</span>
+							<span className="bg-white/20 px-3 py-1 rounded-full">
+								Pixi.js
+							</span>
 							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
 								Multi-Agent
 							</span>

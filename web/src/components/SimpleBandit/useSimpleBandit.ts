@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { WasmSimpleBandit } from "../../lib/wasm";
 import { initWasm } from "../../lib/wasm";
 
@@ -66,17 +66,20 @@ export function useSimpleBandit(): UseSimpleBanditResult {
 		};
 	}, []);
 
-	const updateState = useCallback((env: WasmSimpleBandit, lastReward: number | null = null) => {
-		const stateArray = env.get_state();
-		setState({
-			state: stateArray[0],
-			episode: env.get_episode(),
-			steps: env.get_steps(),
-			successRate: env.get_success_rate(),
-			totalReward: env.get_total_reward(),
-			lastReward,
-		});
-	}, []);
+	const updateState = useCallback(
+		(env: WasmSimpleBandit, lastReward: number | null = null) => {
+			const stateArray = env.get_state();
+			setState({
+				state: stateArray[0],
+				episode: env.get_episode(),
+				steps: env.get_steps(),
+				successRate: env.get_success_rate(),
+				totalReward: env.get_total_reward(),
+				lastReward,
+			});
+		},
+		[],
+	);
 
 	const reset = useCallback(() => {
 		if (!env) return;
@@ -84,22 +87,25 @@ export function useSimpleBandit(): UseSimpleBanditResult {
 		updateState(env, null);
 	}, [env, updateState]);
 
-	const takeAction = useCallback((action: number) => {
-		if (!env) return;
+	const takeAction = useCallback(
+		(action: number) => {
+			if (!env) return;
 
-		const result = env.step(action);
-		const [, reward, terminated] = result;
-		updateState(env, reward);
+			const result = env.step(action);
+			const [, reward, terminated] = result;
+			updateState(env, reward);
 
-		if (terminated) {
-			setTimeout(() => {
-				if (env) {
-					env.reset();
-					updateState(env, null);
-				}
-			}, 1500);
-		}
-	}, [env, updateState]);
+			if (terminated) {
+				setTimeout(() => {
+					if (env) {
+						env.reset();
+						updateState(env, null);
+					}
+				}, 1500);
+			}
+		},
+		[env, updateState],
+	);
 
 	const start = useCallback(() => {
 		setIsRunning(true);

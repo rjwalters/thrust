@@ -47,7 +47,11 @@ export function useSnake(): UseSnakeResult {
 			try {
 				const wasm = await initWasm();
 				if (mounted) {
-					envRef.current = new wasm.WasmSnake(GRID_WIDTH, GRID_HEIGHT, NUM_AGENTS);
+					envRef.current = new wasm.WasmSnake(
+						GRID_WIDTH,
+						GRID_HEIGHT,
+						NUM_AGENTS,
+					);
 					envRef.current.reset();
 
 					// Load policy from JSON
@@ -56,11 +60,15 @@ export function useSnake(): UseSnakeResult {
 						const response = await fetch("/snake_model.json");
 						if (response.ok) {
 							const policyJson = await response.text();
-							console.log(`[Snake] Policy JSON loaded (${policyJson.length} bytes)`);
+							console.log(
+								`[Snake] Policy JSON loaded (${policyJson.length} bytes)`,
+							);
 							envRef.current.load_policy_json(policyJson);
 							console.log("[Snake] Policy loaded successfully");
 						} else {
-							console.warn("[Snake] Policy model not found, using random actions");
+							console.warn(
+								"[Snake] Policy model not found, using random actions",
+							);
 						}
 					} catch (error) {
 						console.warn("[Snake] Failed to load policy:", error);

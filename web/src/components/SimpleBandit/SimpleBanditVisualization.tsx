@@ -8,7 +8,9 @@ export default function SimpleBanditVisualization({
 	state,
 }: SimpleBanditVisualizationProps) {
 	const getStateColor = (s: number): string => {
-		return s === 0 ? "from-blue-500 to-blue-600" : "from-green-500 to-green-600";
+		return s === 0
+			? "from-blue-500 to-blue-600"
+			: "from-green-500 to-green-600";
 	};
 
 	const getStateBorderColor = (s: number): string => {
@@ -30,13 +32,11 @@ export default function SimpleBanditVisualization({
 			<div className="relative">
 				<div
 					className={`w-48 h-48 rounded-full bg-gradient-to-br ${getStateColor(
-						state.state
+						state.state,
 					)} border-8 ${getStateBorderColor(
-						state.state
+						state.state,
 					)} shadow-2xl flex items-center justify-center transform transition-all duration-500 ${
-						state.lastReward !== null && state.lastReward > 0
-							? "scale-110"
-							: ""
+						state.lastReward !== null && state.lastReward > 0 ? "scale-110" : ""
 					}`}
 				>
 					<div className="text-8xl font-bold text-white drop-shadow-lg">
@@ -60,9 +60,7 @@ export default function SimpleBanditVisualization({
 			<div className="mt-20 w-full max-w-md">
 				<div className="flex justify-between text-sm text-gray-600 mb-2">
 					<span>Episode Progress</span>
-					<span>
-						{state.steps} / 100 steps
-					</span>
+					<span>{state.steps} / 100 steps</span>
 				</div>
 				<div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
 					<div

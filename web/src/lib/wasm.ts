@@ -40,7 +40,11 @@ export interface WasmSimpleBandit {
 
 export interface WasmModule {
 	WasmCartPole: new () => WasmCartPole;
-	WasmSnake: new (width: number, height: number, numAgents: number) => WasmSnake;
+	WasmSnake: new (
+		width: number,
+		height: number,
+		numAgents: number,
+	) => WasmSnake;
 	WasmSimpleBandit: new () => WasmSimpleBandit;
 }
 
