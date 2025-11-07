@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { Github, Home as HomeIcon } from "lucide-react";
 import Footer from "../components/Footer";
 
 export default function Home() {
@@ -94,11 +95,23 @@ export default function Home() {
 					</Link>
 				</div>
 
-				<div className="mt-16 text-center">
+				<div className="mt-16 flex justify-center gap-4">
+					<a
+						href="https://rjwalters.info"
+						className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-lg text-white px-8 py-3 rounded-full hover:bg-white/30 transition-all border border-white/20"
+						target="_blank"
+						rel="noopener noreferrer"
+					>
+						<HomeIcon size={20} />
+						Home
+					</a>
 					<a
 						href="https://github.com/rjwalters/thrust"
-						className="inline-block bg-white/20 backdrop-blur-lg text-white px-8 py-3 rounded-full hover:bg-white/30 transition-all border border-white/20"
+						className="inline-flex items-center gap-2 bg-white/20 backdrop-blur-lg text-white px-8 py-3 rounded-full hover:bg-white/30 transition-all border border-white/20"
+						target="_blank"
+						rel="noopener noreferrer"
 					>
+						<Github size={20} />
 						View on GitHub
 					</a>
 				</div>

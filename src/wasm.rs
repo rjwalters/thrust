@@ -97,6 +97,13 @@ impl WasmCartPole {
         let policy: crate::policy::inference::InferenceModel = serde_json::from_str(json)
             .map_err(|e| JsValue::from_str(&format!("Failed to parse policy JSON: {}", e)))?;
 
+        #[cfg(feature = "wasm")]
+        {
+            use web_sys::console;
+            console::log_1(&format!("Model loaded: obs_dim={}, action_dim={}, hidden_dim={}, activation={:?}",
+                policy.obs_dim, policy.action_dim, policy.hidden_dim, policy.activation).into());
+        }
+
         self.policy = Some(policy);
         Ok(())
     }
@@ -107,7 +114,22 @@ impl WasmCartPole {
     pub fn get_policy_action(&self) -> i32 {
         if let Some(ref policy) = self.policy {
             let state = self.env.get_state();
-            policy.get_action(&state) as i32
+
+            #[cfg(feature = "wasm")]
+            {
+                use web_sys::console;
+                console::log_1(&format!("State: {:?}", state).into());
+            }
+
+            let action = policy.get_action(&state) as i32;
+
+            #[cfg(feature = "wasm")]
+            {
+                use web_sys::console;
+                console::log_1(&format!("Action: {}", action).into());
+            }
+
+            action
         } else {
             -1 // No policy loaded
         }
