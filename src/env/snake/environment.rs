@@ -140,14 +140,14 @@ impl SnakeEnv {
             // Check wall collision
             if self.snakes[i].collides_with_wall(self.width, self.height) {
                 self.snakes[i].alive = false;
-                total_reward -= 1.0;
+                total_reward -= 0.5;  // Reduced death penalty
                 continue;
             }
 
             // Check self collision
             if self.snakes[i].collides_with_self() {
                 self.snakes[i].alive = false;
-                total_reward -= 1.0;
+                total_reward -= 0.5;  // Reduced death penalty
                 continue;
             }
 
@@ -159,7 +159,7 @@ impl SnakeEnv {
                 // Check if snake i's head collides with snake j's body
                 if self.snakes[j].get_all_positions().contains(&self.snakes[i].head) {
                     self.snakes[i].alive = false;
-                    total_reward -= 1.0;
+                    total_reward -= 0.5;  // Reduced death penalty
                     break;
                 }
             }
@@ -170,7 +170,7 @@ impl SnakeEnv {
 
             // Check food collection
             if self.snakes[i].eats_food(&self.food) {
-                total_reward += 1.0;
+                total_reward += 10.0;  // Increased food reward significantly
                 self.snakes[i].grow();
 
                 // Generate new food
@@ -198,10 +198,15 @@ impl SnakeEnv {
 
             if self.snakes[i].is_alive() {
                 any_alive = true;
-                // Reward proportional to snake length (starts at 3, grows with food)
-                // Using 0.1 multiplier based on successful Snake RL implementations
-                let length_reward = 0.1 * (self.snakes[i].body.len() as f32);
-                total_reward += length_reward;
+                // Survival reward per step (0.01 per snake per step)
+                // This encourages staying alive and exploring
+                total_reward += 0.01;
+
+                // Additional reward for longer snakes
+                if self.snakes[i].body.len() > 3 {
+                    let length_bonus = 0.1 * ((self.snakes[i].body.len() - 3) as f32);
+                    total_reward += length_bonus;
+                }
             }
         }
 
