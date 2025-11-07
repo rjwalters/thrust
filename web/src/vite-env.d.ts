@@ -9,4 +9,5 @@ interface Window {
 	wasmReady?: boolean;
 	WasmCartPole?: any;
 	WasmSnake?: any;
+	WasmSimpleBandit?: any;
 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import init, { WasmSimpleBandit } from '../../public/pkg';
+import type { WasmSimpleBandit } from "../lib/wasm";
+import { initWasm } from "../lib/wasm";
 
 const SimpleBanditPage = () => {
     const [env, setEnv] = useState<WasmSimpleBandit | null>(null);
@@ -14,8 +15,8 @@ const SimpleBanditPage = () => {
     useEffect(() => {
         const loadWasm = async () => {
             try {
-                await init();
-                const newEnv = new WasmSimpleBandit();
+                const wasm = await initWasm();
+                const newEnv = new wasm.WasmSimpleBandit();
                 setEnv(newEnv);
                 const initialState = newEnv.get_state();
                 setState(initialState[0]);

@@ -28,9 +28,20 @@ export interface WasmSnake {
 	has_policy(): boolean;
 }
 
+export interface WasmSimpleBandit {
+	reset(): Float32Array;
+	step(action: number): Float32Array;
+	get_state(): Float32Array;
+	get_episode(): number;
+	get_steps(): number;
+	get_success_rate(): number;
+	get_total_reward(): number;
+}
+
 export interface WasmModule {
 	WasmCartPole: new () => WasmCartPole;
 	WasmSnake: new (width: number, height: number, numAgents: number) => WasmSnake;
+	WasmSimpleBandit: new () => WasmSimpleBandit;
 }
 
 let wasmModule: WasmModule | null = null;
@@ -65,6 +76,7 @@ export async function initWasm(): Promise<WasmModule> {
 			wasmModule = {
 				WasmCartPole: window.WasmCartPole!,
 				WasmSnake: window.WasmSnake!,
+				WasmSimpleBandit: window.WasmSimpleBandit!,
 			};
 			console.log("[WASM] Module ready!");
 			return wasmModule;
