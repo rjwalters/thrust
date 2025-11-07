@@ -240,14 +240,14 @@ fn main() -> Result<()> {
                 let result = envs[env_idx].step_multi(&env_actions);
 
                 // Store transitions for all agents
-                let reward_per_agent = result.reward / args.num_agents as f32;
+                // Give full reward to each agent (not divided) - they all contribute to the outcome
                 for agent_id in 0..args.num_agents {
                     let obs_idx_curr = env_idx * args.num_agents + agent_id;
                     rollout_buffer.add(
                         all_obs[obs_idx_curr].clone(),
                         actions_vec[obs_idx_curr],
                         log_probs_vec[obs_idx_curr],
-                        reward_per_agent,
+                        result.reward,  // Full reward, not divided
                         values_vec[obs_idx_curr],
                         result.terminated || result.truncated,
                     );

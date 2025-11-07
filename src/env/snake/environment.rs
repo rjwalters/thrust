@@ -199,7 +199,8 @@ impl SnakeEnv {
             if self.snakes[i].is_alive() {
                 any_alive = true;
                 // Reward proportional to snake length (starts at 3, grows with food)
-                let length_reward = 0.01 * (self.snakes[i].body.len() as f32);
+                // Using 0.1 multiplier based on successful Snake RL implementations
+                let length_reward = 0.1 * (self.snakes[i].body.len() as f32);
                 total_reward += length_reward;
             }
         }
