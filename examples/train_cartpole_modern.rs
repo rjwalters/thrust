@@ -3,7 +3,6 @@
 //! This example demonstrates state-of-the-art training with:
 //! - Orthogonal weight initialization
 //! - Tanh activation (better for control tasks)
-//! - Observation normalization
 //! - Optimized hyperparameters
 //!
 //! Target: 450+ average episode length (near perfect)
@@ -23,7 +22,6 @@ use thrust_rl::{
         mlp::{Activation, MlpConfig, MlpPolicy},
     },
     train::ppo::{PPOConfig, PPOTrainer},
-    utils::normalize::RunningMeanStd,
 };
 
 fn main() -> Result<()> {
@@ -80,8 +78,8 @@ fn main() -> Result<()> {
     tracing::info!("  Activation: Tanh");
     tracing::info!("  Initialization: Orthogonal");
 
-    // Create observation normalizer
-    let mut obs_normalizer = RunningMeanStd::new(obs_dim as usize, 1e-8);
+    // Note: Observation normalization disabled for compatibility with inference
+    // let mut obs_normalizer = RunningMeanStd::new(obs_dim as usize, 1e-8);
 
     // Create optimizer
     let optimizer = policy.optimizer(LEARNING_RATE);
@@ -117,12 +115,8 @@ fn main() -> Result<()> {
         buffer.reset();
 
         for step in 0..NUM_STEPS {
-            // Normalize observations
-            let mut normalized_obs = observations.clone();
-            obs_normalizer.normalize_batch(&mut normalized_obs);
-
-            // Convert to tensor
-            let obs_flat: Vec<f32> = normalized_obs.iter().flatten().copied().collect();
+            // Convert to tensor (no normalization for inference compatibility)
+            let obs_flat: Vec<f32> = observations.iter().flatten().copied().collect();
             let obs_tensor = tch::Tensor::from_slice(&obs_flat)
                 .reshape([NUM_ENVS as i64, obs_dim])
                 .to_device(device);
@@ -142,7 +136,7 @@ fn main() -> Result<()> {
                 buffer.add(
                     step,
                     env_id,
-                    &normalized_obs[env_id],
+                    &observations[env_id],
                     actions_vec[env_id],
                     results[env_id].reward,
                     values_vec[env_id],
@@ -164,14 +158,8 @@ fn main() -> Result<()> {
             trainer.increment_steps(NUM_ENVS);
         }
 
-        // Update normalizer - collect observations from the environment steps
-        // Note: We update with the current observations batch
-        obs_normalizer.update(&observations);
-
-        // Compute advantages
-        let mut normalized_obs = observations.clone();
-        obs_normalizer.normalize_batch(&mut normalized_obs);
-        let obs_flat: Vec<f32> = normalized_obs.iter().flatten().copied().collect();
+        // Compute advantages (no normalization for inference compatibility)
+        let obs_flat: Vec<f32> = observations.iter().flatten().copied().collect();
         let obs_tensor = tch::Tensor::from_slice(&obs_flat)
             .reshape([NUM_ENVS as i64, obs_dim])
             .to_device(device);
@@ -275,7 +263,7 @@ fn main() -> Result<()> {
         algorithm: "PPO (Proximal Policy Optimization)".to_string(),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
         notes: Some(format!(
-            "Modern RL training with orthogonal init, Tanh activation, and observation normalization. \
+            "Modern RL training with orthogonal init and Tanh activation (no obs normalization for inference compatibility). \
              Achieved {:.1} steps/episode in {:.1}s ({:.0} steps/sec).",
             final_avg, training_secs, trainer.total_steps() as f64 / training_secs
         )),
