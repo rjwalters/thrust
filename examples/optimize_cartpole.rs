@@ -239,7 +239,12 @@ fn main() -> Result<()> {
     } else {
         30
     };
-    let training_steps_per_trial = 200_000; // 200k steps per trial for speed
+    // Parse training steps from command line or use default
+    let training_steps_per_trial = if args.len() > 4 && args[3] == "--steps" {
+        args[4].parse().unwrap_or(3_500_000)
+    } else {
+        3_500_000 // 3.5M steps per trial to catch late-stage instability
+    };
 
     tracing::info!("Configuration:");
     tracing::info!("  Trials: {}", num_trials);
