@@ -1,0 +1,3 @@
+[submodule "envs/bucket-brigade"]
+	path = envs/bucket-brigade
+	url = https://github.com/rjwalters/bucket-brigade.git
