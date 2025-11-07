@@ -69,13 +69,13 @@ fn main() -> Result<()> {
         num_layers: 2,
         hidden_dim: HIDDEN_DIM,
         use_orthogonal_init: true,
-        activation: Activation::Tanh,
+        activation: Activation::ReLU,  // Try ReLU instead of Tanh
     };
     let mut policy = MlpPolicy::with_config(obs_dim, action_dim, config);
     let device = policy.device();
     tracing::info!("  Device: {:?}", device);
     tracing::info!("  Hidden dim: {}", HIDDEN_DIM);
-    tracing::info!("  Activation: Tanh");
+    tracing::info!("  Activation: ReLU");
     tracing::info!("  Initialization: Orthogonal");
 
     // Note: Observation normalization disabled for compatibility with inference
@@ -263,7 +263,7 @@ fn main() -> Result<()> {
         algorithm: "PPO (Proximal Policy Optimization)".to_string(),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
         notes: Some(format!(
-            "Modern RL training with orthogonal init and Tanh activation (no obs normalization for inference compatibility). \
+            "Modern RL training with orthogonal init and ReLU activation (no obs normalization for inference compatibility). \
              Achieved {:.1} steps/episode in {:.1}s ({:.0} steps/sec).",
             final_avg, training_secs, trainer.total_steps() as f64 / training_secs
         )),
