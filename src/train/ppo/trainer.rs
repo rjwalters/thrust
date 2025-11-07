@@ -134,6 +134,11 @@ impl<P> PPOTrainer<P> {
                 let mb_returns = returns
                     .index_select(0, &indices_tensor.to_device(returns.device()));
 
+                // Normalize advantages at minibatch level (SB3-style)
+                let adv_mean = mb_advantages.mean(tch::Kind::Float);
+                let adv_std = mb_advantages.std(false);
+                let mb_advantages = (&mb_advantages - adv_mean) / (adv_std + 1e-8);
+
                 // Forward pass
                 let (log_probs, entropy, values) = forward_fn(&mb_obs, &mb_actions);
 
