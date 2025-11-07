@@ -194,14 +194,14 @@ fn main() -> Result<()> {
                     step_result.terminated || step_result.truncated,
                 );
 
-                observations[env_id] = step_result.observation;
-
                 // Reset if episode ended
                 if step_result.terminated || step_result.truncated {
                     total_episodes += 1;
                     envs[env_id].reset();
-                    observations[env_id] = envs[env_id].get_grid_observation(0);
                 }
+
+                // Always get grid observation (step() returns simple features, but we need grid)
+                observations[env_id] = envs[env_id].get_grid_observation(0);
             }
 
             total_steps += NUM_ENVS;
