@@ -78,4 +78,5 @@ pub struct StepInfo {
 pub mod cartpole;
 #[cfg(feature = "training")]
 pub mod pool;
+pub mod simple_bandit;
 pub mod snake;
