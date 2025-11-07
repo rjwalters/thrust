@@ -45,6 +45,10 @@ pub mod multi_agent;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
+/// Hyperparameter optimization infrastructure
+#[cfg(feature = "training")]
+pub mod optimize;
+
 /// Prelude module for convenient imports
 ///
 /// This module re-exports commonly used types and traits for convenience.
