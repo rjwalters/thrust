@@ -115,16 +115,15 @@ fn main() -> Result<()> {
 
     // Create single-agent snake environment (1 snake)
     let env = SnakeEnv::new(GRID_WIDTH, GRID_HEIGHT);
-    let obs_space = env.observation_space();
 
-    let obs_shape = obs_space.shape.clone();
-    let channels = obs_shape[0] as i64;
-    let height = obs_shape[1] as i64;
-    let width = obs_shape[2] as i64;
+    // Grid observations are 5 channels: own body, own head, other bodies, other heads, food
+    let channels = 5i64;
+    let height = GRID_HEIGHT as i64;
+    let width = GRID_WIDTH as i64;
 
     tracing::info!("Environment: Snake (Single Agent)");
     tracing::info!("  Grid size: {}x{}", GRID_WIDTH, GRID_HEIGHT);
-    tracing::info!("  Observation shape: {:?}", obs_shape);
+    tracing::info!("  Observation shape: [{}, {}, {}]", channels, height, width);
     tracing::info!("  Num envs: {}", NUM_ENVS);
     tracing::info!("  Steps per rollout: {}", NUM_STEPS);
     tracing::info!("  Total timesteps: {}", TOTAL_TIMESTEPS);
