@@ -1,7 +1,7 @@
 // WASM loader script
 // This loads the wasm-bindgen generated module and exposes it on window
 
-import init, { WasmCartPole, WasmSnake, WasmSimpleBandit } from './thrust_rl.js';
+import init, { WasmCartPole, WasmSnake, WasmSimpleBandit } from './pkg/thrust_rl.js';
 
 // Initialize WASM and expose classes on window
 async function loadWasm() {
