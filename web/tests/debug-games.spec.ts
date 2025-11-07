@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-const BASE_URL = "https://rjwalters.github.io/thrust";
+const BASE_URL = "https://rjwalters.info/thrust";
 
 test("debug cartpole page", async ({ page }) => {
 	// Capture console messages

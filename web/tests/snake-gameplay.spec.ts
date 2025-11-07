@@ -1,6 +1,6 @@
 import { test } from "@playwright/test";
 
-const BASE_URL = "https://rjwalters.github.io/thrust";
+const BASE_URL = "https://rjwalters.info/thrust";
 
 test("snake gameplay with step calls", async ({ page }) => {
 	// Capture console messages and errors

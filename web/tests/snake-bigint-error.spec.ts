@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-const BASE_URL = "https://rjwalters.github.io/thrust";
+const BASE_URL = "https://rjwalters.info/thrust";
 
 test("snake should not have BigInt conversion errors", async ({ page }) => {
 	const errors: string[] = [];

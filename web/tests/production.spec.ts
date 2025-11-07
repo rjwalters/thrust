@@ -19,8 +19,8 @@ test('production site loads', async ({ page }) => {
   });
 
   // Go to the deployed site
-  console.log('Navigating to https://rjwalters.github.io/thrust/');
-  await page.goto('https://rjwalters.github.io/thrust/', { waitUntil: 'networkidle' });
+  console.log('Navigating to https://rjwalters.info/thrust/');
+  await page.goto('https://rjwalters.info/thrust/', { waitUntil: 'networkidle' });
 
   // Check if the title is correct
   const title = await page.title();

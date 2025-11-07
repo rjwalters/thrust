@@ -57,7 +57,7 @@ export function useSnake(): UseSnakeResult {
 					// Load policy from JSON
 					try {
 						console.log("[Snake] Loading policy model...");
-						const response = await fetch("/snake_model.json");
+						const response = await fetch(`${import.meta.env.BASE_URL}snake_model.json`);
 						if (response.ok) {
 							const policyJson = await response.text();
 							console.log(
