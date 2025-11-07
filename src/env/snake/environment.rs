@@ -198,7 +198,7 @@ impl SnakeEnv {
 
             if self.snakes[i].is_alive() {
                 any_alive = true;
-                total_reward -= 0.01; // Small time penalty for each alive snake
+                total_reward += 0.01; // Small reward for staying alive
             }
         }
 
