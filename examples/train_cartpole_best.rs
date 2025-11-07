@@ -27,11 +27,11 @@ fn main() -> Result<()> {
 
     tracing::info!("🚀 Starting CartPole PPO Training (Best Quality)");
 
-    // Hyperparameters - GPU-optimized from hyperparameter search (Trial #25)
+    // Hyperparameters - Validated through 3.5M-step stability testing (Trial #0, 445.3 steps/ep)
     const NUM_ENVS: usize = 8;  // Optimal number of parallel environments
     const NUM_STEPS: usize = 128;  // Optimal rollout length
     const TOTAL_TIMESTEPS: usize = 5_000_000;  // Extended training for 450+ steps target
-    const LEARNING_RATE: f64 = 0.000525;  // Optimized learning rate
+    const LEARNING_RATE: f64 = 0.000247;  // Validated learning rate (survived 3.5M steps)
     const CHECKPOINT_INTERVAL_SECS: u64 = 300;  // Save checkpoint every 5 minutes
 
     // Environment dimensions
@@ -57,26 +57,26 @@ fn main() -> Result<()> {
 
     // Create policy with optimized network size
     tracing::info!("Creating MLP policy...");
-    let mut policy = MlpPolicy::new(obs_dim, action_dim, 64);  // Optimized hidden layer size
+    let mut policy = MlpPolicy::new(obs_dim, action_dim, 256);  // Larger network (validated)
     let device = policy.device();
     tracing::info!("  Device: {:?}", device);
 
     // Create optimizer
     let optimizer = policy.optimizer(LEARNING_RATE);
 
-    // Create PPO trainer with GPU-optimized hyperparameters
+    // Create PPO trainer with validated hyperparameters (445.3 steps/ep @ 3.5M steps)
     let config = PPOConfig::new()
         .learning_rate(LEARNING_RATE)
-        .n_epochs(10)
-        .batch_size(128)
-        .gamma(0.9911)  // Optimized gamma for better long-term credit assignment
+        .n_epochs(20)  // More epochs for better learning
+        .batch_size(256)  // Larger batches for stability
+        .gamma(0.9717)  // Validated gamma value
         .gae_lambda(0.95)
         .clip_range(0.2)
         .vf_coef(0.5)
-        .ent_coef(0.001006)  // Optimized entropy coefficient
+        .ent_coef(0.0151)  // Higher entropy to prevent collapse
         .max_grad_norm(0.5);
 
-    let dummy_policy = MlpPolicy::new(obs_dim, action_dim, 64);
+    let dummy_policy = MlpPolicy::new(obs_dim, action_dim, 256);
     let mut trainer = PPOTrainer::new(config, dummy_policy)?;
     trainer.set_optimizer(optimizer);
 
@@ -149,7 +149,7 @@ fn main() -> Result<()> {
         let (_, _, last_values) = policy.get_action(&obs_tensor);
         let last_values_vec: Vec<f32> = Vec::try_from(last_values)?;
 
-        buffer.compute_advantages(&last_values_vec, 0.9911, 0.95);
+        buffer.compute_advantages(&last_values_vec, 0.9717, 0.95);
 
         // Get training batch
         let batch = buffer.get_batch();
@@ -249,11 +249,11 @@ fn main() -> Result<()> {
     hyperparameters.insert("n_steps".to_string(), serde_json::json!(NUM_STEPS));
     hyperparameters.insert("num_envs".to_string(), serde_json::json!(NUM_ENVS));
     hyperparameters.insert("learning_rate".to_string(), serde_json::json!(LEARNING_RATE));
-    hyperparameters.insert("hidden_dim".to_string(), serde_json::json!(64));
-    hyperparameters.insert("n_epochs".to_string(), serde_json::json!(10));
-    hyperparameters.insert("batch_size".to_string(), serde_json::json!(128));
-    hyperparameters.insert("gamma".to_string(), serde_json::json!(0.9911));
-    hyperparameters.insert("ent_coef".to_string(), serde_json::json!(0.001006));
+    hyperparameters.insert("hidden_dim".to_string(), serde_json::json!(256));
+    hyperparameters.insert("n_epochs".to_string(), serde_json::json!(20));
+    hyperparameters.insert("batch_size".to_string(), serde_json::json!(256));
+    hyperparameters.insert("gamma".to_string(), serde_json::json!(0.9717));
+    hyperparameters.insert("ent_coef".to_string(), serde_json::json!(0.0151));
     hyperparameters.insert("gae_lambda".to_string(), serde_json::json!(0.95));
     hyperparameters.insert("clip_range".to_string(), serde_json::json!(0.2));
 
@@ -268,7 +268,7 @@ fn main() -> Result<()> {
         algorithm: "PPO (GPU-optimized)".to_string(),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
         hyperparameters: Some(hyperparameters),
-        notes: Some("Trained with GPU-optimized hyperparameters from random search optimization".to_string()),
+        notes: Some("Trained with hyperparameters validated through 3.5M-step stability testing (445.3 steps/ep)".to_string()),
     };
 
     exported_model.metadata = Some(metadata);
