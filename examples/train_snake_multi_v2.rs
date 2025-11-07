@@ -414,14 +414,14 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                     .sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float)
                     .mean(tch::Kind::Float);
 
-                // Total loss
-                let loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
-
-                // Track metrics (convert to f64 for accumulation)
+                // Track metrics (extract values before computing loss)
                 total_policy_loss += f64::try_from(&policy_loss).unwrap_or(0.0);
                 total_value_loss += f64::try_from(&value_loss).unwrap_or(0.0);
                 total_entropy += f64::try_from(&entropy).unwrap_or(0.0);
                 num_updates += 1;
+
+                // Total loss
+                let loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
 
                 // Backward pass
                 opt.zero_grad();
@@ -686,15 +686,15 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
                         .sum_dim_intlist(&[-1i64][..], false, tch::Kind::Float)
                         .mean(tch::Kind::Float);
 
-                    // Total loss
-                    let loss =
-                        policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
-
-                    // Track metrics
+                    // Track metrics (extract values before computing loss)
                     total_policy_loss += f64::try_from(&policy_loss).unwrap_or(0.0);
                     total_value_loss += f64::try_from(&value_loss).unwrap_or(0.0);
                     total_entropy += f64::try_from(&entropy).unwrap_or(0.0);
                     num_updates += 1;
+
+                    // Total loss
+                    let loss =
+                        policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
 
                     // Backward pass
                     optimizers[agent_id].zero_grad();
