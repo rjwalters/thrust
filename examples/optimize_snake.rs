@@ -190,6 +190,8 @@ fn run_trial(
         }
 
         let mut episode_rewards = Vec::new();
+        // Track cumulative reward for each environment in this rollout
+        let mut env_cumulative_rewards = vec![0.0; num_envs];
 
         // Collect rollout
         for _step in 0..steps_per_rollout {
@@ -231,6 +233,9 @@ fn run_trial(
                 // Step environment
                 let result = envs[env_idx].step_multi(&env_actions);
 
+                // Accumulate reward for this environment
+                env_cumulative_rewards[env_idx] += result.reward;
+
                 // Store transitions for all agents
                 for agent_id in 0..num_agents {
                     let obs_idx_curr = env_idx * num_agents + agent_id;
@@ -244,10 +249,14 @@ fn run_trial(
                     );
                 }
 
-                // Track episode stats
+                // Track episode stats - record cumulative reward when episode completes
                 if result.terminated || result.truncated {
-                    episode_rewards.push(result.reward);
+                    episode_rewards.push(env_cumulative_rewards[env_idx]);
                     total_episodes += 1;
+
+                    // Reset this environment and its cumulative reward
+                    envs[env_idx].reset();
+                    env_cumulative_rewards[env_idx] = 0.0;
                 }
             }
         }
