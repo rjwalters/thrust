@@ -32,6 +32,7 @@ export function useSimpleBandit(): UseSimpleBanditResult {
 	const [speed, setSpeed] = useState(1);
 	const [modelLoaded, setModelLoaded] = useState(false);
 	const animationRef = useRef<number | undefined>(undefined);
+	const lastStepTimeRef = useRef<number>(0);
 
 	// Initialize WASM and environment
 	useEffect(() => {
@@ -108,6 +109,46 @@ export function useSimpleBandit(): UseSimpleBanditResult {
 	const pause = useCallback(() => {
 		setIsPaused((prev) => !prev);
 	}, []);
+
+	// Automatic gameplay loop - optimal policy just matches action to state
+	useEffect(() => {
+		if (!env || !isRunning || isPaused || !state) return;
+
+		const step = (currentTime: number) => {
+			const deltaTime = currentTime - lastStepTimeRef.current;
+			const stepInterval = 1000 / (60 * speed); // 60 FPS base, scaled by speed
+
+			if (deltaTime >= stepInterval) {
+				lastStepTimeRef.current = currentTime;
+
+				// Optimal policy: action = state (perfect matching)
+				const optimalAction = state.state;
+				const result = env.step(optimalAction);
+				const [, reward, terminated] = result;
+				updateState(env, reward);
+
+				if (terminated) {
+					setTimeout(() => {
+						if (env) {
+							env.reset();
+							updateState(env, null);
+						}
+					}, 1000);
+				}
+			}
+
+			animationRef.current = requestAnimationFrame(step);
+		};
+
+		lastStepTimeRef.current = performance.now();
+		animationRef.current = requestAnimationFrame(step);
+
+		return () => {
+			if (animationRef.current) {
+				cancelAnimationFrame(animationRef.current);
+			}
+		};
+	}, [env, isRunning, isPaused, speed, state, updateState]);
 
 	return {
 		state,

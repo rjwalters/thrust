@@ -5,7 +5,7 @@ interface SimpleBanditControlsProps {
 }
 
 export default function SimpleBanditControls({ bandit }: SimpleBanditControlsProps) {
-	const { state, reset, takeAction } = bandit;
+	const { state, isRunning, isPaused, speed, start, pause, reset, setSpeed } = bandit;
 
 	if (!state) {
 		return (
@@ -19,18 +19,59 @@ export default function SimpleBanditControls({ bandit }: SimpleBanditControlsPro
 		return s === 0 ? "bg-blue-500" : "bg-green-500";
 	};
 
-	const getActionButtonClass = (action: number): string => {
-		const baseClass =
-			"px-6 py-3 rounded-lg font-bold text-white transition-all duration-200 hover:scale-105 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100";
-		const colorClass =
-			action === 0
-				? "bg-blue-600 hover:bg-blue-700"
-				: "bg-green-600 hover:bg-green-700";
-		return `${baseClass} ${colorClass}`;
-	};
-
 	return (
 		<div className="space-y-6">
+			{/* Control buttons */}
+			<div className="flex gap-3">
+				{!isRunning ? (
+					<button
+						type="button"
+						onClick={start}
+						className="px-6 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg transition-colors"
+					>
+						Start
+					</button>
+				) : (
+					<button
+						type="button"
+						onClick={pause}
+						className="px-6 py-2 bg-amber-500 hover:bg-amber-600 text-white font-medium rounded-lg transition-colors"
+					>
+						{isPaused ? "Resume" : "Pause"}
+					</button>
+				)}
+
+				<button
+					type="button"
+					onClick={reset}
+					className="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
+				>
+					Reset
+				</button>
+			</div>
+
+			{/* Speed control */}
+			<div className="space-y-2">
+				<div className="flex justify-between items-center">
+					<label htmlFor="speed" className="text-sm font-medium text-gray-700">
+						Speed: {speed}x
+					</label>
+					<span className="text-xs text-gray-500">
+						{Math.round(60 * speed)} FPS
+					</span>
+				</div>
+				<input
+					id="speed"
+					type="range"
+					min="0.5"
+					max="5"
+					step="0.5"
+					value={speed}
+					onChange={(e) => setSpeed(Number(e.target.value))}
+					className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
+				/>
+			</div>
+
 			{/* Stats */}
 			<div className="grid grid-cols-2 gap-4">
 				<div className="bg-gray-50 rounded-lg p-4">
@@ -80,47 +121,18 @@ export default function SimpleBanditControls({ bandit }: SimpleBanditControlsPro
 				)}
 			</div>
 
-			{/* Action Buttons */}
-			<div className="space-y-3">
-				<h3 className="text-sm font-medium text-gray-700">Choose Action</h3>
-				<div className="grid grid-cols-2 gap-3">
-					<button
-						type="button"
-						onClick={() => takeAction(0)}
-						className={getActionButtonClass(0)}
-					>
-						Action 0
-					</button>
-					<button
-						type="button"
-						onClick={() => takeAction(1)}
-						className={getActionButtonClass(1)}
-					>
-						Action 1
-					</button>
-				</div>
-			</div>
-
-			{/* Reset Button */}
-			<button
-				type="button"
-				onClick={reset}
-				className="w-full px-6 py-3 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors"
-			>
-				Reset Episode
-			</button>
-
-			{/* Instructions */}
+			{/* Policy Information */}
 			<div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
 				<h3 className="text-sm font-semibold text-blue-900 mb-2">
-					How to Play
+					Optimal Policy
 				</h3>
+				<p className="text-xs text-blue-800 mb-2">
+					This agent uses the optimal policy for SimpleBandit:
+				</p>
 				<ul className="space-y-1 text-xs text-blue-800">
-					<li>• Match action to current state</li>
-					<li>• State 0 → Choose Action 0</li>
-					<li>• State 1 → Choose Action 1</li>
-					<li>• Correct: +1 reward</li>
-					<li>• Wrong: 0 reward</li>
+					<li>• State 0 → Action 0 (100% success)</li>
+					<li>• State 1 → Action 1 (100% success)</li>
+					<li>• Perfect matching strategy</li>
 				</ul>
 			</div>
 		</div>

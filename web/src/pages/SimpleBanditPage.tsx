@@ -44,9 +44,10 @@ export default function SimpleBanditPage() {
 					<h2 className="text-2xl font-bold mb-4">About SimpleBandit</h2>
 					<p className="text-gray-600 mb-4">
 						SimpleBandit is a contextual bandit environment where the agent must
-						learn to match actions to states. This is one of the simplest
-						reinforcement learning problems and serves as a great introduction to
-						the field.
+						learn to match actions to states. Watch as the optimal policy achieves
+						100% success by perfectly matching each action to its corresponding state.
+						This is one of the simplest reinforcement learning problems and serves as
+						a great introduction to the field.
 					</p>
 
 					<div className="grid md:grid-cols-2 gap-6">
@@ -73,15 +74,16 @@ export default function SimpleBanditPage() {
 						</div>
 
 						<div>
-							<h3 className="font-semibold mb-2">Objective</h3>
+							<h3 className="font-semibold mb-2">Optimal Policy</h3>
 							<div className="bg-gray-50 p-3 rounded text-sm">
-								<p className="text-gray-700">
-									The goal is to choose the action that matches the current state:
+								<p className="text-gray-700 mb-2">
+									The agent uses a perfect matching strategy:
 								</p>
-								<ul className="mt-2 space-y-1 text-gray-600">
-									<li>• State 0 → Choose Action 0</li>
-									<li>• State 1 → Choose Action 1</li>
-									<li>• Maximize your success rate!</li>
+								<ul className="space-y-1 text-gray-600">
+									<li>• State 0 → Action 0</li>
+									<li>• State 1 → Action 1</li>
+									<li>• Achieves 100% success rate</li>
+									<li>• Maximum reward every step</li>
 								</ul>
 							</div>
 						</div>
@@ -89,9 +91,10 @@ export default function SimpleBanditPage() {
 
 					<div className="mt-4 p-4 bg-blue-50 rounded-lg">
 						<p className="text-sm text-blue-900">
-							<strong>Interactive Learning:</strong> This environment runs
-							entirely in your browser using WebAssembly. Make choices and see
-							immediate feedback!
+							<strong>Autonomous Agent:</strong> This environment runs
+							entirely in your browser using WebAssembly. The agent plays automatically
+							using the optimal policy, demonstrating perfect performance on this
+							simple task.
 						</p>
 					</div>
 				</div>
