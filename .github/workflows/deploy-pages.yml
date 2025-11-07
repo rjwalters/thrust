@@ -59,6 +59,8 @@ jobs:
           path: |
             pkg/thrust_rl_bg.wasm
             pkg/thrust_rl.js
+            pkg/thrust_rl.d.ts
+            pkg/thrust_rl_bg.wasm.d.ts
           retention-days: 1
 
   build-web:

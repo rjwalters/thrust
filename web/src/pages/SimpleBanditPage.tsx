@@ -9,8 +9,7 @@ const SimpleBanditPage = () => {
     const [successRate, setSuccessRate] = useState<number>(0);
     const [totalReward, setTotalReward] = useState<number>(0);
     const [lastReward, setLastReward] = useState<number | null>(null);
-    const [isRunning, setIsRunning] = useState<boolean>(false);
-    const animationRef = useRef<number>();
+    const animationRef = useRef<number | undefined>(undefined);
 
     useEffect(() => {
         const loadWasm = async () => {

@@ -15,6 +15,7 @@ interface ModelMetadata {
 	algorithm: string;
 	timestamp?: string;
 	notes?: string;
+	hyperparameters?: Record<string, string | number | boolean>;
 }
 
 interface ModelInfo {
