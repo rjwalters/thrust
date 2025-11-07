@@ -17,7 +17,7 @@ pub use snake::{Food, Snake};
 // Re-export main components
 pub use types::{Cell, Direction, GameState, Position};
 
-use super::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
+use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 // TODO: Re-enable after fixing multi-agent code
 // #[cfg(feature = "training")]
 // pub use multi_agent::MultiAgentSnakeEnv;

@@ -13,7 +13,7 @@
 
 use rand::{Rng, SeedableRng};
 
-use super::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
+use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 
 /// Simple contextual bandit for testing PPO correctness
 #[derive(Debug)]

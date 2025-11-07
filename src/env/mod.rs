@@ -74,9 +74,13 @@ pub struct StepInfo {
     // Add custom fields as needed
 }
 
-// Built-in environments will go in submodules
-pub mod cartpole;
+// Game environments
+pub mod games;
+
+// Re-export game environments for backwards compatibility
+pub use games::{cartpole, simple_bandit, snake};
+pub use games::{CartPole, SimpleBandit, SnakeEnv};
+
+// Training utilities
 #[cfg(feature = "training")]
 pub mod pool;
-pub mod simple_bandit;
-pub mod snake;
