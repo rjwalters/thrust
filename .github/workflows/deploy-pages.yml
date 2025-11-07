@@ -97,7 +97,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: wasm-files
-          path: web/public
+          path: web/public/pkg
 
       - name: Install dependencies
         run: cd web && pnpm install --frozen-lockfile
