@@ -26,11 +26,12 @@ fn main() -> Result<()> {
 
     tracing::info!("🚀 Starting CartPole PPO Training (Best Quality)");
 
-    // Hyperparameters - optimized for quality
-    const NUM_ENVS: usize = 16;  // More environments for better sampling
-    const NUM_STEPS: usize = 256;  // Longer rollouts
-    const TOTAL_TIMESTEPS: usize = 2_000_000;  // Extended training
-    const LEARNING_RATE: f64 = 2.5e-4;  // Lower LR for stability
+    // Hyperparameters - GPU-optimized from hyperparameter search (Trial #25)
+    const NUM_ENVS: usize = 8;  // Optimal number of parallel environments
+    const NUM_STEPS: usize = 128;  // Optimal rollout length
+    const TOTAL_TIMESTEPS: usize = 5_000_000;  // Extended training for 450+ steps target
+    const LEARNING_RATE: f64 = 0.000525;  // Optimized learning rate
+    const CHECKPOINT_INTERVAL_SECS: u64 = 300;  // Save checkpoint every 5 minutes
 
     // Environment dimensions
     let env = CartPole::new();
@@ -53,28 +54,28 @@ fn main() -> Result<()> {
     // Create environment pool
     let mut env_pool = EnvPool::new(CartPole::new, NUM_ENVS);
 
-    // Create policy with larger network
+    // Create policy with optimized network size
     tracing::info!("Creating MLP policy...");
-    let mut policy = MlpPolicy::new(obs_dim, action_dim, 128);  // Larger hidden layer
+    let mut policy = MlpPolicy::new(obs_dim, action_dim, 64);  // Optimized hidden layer size
     let device = policy.device();
     tracing::info!("  Device: {:?}", device);
 
     // Create optimizer
     let optimizer = policy.optimizer(LEARNING_RATE);
 
-    // Create PPO trainer with optimized hyperparameters
+    // Create PPO trainer with GPU-optimized hyperparameters
     let config = PPOConfig::new()
         .learning_rate(LEARNING_RATE)
-        .n_epochs(10)  // More training epochs per batch
-        .batch_size(128)  // Larger batch size
-        .gamma(0.99)
+        .n_epochs(10)
+        .batch_size(128)
+        .gamma(0.9911)  // Optimized gamma for better long-term credit assignment
         .gae_lambda(0.95)
         .clip_range(0.2)
         .vf_coef(0.5)
-        .ent_coef(0.01)
+        .ent_coef(0.001006)  // Optimized entropy coefficient
         .max_grad_norm(0.5);
 
-    let dummy_policy = MlpPolicy::new(obs_dim, action_dim, 128);
+    let dummy_policy = MlpPolicy::new(obs_dim, action_dim, 64);
     let mut trainer = PPOTrainer::new(config, dummy_policy)?;
     trainer.set_optimizer(optimizer);
 
@@ -86,6 +87,9 @@ fn main() -> Result<()> {
 
     let mut observations = env_pool.reset();
     let num_updates = TOTAL_TIMESTEPS / (NUM_STEPS * NUM_ENVS);
+
+    // Track last checkpoint time
+    let mut last_checkpoint = std::time::Instant::now();
 
     for update in 0..num_updates {
         // Collect rollout
@@ -144,7 +148,7 @@ fn main() -> Result<()> {
         let (_, _, last_values) = policy.get_action(&obs_tensor);
         let last_values_vec: Vec<f32> = Vec::try_from(last_values)?;
 
-        buffer.compute_advantages(&last_values_vec, 0.99, 0.95);
+        buffer.compute_advantages(&last_values_vec, 0.9911, 0.95);
 
         // Get training batch
         let batch = buffer.get_batch();
@@ -200,6 +204,27 @@ fn main() -> Result<()> {
                 stats.value_loss,
                 stats.entropy,
             );
+        }
+
+        // Save checkpoint every 5 minutes
+        if last_checkpoint.elapsed().as_secs() >= CHECKPOINT_INTERVAL_SECS {
+            let timesteps = trainer.total_steps();
+            let episodes = trainer.total_episodes();
+            let avg_steps = if episodes > 0 {
+                timesteps as f64 / episodes as f64
+            } else {
+                0.0
+            };
+
+            let checkpoint_path = format!("cartpole_checkpoint_{}k.json", timesteps / 1000);
+            let exported_model = policy.export_for_inference();
+            if let Err(e) = exported_model.save_json(&checkpoint_path) {
+                tracing::warn!("Failed to save checkpoint {}: {}", checkpoint_path, e);
+            } else {
+                tracing::info!("💾 Checkpoint saved: {} (avg steps/ep: {:.1})", checkpoint_path, avg_steps);
+            }
+
+            last_checkpoint = std::time::Instant::now();
         }
     }
 
