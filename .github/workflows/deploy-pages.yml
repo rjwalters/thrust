@@ -99,6 +99,9 @@ jobs:
           name: wasm-files
           path: web/public/pkg
 
+      - name: List downloaded files
+        run: ls -la web/public/pkg/
+
       - name: Install dependencies
         run: cd web && pnpm install --frozen-lockfile
 
