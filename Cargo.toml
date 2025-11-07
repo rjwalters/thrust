@@ -76,3 +76,7 @@ codegen-units = 1
 
 [profile.bench]
 inherits = "release"
+
+[[example]]
+name = "train_snake"
+required-features = ["training"]
