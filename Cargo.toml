@@ -154,3 +154,13 @@ required-features = ["training"]
 name = "train_simple_bandit"
 path = "examples/games/bandit/train_simple_bandit.rs"
 required-features = ["training"]
+
+[[example]]
+name = "test_inference"
+path = "examples/games/cartpole/test_inference.rs"
+required-features = ["training"]
+
+[[example]]
+name = "test_json_inference"
+path = "examples/games/cartpole/test_json_inference.rs"
+required-features = ["training"]
