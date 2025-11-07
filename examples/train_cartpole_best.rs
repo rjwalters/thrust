@@ -6,8 +6,11 @@
 //! # Usage
 //!
 //! ```bash
-//! # On GPU machine
+//! # On GPU machine - Fresh training
 //! cargo run --example train_cartpole_best --release
+//!
+//! # Resume from checkpoint
+//! cargo run --example train_cartpole_best --release -- --checkpoint cartpole_checkpoint_3480k.pt
 //! ```
 
 use anyhow::Result;
@@ -25,7 +28,19 @@ fn main() -> Result<()> {
         .with_env_filter("info")
         .init();
 
-    tracing::info!("🚀 Starting CartPole PPO Training (Best Quality)");
+    // Parse command line arguments
+    let args: Vec<String> = std::env::args().collect();
+    let checkpoint_path = if args.len() > 2 && args[1] == "--checkpoint" {
+        Some(&args[2])
+    } else {
+        None
+    };
+
+    if let Some(path) = checkpoint_path {
+        tracing::info!("🔄 Resuming CartPole PPO Training from checkpoint: {}", path);
+    } else {
+        tracing::info!("🚀 Starting CartPole PPO Training (Best Quality)");
+    }
 
     // Hyperparameters - Validated through 3.5M-step stability testing (Trial #0, 445.3 steps/ep)
     const NUM_ENVS: usize = 8;  // Optimal number of parallel environments
@@ -58,6 +73,14 @@ fn main() -> Result<()> {
     // Create policy with optimized network size
     tracing::info!("Creating MLP policy...");
     let mut policy = MlpPolicy::new(obs_dim, action_dim, 256);  // Larger network (validated)
+
+    // Load checkpoint if provided
+    if let Some(path) = checkpoint_path {
+        tracing::info!("Loading checkpoint from {}...", path);
+        policy.load(path)?;
+        tracing::info!("✅ Checkpoint loaded successfully");
+    }
+
     let device = policy.device();
     tracing::info!("  Device: {:?}", device);
 
@@ -217,12 +240,21 @@ fn main() -> Result<()> {
                 0.0
             };
 
-            let checkpoint_path = format!("cartpole_checkpoint_{}k.json", timesteps / 1000);
-            let exported_model = policy.export_for_inference();
-            if let Err(e) = exported_model.save_json(&checkpoint_path) {
-                tracing::warn!("Failed to save checkpoint {}: {}", checkpoint_path, e);
+            // Save PyTorch checkpoint for training continuation
+            let checkpoint_path_pt = format!("cartpole_checkpoint_{}k.pt", timesteps / 1000);
+            if let Err(e) = policy.save(&checkpoint_path_pt) {
+                tracing::warn!("Failed to save PyTorch checkpoint {}: {}", checkpoint_path_pt, e);
             } else {
-                tracing::info!("💾 Checkpoint saved: {} (avg steps/ep: {:.1})", checkpoint_path, avg_steps);
+                tracing::info!("💾 PyTorch checkpoint saved: {} (avg steps/ep: {:.1})", checkpoint_path_pt, avg_steps);
+            }
+
+            // Save JSON export for web deployment
+            let checkpoint_path_json = format!("cartpole_checkpoint_{}k.json", timesteps / 1000);
+            let exported_model = policy.export_for_inference();
+            if let Err(e) = exported_model.save_json(&checkpoint_path_json) {
+                tracing::warn!("Failed to save JSON checkpoint {}: {}", checkpoint_path_json, e);
+            } else {
+                tracing::info!("💾 JSON checkpoint saved: {} (for web deployment)", checkpoint_path_json);
             }
 
             last_checkpoint = std::time::Instant::now();
