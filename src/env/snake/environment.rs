@@ -106,6 +106,8 @@ impl SnakeEnv {
     }
 
     /// Execute multi-agent step with actions for all snakes
+    /// Returns a single StepResult with summed rewards (for backward compatibility)
+    /// Use step_multi_agents for per-agent rewards
     pub fn step_multi(&mut self, actions: &[i64]) -> StepResult {
         if self.done {
             return StepResult {
@@ -254,6 +256,145 @@ impl SnakeEnv {
             truncated,
             info: StepInfo::default(),
         }
+    }
+
+    /// Execute multi-agent step with per-agent rewards
+    /// Returns individual rewards for each snake
+    pub fn step_multi_agents(&mut self, actions: &[i64]) -> (Vec<f32>, bool, bool) {
+        if self.done {
+            return (vec![0.0; self.snakes.len()], true, false);
+        }
+
+        // Store previous distances to food for reward shaping
+        let mut prev_distances: Vec<f32> = Vec::new();
+        for snake in &self.snakes {
+            if snake.is_alive() {
+                let dx = (snake.head.x - self.food.x) as f32;
+                let dy = (snake.head.y - self.food.y) as f32;
+                prev_distances.push((dx * dx + dy * dy).sqrt());
+            } else {
+                prev_distances.push(f32::MAX); // Dead snakes don't get distance rewards
+            }
+        }
+
+        // Apply actions and move all snakes
+        for (i, &action) in actions.iter().enumerate() {
+            if i < self.snakes.len() && self.snakes[i].is_alive() {
+                let new_direction = Direction::from_action(action);
+                self.snakes[i].change_direction(new_direction);
+                self.snakes[i].move_forward();
+            }
+        }
+
+        self.steps += 1;
+
+        let mut agent_rewards = vec![0.0; self.snakes.len()];
+        let mut any_alive = false;
+
+        // Check collisions for each snake
+        for i in 0..self.snakes.len() {
+            if !self.snakes[i].is_alive() {
+                continue;
+            }
+
+            // Check wall collision
+            if self.snakes[i].collides_with_wall(self.width, self.height) {
+                self.snakes[i].alive = false;
+                agent_rewards[i] -= 0.5;  // Reduced death penalty
+                continue;
+            }
+
+            // Check self collision
+            if self.snakes[i].collides_with_self() {
+                self.snakes[i].alive = false;
+                agent_rewards[i] -= 0.5;  // Reduced death penalty
+                continue;
+            }
+
+            // Check collision with other snakes
+            for j in 0..self.snakes.len() {
+                if i == j || !self.snakes[j].is_alive() {
+                    continue;
+                }
+                // Check if snake i's head collides with snake j's body
+                if self.snakes[j].get_all_positions().contains(&self.snakes[i].head) {
+                    self.snakes[i].alive = false;
+                    agent_rewards[i] -= 0.5;  // Reduced death penalty
+                    break;
+                }
+            }
+
+            if !self.snakes[i].is_alive() {
+                continue;
+            }
+
+            // Check food collection
+            if self.snakes[i].eats_food(&self.food) {
+                agent_rewards[i] += 10.0;  // Food reward goes only to this snake
+                self.snakes[i].grow();
+
+                // Generate new food
+                let mut rng = rand::thread_rng();
+                loop {
+                    let x = rng.gen_range(0..self.width);
+                    let y = rng.gen_range(0..self.height);
+                    let new_food = Position::new(x, y);
+
+                    // Make sure food doesn't spawn on any snake
+                    let mut on_snake = false;
+                    for snake in &self.snakes {
+                        if snake.get_all_positions().contains(&new_food) {
+                            on_snake = true;
+                            break;
+                        }
+                    }
+
+                    if !on_snake {
+                        self.food = new_food;
+                        break;
+                    }
+                }
+            }
+
+            if self.snakes[i].is_alive() {
+                any_alive = true;
+                // Survival reward per step
+                agent_rewards[i] += 0.01;
+
+                // Additional reward for longer snakes
+                if self.snakes[i].body.len() > 3 {
+                    let length_bonus = 0.1 * ((self.snakes[i].body.len() - 3) as f32);
+                    agent_rewards[i] += length_bonus;
+                }
+
+                // Distance-based reward shaping: reward getting closer to food
+                if i < prev_distances.len() {
+                    let dx = (self.snakes[i].head.x - self.food.x) as f32;
+                    let dy = (self.snakes[i].head.y - self.food.y) as f32;
+                    let current_distance = (dx * dx + dy * dy).sqrt();
+                    let distance_delta = prev_distances[i] - current_distance;
+
+                    // Reward for moving closer, penalty for moving away
+                    // Normalized by grid size to keep rewards consistent
+                    let distance_reward = distance_delta / (self.width.max(self.height) as f32) * 2.0;
+                    agent_rewards[i] += distance_reward;
+                }
+            }
+        }
+
+        // Check if all snakes are dead
+        let terminated = !any_alive;
+        if terminated {
+            self.done = true;
+        }
+
+        // Check step limit
+        let truncated = self.steps >= self.max_steps;
+        if truncated {
+            self.done = true;
+        }
+
+        (agent_rewards, terminated, truncated)
     }
 
     /// Execute single-agent step (for backward compatibility)
