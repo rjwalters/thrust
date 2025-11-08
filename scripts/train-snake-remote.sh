@@ -20,7 +20,8 @@ cd ~/thrust
 git pull
 
 # Run training with shared policy mode (faster convergence)
-LIBTORCH_USE_PYTORCH=1 \
+export LIBTORCH_USE_PYTORCH=1
+export LD_LIBRARY_PATH=$(python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
 cargo +nightly run --example train_snake_multi_v2 --release -- \
   --mode shared \
   --epochs 1000 \
@@ -30,7 +31,8 @@ echo "✅ Training complete!"
 echo "📦 Exporting model..."
 
 # Export the trained model
-LIBTORCH_USE_PYTORCH=1 \
+export LIBTORCH_USE_PYTORCH=1
+export LD_LIBRARY_PATH=$(python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
 cargo +nightly run --example export_snake_model --release
 
 echo "✅ Model exported to snake_model.json"
