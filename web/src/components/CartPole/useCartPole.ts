@@ -48,7 +48,7 @@ export function useCartPole(): UseCartPoleResult {
 
 					// Load the trained policy
 					try {
-						const response = await fetch(`${import.meta.env.BASE_URL}cartpole_model.json`);
+						const response = await fetch(`${import.meta.env.BASE_URL}cartpole_model_best.json`);
 						if (!response.ok) {
 							throw new Error(`HTTP error! status: ${response.status}`);
 						}
