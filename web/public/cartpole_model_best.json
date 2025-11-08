@@ -4882,7 +4882,7 @@
     ]
   ],
   "policy_bias": [
-    -0.00000627205,
+    -6.27205e-06,
     -0.03623617
   ],
   "value_weight": [
@@ -4955,5 +4955,28 @@
   ],
   "value_bias": [
     1.5424808
-  ]
+  ],
+  "metadata": {
+    "total_steps": 1000000,
+    "total_episodes": 2200,
+    "final_performance": 500.0,
+    "training_time_secs": 600.0,
+    "device": "CPU",
+    "environment": "CartPole-v1",
+    "algorithm": "PPO",
+    "timestamp": "2025-11-08T05:16:01.291584Z",
+    "hyperparameters": {
+      "n_steps": 128,
+      "num_envs": 8,
+      "learning_rate": 0.0003,
+      "hidden_dim": 64,
+      "n_epochs": 10,
+      "batch_size": 128,
+      "gamma": 0.99,
+      "ent_coef": 0.01,
+      "gae_lambda": 0.95,
+      "clip_range": 0.2
+    },
+    "notes": "Trained agent that successfully balances the pole for maximum episode length"
+  }
 }
