@@ -302,7 +302,7 @@ impl SnakeEnv {
             // Check self collision
             if self.snakes[i].collides_with_self() {
                 self.snakes[i].alive = false;
-                agent_rewards[i] -= 0.5; // Reduced death penalty
+                agent_rewards[i] -= 0.1; // Minimal death penalty to encourage risk-taking
                 continue;
             }
 
@@ -314,7 +314,7 @@ impl SnakeEnv {
                 // Check if snake i's head collides with snake j's body
                 if self.snakes[j].get_all_positions().contains(&self.snakes[i].head) {
                     self.snakes[i].alive = false;
-                    agent_rewards[i] -= 0.5; // Reduced death penalty
+                    agent_rewards[i] -= 0.1; // Minimal death penalty to encourage risk-taking
                     break;
                 }
             }
@@ -325,7 +325,7 @@ impl SnakeEnv {
 
             // Check food collection
             if self.snakes[i].eats_food(&self.food) {
-                agent_rewards[i] += 10.0; // Food reward goes only to this snake
+                agent_rewards[i] += 100.0; // MASSIVE reward for eating food! (10x baseline, encourages aggressive eating)
                 self.snakes[i].grow();
 
                 // Generate new food
@@ -356,9 +356,9 @@ impl SnakeEnv {
                 // Survival reward per step
                 agent_rewards[i] += 0.01;
 
-                // Additional reward for longer snakes
+                // Strong reward for longer snakes (encourages aggressive eating)
                 if self.snakes[i].body.len() > 3 {
-                    let length_bonus = 0.1 * ((self.snakes[i].body.len() - 3) as f32);
+                    let length_bonus = 1.0 * ((self.snakes[i].body.len() - 3) as f32);
                     agent_rewards[i] += length_bonus;
                 }
 
