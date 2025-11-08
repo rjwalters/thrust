@@ -131,6 +131,7 @@ fn main() -> Result<()> {
         fc_policy_bias,
         fc_value_weight,
         fc_value_bias,
+        metadata: None, // No metadata for untrained model
     };
 
     // Save as JSON

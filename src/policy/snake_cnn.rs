@@ -233,6 +233,7 @@ impl SnakeCNN {
             fc_policy_bias: vec![0.0; num_actions],
             fc_value_weight: vec![vec![0.0; 256]; 1],
             fc_value_bias: vec![0.0; 1],
+            metadata: None, // Placeholder export, no metadata
         }
     }
 }
