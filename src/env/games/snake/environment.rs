@@ -182,7 +182,7 @@ impl SnakeEnv {
 
             // Check food collection
             if self.snakes[i].eats_food(&self.food) {
-                total_reward += 10.0; // Increased food reward significantly
+                total_reward += 50.0; // BIG reward for eating food! Encourages food-seeking behavior
                 self.snakes[i].grow();
 
                 // Generate new food
