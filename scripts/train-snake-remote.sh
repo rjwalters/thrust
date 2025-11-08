@@ -14,7 +14,7 @@ echo ""
 
 # SSH to GPU sandbox and train
 ssh rwalters-sandbox-2 << 'EOF'
-cd ~/GitHub/thrust
+cd ~/thrust
 
 # Pull latest changes
 git pull
@@ -41,7 +41,7 @@ EOF
 
 echo ""
 echo "📥 Downloading trained model..."
-scp rwalters-sandbox-2:~/GitHub/thrust/snake_model.json ./web/public/
+scp rwalters-sandbox-2:~/thrust/snake_model.json ./web/public/
 
 echo ""
 echo "✅ All done! Model ready at web/public/snake_model.json"
