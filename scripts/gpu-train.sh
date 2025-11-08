@@ -25,10 +25,10 @@ cd "$PROJECT_ROOT"
 source venv/bin/activate
 source ~/.cargo/env
 
-# Set up libtorch paths
-export LIBTORCH="$(pwd)/libtorch"
-export LD_LIBRARY_PATH="$LIBTORCH/lib:${LD_LIBRARY_PATH:-}"
+# Set up libtorch paths - use Python PyTorch installation
 export LIBTORCH_USE_PYTORCH=1
+export PYTORCH_LIB=$(python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
+export LD_LIBRARY_PATH="$PYTORCH_LIB:${LD_LIBRARY_PATH:-}"
 export LIBTORCH_BYPASS_VERSION_CHECK=1
 
 # Create log file with timestamp
