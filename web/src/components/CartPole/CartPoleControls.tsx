@@ -5,7 +5,7 @@ interface CartPoleControlsProps {
 }
 
 export default function CartPoleControls({ cartpole }: CartPoleControlsProps) {
-	const { state, isRunning, isPaused, speed, start, pause, reset, setSpeed } =
+	const { state, isRunning, isPaused, speed, actualFps, start, pause, reset, setSpeed } =
 		cartpole;
 
 	if (!state) {
@@ -53,9 +53,14 @@ export default function CartPoleControls({ cartpole }: CartPoleControlsProps) {
 					<label htmlFor="speed" className="text-sm font-medium text-gray-700">
 						Speed: {speed}x
 					</label>
-					<span className="text-xs text-gray-500">
-						{Math.round(60 * speed)} FPS
-					</span>
+					<div className="flex gap-2 text-xs">
+					<span className="text-gray-500">Target: {Math.round(60 * speed)} FPS</span>
+					{isRunning && actualFps > 0 && (
+						<span className="text-emerald-600 font-semibold">
+							• Actual: {actualFps} FPS
+						</span>
+					)}
+				</div>
 				</div>
 				<input
 					id="speed"

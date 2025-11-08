@@ -18,6 +18,7 @@ export interface UseCartPoleResult {
 	isRunning: boolean;
 	isPaused: boolean;
 	speed: number;
+	actualFps: number;
 	modelLoaded: boolean;
 	start: () => void;
 	pause: () => void;
@@ -30,11 +31,13 @@ export function useCartPole(): UseCartPoleResult {
 	const [isRunning, setIsRunning] = useState(false);
 	const [isPaused, setIsPaused] = useState(false);
 	const [speed, setSpeed] = useState(1);
+	const [actualFps, setActualFps] = useState(0);
 	const [modelLoaded, setModelLoaded] = useState(false);
 
 	const envRef = useRef<WasmCartPole | null>(null);
 	const frameIdRef = useRef<number | null>(null);
 	const lastFrameTimeRef = useRef<number>(0);
+	const fpsFrameTimesRef = useRef<number[]>([]);
 
 	// Initialize WASM environment and load policy
 	useEffect(() => {
@@ -98,9 +101,21 @@ export function useCartPole(): UseCartPoleResult {
 		const targetFrameTime = 16.67 / speed; // Base: 60 FPS, scales with speed
 
 		function gameLoop(currentTime: number) {
-			if (!envRef.current || !isRunning || isPaused) return;
+		if (!envRef.current || !isRunning || isPaused) return;
 
-			const elapsed = currentTime - lastFrameTimeRef.current;
+		// Calculate actual FPS (smoothed over last 30 frames)
+		fpsFrameTimesRef.current.push(currentTime);
+		if (fpsFrameTimesRef.current.length > 30) {
+			fpsFrameTimesRef.current.shift();
+		}
+		if (fpsFrameTimesRef.current.length >= 2) {
+			const timeSpan = currentTime - fpsFrameTimesRef.current[0];
+			const frameCount = fpsFrameTimesRef.current.length - 1;
+			const fps = (frameCount / timeSpan) * 1000;
+			setActualFps(Math.round(fps));
+		}
+
+		const elapsed = currentTime - lastFrameTimeRef.current;
 
 			if (elapsed >= targetFrameTime) {
 				lastFrameTimeRef.current = currentTime;
@@ -191,6 +206,7 @@ export function useCartPole(): UseCartPoleResult {
 		isRunning,
 		isPaused,
 		speed,
+		actualFps,
 		modelLoaded,
 		start,
 		pause,
