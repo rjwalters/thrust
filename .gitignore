@@ -11,3 +11,5 @@ models/policies/**/*.safetensors
 *.log
 checkpoint_*.pt
 *.tmp
+.wrangler/
+node_modules/
