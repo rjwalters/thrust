@@ -21,15 +21,18 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
-# Activate Python venv and Rust
-source venv/bin/activate
+# Set up Rust
 source ~/.cargo/env
 
-# Set up libtorch paths - use Python PyTorch installation
+# Set up libtorch paths - use system Python's PyTorch (installed globally)
+# Don't activate venv - use system python3 which has PyTorch installed
 export LIBTORCH_USE_PYTORCH=1
-export PYTORCH_LIB=$(python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
+export PYTORCH_LIB=$(/usr/bin/python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
 export LD_LIBRARY_PATH="$PYTORCH_LIB:${LD_LIBRARY_PATH:-}"
 export LIBTORCH_BYPASS_VERSION_CHECK=1
+
+echo "Debug: PYTORCH_LIB=$PYTORCH_LIB"
+echo "Debug: LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
 
 # Create log file with timestamp
 LOG_FILE="training_${EXAMPLE}_$(date +%Y%m%d_%H%M%S).log"
