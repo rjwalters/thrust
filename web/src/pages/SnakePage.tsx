@@ -1,10 +1,50 @@
+import { useEffect, useState } from "react";
 import GamePageLayout from "../components/GamePageLayout";
 import SnakeControls from "../components/Snake/SnakeControls";
 import SnakePixi from "../components/Snake/SnakePixi";
 import { useSnake } from "../components/Snake/useSnake";
 
+interface ModelMetadata {
+	total_steps: number;
+	total_episodes: number;
+	final_performance: number;
+	training_time_secs: number;
+	device: string;
+	environment: string;
+	algorithm: string;
+	timestamp?: string;
+	notes?: string;
+	hyperparameters?: Record<string, string | number | boolean>;
+}
+
+interface ModelInfo {
+	grid_width: number;
+	grid_height: number;
+	input_channels: number;
+	num_actions: number;
+	metadata?: ModelMetadata;
+}
+
 export default function SnakePage() {
 	const snake = useSnake();
+	const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+
+	// Load model metadata
+	useEffect(() => {
+		async function loadModelInfo() {
+			try {
+				const response = await fetch(`${import.meta.env.BASE_URL}snake_model.json`);
+				if (!response.ok) {
+					throw new Error(`HTTP error! status: ${response.status}`);
+				}
+				const data = await response.json();
+				setModelInfo(data);
+			} catch (error) {
+				console.error("Failed to load model info:", error);
+			}
+		}
+		loadModelInfo();
+	}, []);
 
 	const visualization = snake.state ? (
 		<div className="w-full flex items-center justify-center">
@@ -187,11 +227,36 @@ export default function SnakePage() {
 			<div className="mt-4">
 				<h3 className="font-semibold mb-2">Training Details</h3>
 				<div className="bg-gray-50 p-3 rounded text-sm space-y-1">
-					<div className="font-mono text-xs">Algorithm: PPO</div>
-					<div className="font-mono text-xs">Training Method: Self-play</div>
-					<div className="font-mono text-xs">
-						Total Parameters: ~6.6M weights
-					</div>
+					{modelInfo?.metadata && (
+						<>
+							<div className="font-mono text-xs">
+								Steps: {modelInfo.metadata.total_steps.toLocaleString()}
+							</div>
+							<div className="font-mono text-xs">
+								Episodes: {modelInfo.metadata.total_episodes.toLocaleString()}
+							</div>
+							<div className="font-mono text-xs">
+								Performance: {modelInfo.metadata.final_performance.toFixed(1)}{" "}
+								avg score
+							</div>
+							<div className="font-mono text-xs">
+								Training time:{" "}
+								{modelInfo.metadata.training_time_secs.toFixed(0)}s
+							</div>
+							<div className="font-mono text-xs">
+								Device: {modelInfo.metadata.device}
+							</div>
+						</>
+					)}
+					{!modelInfo?.metadata && (
+						<>
+							<div className="font-mono text-xs">Algorithm: PPO</div>
+							<div className="font-mono text-xs">Training Method: Self-play</div>
+							<div className="font-mono text-xs">
+								Total Parameters: ~6.6M weights
+							</div>
+						</>
+					)}
 					<div className="text-xs text-gray-600 mt-2">
 						Agents learn through millions of self-play episodes, developing
 						strategies for food collection, collision avoidance, and competitive
@@ -199,6 +264,28 @@ export default function SnakePage() {
 					</div>
 				</div>
 			</div>
+
+			{modelInfo?.metadata?.hyperparameters && (
+				<div className="mt-4">
+					<h3 className="font-semibold mb-2">Hyperparameters</h3>
+					<div className="bg-gray-50 p-3 rounded text-xs font-mono">
+						<div className="grid grid-cols-2 gap-x-4 gap-y-1">
+							{Object.entries(modelInfo.metadata.hyperparameters)
+								.sort(([a], [b]) => a.localeCompare(b))
+								.map(([key, value]) => (
+									<div key={key} className="flex justify-between">
+										<span className="text-gray-600">{key}:</span>
+										<span className="font-semibold ml-2">
+											{typeof value === "number" && value < 1 && value > 0
+												? value.toFixed(6)
+												: String(value)}
+										</span>
+									</div>
+								))}
+						</div>
+					</div>
+				</div>
+			)}
 
 			<div className="mt-4 p-4 bg-blue-50 rounded-lg">
 				<p className="text-sm text-blue-900">
@@ -208,6 +295,11 @@ export default function SnakePage() {
 					The model runs entirely in your browser using WebAssembly for
 					real-time inference across multiple agents.
 				</p>
+				{modelInfo?.metadata?.notes && (
+					<p className="text-xs text-blue-700 mt-2 italic">
+						{modelInfo.metadata.notes}
+					</p>
+				)}
 			</div>
 		</>
 	);

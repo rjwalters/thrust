@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A serializable CNN model for Snake inference
 ///
@@ -44,6 +45,10 @@ pub struct SnakeCNNInference {
     // Value head: 256 -> 1
     pub fc_value_weight: Vec<Vec<f32>>, // [1, 256]
     pub fc_value_bias: Vec<f32>,        // [1]
+
+    /// Optional training metadata
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<TrainingMetadata>,
 }
 
 impl SnakeCNNInference {
