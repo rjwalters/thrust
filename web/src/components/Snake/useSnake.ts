@@ -18,6 +18,7 @@ export interface UseSnakeResult {
 	isRunning: boolean;
 	isPaused: boolean;
 	speed: number;
+	actualFps: number;
 	loadingProgress: number;
 	loadingStatus: string;
 	start: () => void;
@@ -35,6 +36,7 @@ export function useSnake(): UseSnakeResult {
 	const [isRunning, setIsRunning] = useState(false);
 	const [isPaused, setIsPaused] = useState(false);
 	const [speed, setSpeed] = useState(1);
+	const [actualFps, setActualFps] = useState(0);
 	const [loadingProgress, setLoadingProgress] = useState(0);
 	const [loadingStatus, setLoadingStatus] = useState("Initializing WASM...");
 
@@ -42,6 +44,7 @@ export function useSnake(): UseSnakeResult {
 	const frameIdRef = useRef<number | null>(null);
 	const lastFrameTimeRef = useRef<number>(0);
 	const stepsRef = useRef<number>(0);
+	const fpsFrameTimesRef = useRef<number[]>([]);
 
 	// Initialize WASM environment
 	useEffect(() => {
@@ -147,6 +150,18 @@ export function useSnake(): UseSnakeResult {
 
 			const elapsed = currentTime - lastFrameTimeRef.current;
 
+			// Calculate actual FPS (smoothed over last 30 frames)
+			fpsFrameTimesRef.current.push(currentTime);
+			if (fpsFrameTimesRef.current.length > 30) {
+				fpsFrameTimesRef.current.shift();
+			}
+			if (fpsFrameTimesRef.current.length >= 2) {
+				const timeSpan = currentTime - fpsFrameTimesRef.current[0];
+				const frameCount = fpsFrameTimesRef.current.length - 1;
+				const fps = (frameCount / timeSpan) * 1000;
+				setActualFps(Math.round(fps));
+			}
+
 			if (elapsed >= targetFrameTime) {
 				lastFrameTimeRef.current = currentTime;
 
@@ -239,6 +254,7 @@ export function useSnake(): UseSnakeResult {
 		isRunning,
 		isPaused,
 		speed,
+		actualFps,
 		loadingProgress,
 		loadingStatus,
 		start,
