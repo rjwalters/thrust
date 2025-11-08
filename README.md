@@ -76,6 +76,12 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 - [ ] Live training dashboard
 - [ ] Public demo deployment
 
+## 🖥️ Remote Training
+
+Training uses remote GPU machines. See [docs/REMOTE_TRAINING.md](docs/REMOTE_TRAINING.md) for the workflow.
+
+**TL;DR**: SSH into `rwalters-sandbox-2`, pull latest code, run `./scripts/gpu-train.sh <example_name>`
+
 ## 🏗️ Architecture
 
 ```
