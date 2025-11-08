@@ -19,9 +19,25 @@ cd ~/thrust
 # Pull latest changes
 git pull
 
-# Run training with shared policy mode (faster convergence)
+# Set up PyTorch environment for GPU
 export LIBTORCH_USE_PYTORCH=1
-export LD_LIBRARY_PATH=$(python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
+PYTORCH_LIB=$(python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
+export LD_LIBRARY_PATH="$PYTORCH_LIB:${LD_LIBRARY_PATH:-}"
+
+# CRITICAL: Preload CUDA libraries and force linker to keep them
+export LD_PRELOAD="$PYTORCH_LIB/libtorch_cuda.so:$PYTORCH_LIB/libtorch.so"
+export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
+
+echo "🔍 CUDA Environment:"
+echo "   LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+echo "   LD_PRELOAD=$LD_PRELOAD"
+echo ""
+
+# Clean and rebuild to ensure CUDA linking
+cargo +nightly clean
+cargo +nightly build --example train_snake_multi_v2 --release
+
+# Run training with shared policy mode
 cargo +nightly run --example train_snake_multi_v2 --release -- \
   --mode shared \
   --epochs 1000 \
