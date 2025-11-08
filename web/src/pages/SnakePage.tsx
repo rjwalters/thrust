@@ -13,33 +13,33 @@ export default function SnakePage() {
 	) : (
 		<div className="flex items-center justify-center w-full h-[520px]">
 			<div className="max-w-md w-full px-8">
-				<div className="text-center mb-6">
-					<div className="text-lg font-semibold text-gray-700 mb-2">
+				{/* Fixed height container to prevent layout shift */}
+				<div className="text-center h-24 flex flex-col justify-center mb-6">
+					<div className="text-lg font-semibold text-gray-700 mb-2 min-h-[28px]">
 						{snake.loadingStatus}
 					</div>
-					{snake.loadingProgress > 0 && snake.loadingProgress < 100 && (
-						<div className="text-sm text-gray-500">
-							This may take a moment on slower connections...
+					<div className="text-sm text-gray-500 min-h-[20px]">
+						{snake.loadingProgress > 0 && snake.loadingProgress < 100
+							? "This may take a moment on slower connections..."
+							: "\u00A0"}
+					</div>
+				</div>
+
+				{/* Fixed height progress bar container */}
+				<div className="h-12 flex items-center">
+					{snake.loadingProgress > 0 ? (
+						<div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden shadow-inner">
+							<div
+								className="bg-gradient-to-r from-purple-500 to-pink-500 h-full rounded-full transition-all duration-300 ease-out"
+								style={{ width: `${snake.loadingProgress}%` }}
+							/>
+						</div>
+					) : (
+						<div className="flex justify-center w-full">
+							<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500" />
 						</div>
 					)}
 				</div>
-
-				{/* Progress bar */}
-				{snake.loadingProgress > 0 && (
-					<div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden shadow-inner">
-						<div
-							className="bg-gradient-to-r from-purple-500 to-pink-500 h-full rounded-full transition-all duration-300 ease-out"
-							style={{ width: `${snake.loadingProgress}%` }}
-						/>
-					</div>
-				)}
-
-				{/* Loading spinner for initial load */}
-				{snake.loadingProgress === 0 && (
-					<div className="flex justify-center">
-						<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500" />
-					</div>
-				)}
 			</div>
 		</div>
 	);
