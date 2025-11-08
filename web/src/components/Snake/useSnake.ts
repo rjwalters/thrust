@@ -18,6 +18,8 @@ export interface UseSnakeResult {
 	isRunning: boolean;
 	isPaused: boolean;
 	speed: number;
+	loadingProgress: number;
+	loadingStatus: string;
 	start: () => void;
 	pause: () => void;
 	reset: () => void;
@@ -33,6 +35,8 @@ export function useSnake(): UseSnakeResult {
 	const [isRunning, setIsRunning] = useState(false);
 	const [isPaused, setIsPaused] = useState(false);
 	const [speed, setSpeed] = useState(1);
+	const [loadingProgress, setLoadingProgress] = useState(0);
+	const [loadingStatus, setLoadingStatus] = useState("Initializing WASM...");
 
 	const envRef = useRef<WasmSnake | null>(null);
 	const frameIdRef = useRef<number | null>(null);
@@ -54,24 +58,53 @@ export function useSnake(): UseSnakeResult {
 					);
 					envRef.current.reset();
 
-					// Load policy from JSON
+					// Load policy from JSON with progress tracking
 					try {
 						console.log("[Snake] Loading policy model...");
+						setLoadingStatus("Downloading AI model (125MB)...");
+
 						const response = await fetch("https://thrust-models.personal-account-251.workers.dev/snake_model.json");
-						if (response.ok) {
-							const policyJson = await response.text();
-							console.log(
-								`[Snake] Policy JSON loaded (${policyJson.length} bytes)`,
-							);
+						if (!response.ok) {
+							console.warn("[Snake] Policy model not found, using random actions");
+							setLoadingStatus("Model not found - using random actions");
+							return;
+						}
+
+						const contentLength = response.headers.get('content-length');
+						const total = contentLength ? parseInt(contentLength, 10) : 131072000; // ~125MB fallback
+
+						let loaded = 0;
+						const reader = response.body?.getReader();
+						const chunks: BlobPart[] = [];
+
+						if (reader) {
+							while (true) {
+								const { done, value } = await reader.read();
+								if (done) break;
+
+								chunks.push(value);
+								loaded += value.length;
+								const progress = Math.round((loaded / total) * 100);
+								const loadedMB = (loaded / 1024 / 1024).toFixed(1);
+								const totalMB = (total / 1024 / 1024).toFixed(1);
+								setLoadingProgress(progress);
+								setLoadingStatus(`Downloading AI model: ${loadedMB}MB / ${totalMB}MB (${progress}%)`);
+							}
+
+							// Combine chunks and decode
+							const blob = new Blob(chunks);
+							const policyJson = await blob.text();
+
+							setLoadingStatus("Loading model into memory...");
+							console.log(`[Snake] Policy JSON loaded (${policyJson.length} bytes)`);
 							envRef.current.load_policy_json(policyJson);
 							console.log("[Snake] Policy loaded successfully");
-						} else {
-							console.warn(
-								"[Snake] Policy model not found, using random actions",
-							);
+							setLoadingStatus("Ready");
+							setLoadingProgress(100);
 						}
 					} catch (error) {
 						console.warn("[Snake] Failed to load policy:", error);
+						setLoadingStatus("Failed to load model - using random actions");
 					}
 
 					// Initialize state
@@ -206,6 +239,8 @@ export function useSnake(): UseSnakeResult {
 		isRunning,
 		isPaused,
 		speed,
+		loadingProgress,
+		loadingStatus,
 		start,
 		pause,
 		reset,

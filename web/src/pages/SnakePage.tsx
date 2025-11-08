@@ -12,7 +12,35 @@ export default function SnakePage() {
 		</div>
 	) : (
 		<div className="flex items-center justify-center w-full h-[520px]">
-			<div className="text-gray-500">Loading...</div>
+			<div className="max-w-md w-full px-8">
+				<div className="text-center mb-6">
+					<div className="text-lg font-semibold text-gray-700 mb-2">
+						{snake.loadingStatus}
+					</div>
+					{snake.loadingProgress > 0 && snake.loadingProgress < 100 && (
+						<div className="text-sm text-gray-500">
+							This may take a moment on slower connections...
+						</div>
+					)}
+				</div>
+
+				{/* Progress bar */}
+				{snake.loadingProgress > 0 && (
+					<div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden shadow-inner">
+						<div
+							className="bg-gradient-to-r from-purple-500 to-pink-500 h-full rounded-full transition-all duration-300 ease-out"
+							style={{ width: `${snake.loadingProgress}%` }}
+						/>
+					</div>
+				)}
+
+				{/* Loading spinner for initial load */}
+				{snake.loadingProgress === 0 && (
+					<div className="flex justify-center">
+						<div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-500" />
+					</div>
+				)}
+			</div>
 		</div>
 	);
 
