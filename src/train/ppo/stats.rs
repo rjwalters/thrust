@@ -20,8 +20,11 @@ pub struct TrainingStats {
     /// Entropy bonus
     pub entropy: f64,
 
-    /// Total loss (weighted sum of policy, value, and entropy losses)
+    /// Total loss (weighted sum of policy, value, entropy, and aux losses)
     pub total_loss: f64,
+
+    /// Auxiliary loss (caller-supplied --- e.g. representation regularizer)
+    pub aux_loss: f64,
 
     /// Fraction of clipped policy updates
     pub clip_fraction: f64,
@@ -42,7 +45,10 @@ impl TrainingStats {
         Self::default()
     }
 
-    /// Create statistics from scalar values
+    /// Create statistics from scalar values.
+    ///
+    /// `aux_loss` defaults to 0.0; set with [`Self::with_aux_loss`] when an
+    /// auxiliary loss term is present.
     pub fn new(
         policy_loss: f64,
         value_loss: f64,
@@ -57,11 +63,18 @@ impl TrainingStats {
             value_loss,
             entropy,
             total_loss,
+            aux_loss: 0.0,
             clip_fraction,
             approx_kl,
             explained_var,
             num_updates: 1,
         }
+    }
+
+    /// Builder-style setter for the auxiliary loss field.
+    pub fn with_aux_loss(mut self, aux_loss: f64) -> Self {
+        self.aux_loss = aux_loss;
+        self
     }
 
     /// Add another statistics instance to this one
@@ -70,6 +83,7 @@ impl TrainingStats {
         self.value_loss += other.value_loss;
         self.entropy += other.entropy;
         self.total_loss += other.total_loss;
+        self.aux_loss += other.aux_loss;
         self.clip_fraction += other.clip_fraction;
         self.approx_kl += other.approx_kl;
         self.explained_var += other.explained_var;
@@ -88,6 +102,7 @@ impl TrainingStats {
             value_loss: self.value_loss / scale,
             entropy: self.entropy / scale,
             total_loss: self.total_loss / scale,
+            aux_loss: self.aux_loss / scale,
             clip_fraction: self.clip_fraction / scale,
             approx_kl: self.approx_kl / scale,
             explained_var: self.explained_var / scale,
