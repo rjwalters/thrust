@@ -1,8 +1,8 @@
 //! Test CUDA availability in tch-rs.
 //!
 //! Verifies that the `build.rs` link-arg fix is working: on a CUDA-equipped
-//! Linux box, this should print `Cuda(0)` and `tch::Cuda::is_available() = true`
-//! *without* any `LD_PRELOAD` workaround. On macOS or CPU-only builds it
+//! Linux box, this should print `Cuda(0)` and `tch::Cuda::is_available() =
+//! true` *without* any `LD_PRELOAD` workaround. On macOS or CPU-only builds it
 //! gracefully reports `Cpu`.
 //!
 //! Acceptance check (from issue #9):

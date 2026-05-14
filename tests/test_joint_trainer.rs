@@ -11,9 +11,7 @@ use std::collections::HashMap;
 
 use tch::{Kind, Tensor, nn};
 use thrust_rl::{
-    multi_agent::joint::{
-        JointEnv, JointMultiAgentTrainer, JointStepResult, JointTrainerConfig,
-    },
+    multi_agent::joint::{JointEnv, JointMultiAgentTrainer, JointStepResult, JointTrainerConfig},
     policy::{mlp::MlpPolicy, multi_discrete_mlp::MultiDiscreteMlpPolicy},
 };
 
@@ -62,10 +60,7 @@ impl JointEnv for MockEnv {
 // -----------------------------------------------------------------------
 
 fn capture_params(vs: &nn::VarStore) -> HashMap<String, Tensor> {
-    vs.variables()
-        .into_iter()
-        .map(|(name, t)| (name, t.detach().copy()))
-        .collect()
+    vs.variables().into_iter().map(|(name, t)| (name, t.detach().copy())).collect()
 }
 
 fn map_l2_diff(a: &HashMap<String, Tensor>, b: &HashMap<String, Tensor>) -> f64 {
@@ -80,11 +75,7 @@ fn map_l2_diff(a: &HashMap<String, Tensor>, b: &HashMap<String, Tensor>) -> f64 
     total
 }
 
-fn mlp_with_optimizer(
-    obs_dim: i64,
-    action_dim: i64,
-    lr: f64,
-) -> (MlpPolicy, nn::Optimizer) {
+fn mlp_with_optimizer(obs_dim: i64, action_dim: i64, lr: f64) -> (MlpPolicy, nn::Optimizer) {
     let mut p = MlpPolicy::new(obs_dim, action_dim, 16);
     let opt = p.optimizer(lr);
     (p, opt)
@@ -277,10 +268,7 @@ fn test_aux_fn_none_runs_clean() {
         .update(&rollout, |_features: &[&Tensor]| -> Option<Tensor> { None })
         .expect("update should not error");
 
-    assert_eq!(
-        stats.aux_loss, 0.0,
-        "aux_loss must be 0 when aux_fn returns None"
-    );
+    assert_eq!(stats.aux_loss, 0.0, "aux_loss must be 0 when aux_fn returns None");
     assert!(stats.total_loss.is_finite());
 }
 

@@ -68,7 +68,7 @@ impl Default for Args {
             gamma: 0.99,
             clip_param: 0.2,
             value_coef: 0.5,
-            entropy_coef: 0.03,  // Increased from 0.01 for better exploration (sparse rewards)
+            entropy_coef: 0.03, // Increased from 0.01 for better exploration (sparse rewards)
             ppo_epochs: 4,
             minibatch_size: 64,
             output: PathBuf::from("models/snake_policy.safetensors"),
@@ -437,12 +437,13 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
 
         // Compute explained variance: 1 - Var(returns - values) / Var(returns)
         let mean_returns = returns.iter().sum::<f32>() / returns.len() as f32;
-        let var_returns = returns.iter().map(|r| (r - mean_returns).powi(2)).sum::<f32>() / returns.len() as f32;
-        let residuals: Vec<f32> = returns.iter().zip(&rollout_buffer.values)
-            .map(|(r, v)| r - v)
-            .collect();
+        let var_returns =
+            returns.iter().map(|r| (r - mean_returns).powi(2)).sum::<f32>() / returns.len() as f32;
+        let residuals: Vec<f32> =
+            returns.iter().zip(&rollout_buffer.values).map(|(r, v)| r - v).collect();
         let mean_residuals = residuals.iter().sum::<f32>() / residuals.len() as f32;
-        let var_residuals = residuals.iter().map(|r| (r - mean_residuals).powi(2)).sum::<f32>() / residuals.len() as f32;
+        let var_residuals = residuals.iter().map(|r| (r - mean_residuals).powi(2)).sum::<f32>()
+            / residuals.len() as f32;
         let explained_var = if var_returns > 1e-8 {
             1.0 - (var_residuals / var_returns)
         } else {
@@ -711,12 +712,14 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
 
                 // Compute explained variance for agent 0
                 let mean_returns = returns.iter().sum::<f32>() / returns.len().max(1) as f32;
-                let var_returns = returns.iter().map(|r| (r - mean_returns).powi(2)).sum::<f32>() / returns.len().max(1) as f32;
-                let residuals: Vec<f32> = returns.iter().zip(&buffer.values)
-                    .map(|(r, v)| r - v)
-                    .collect();
+                let var_returns = returns.iter().map(|r| (r - mean_returns).powi(2)).sum::<f32>()
+                    / returns.len().max(1) as f32;
+                let residuals: Vec<f32> =
+                    returns.iter().zip(&buffer.values).map(|(r, v)| r - v).collect();
                 let mean_residuals = residuals.iter().sum::<f32>() / residuals.len().max(1) as f32;
-                let var_residuals = residuals.iter().map(|r| (r - mean_residuals).powi(2)).sum::<f32>() / residuals.len().max(1) as f32;
+                let var_residuals =
+                    residuals.iter().map(|r| (r - mean_residuals).powi(2)).sum::<f32>()
+                        / residuals.len().max(1) as f32;
                 let explained_var = if var_returns > 1e-8 {
                     1.0 - (var_residuals / var_returns)
                 } else {
@@ -725,11 +728,7 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
 
                 println!(
                     "[INDEPENDENT] Agent {} | Policy Loss: {:.4} | Value Loss: {:.4} | Entropy: {:.3} | ExpVar: {:.3}",
-                    agent_id,
-                    avg_policy_loss,
-                    avg_value_loss,
-                    avg_entropy,
-                    explained_var
+                    agent_id, avg_policy_loss, avg_value_loss, avg_entropy, explained_var
                 );
             }
         }

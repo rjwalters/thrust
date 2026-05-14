@@ -11,10 +11,7 @@ use thrust_rl::{
     train::ppo::{PPOConfig, PPOTrainer},
 };
 
-fn build_trainer(
-    obs_dim: i64,
-    action_dim: i64,
-) -> (PPOTrainer<MlpPolicy>, MlpPolicy, Device) {
+fn build_trainer(obs_dim: i64, action_dim: i64) -> (PPOTrainer<MlpPolicy>, MlpPolicy, Device) {
     let mut policy = MlpPolicy::new(obs_dim, action_dim, 64);
     let device = policy.device();
     let opt = policy.optimizer(3e-4);
@@ -82,11 +79,7 @@ fn train_step_with_aux_records_aux_loss() {
         )
         .unwrap();
 
-    assert!(
-        stats.aux_loss > 0.0,
-        "aux_loss should be recorded, got {}",
-        stats.aux_loss
-    );
+    assert!(stats.aux_loss > 0.0, "aux_loss should be recorded, got {}", stats.aux_loss);
 }
 
 #[test]

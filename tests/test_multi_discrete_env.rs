@@ -13,8 +13,9 @@
 #![cfg(feature = "env-bucket-brigade")]
 
 use bucket_brigade_core::SCENARIOS;
-use thrust_rl::env::games::bucket_brigade::BucketBrigadeMaEnv;
-use thrust_rl::multi_agent::MultiAgentEnvironment;
+use thrust_rl::{
+    env::games::bucket_brigade::BucketBrigadeMaEnv, multi_agent::MultiAgentEnvironment,
+};
 
 fn make_env(num_agents: usize, seed: u64) -> BucketBrigadeMaEnv {
     let scenario = SCENARIOS["default"].clone();

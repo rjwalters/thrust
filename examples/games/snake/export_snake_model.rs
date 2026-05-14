@@ -3,12 +3,11 @@
 //! This example loads a trained PyTorch Snake model and exports the weights
 //! to a JSON format that can be loaded in WebAssembly for inference.
 
-use std::env;
-use std::collections::HashMap;
+use std::{collections::HashMap, env};
 
 use anyhow::Result;
 use tch::{Device, Kind, Tensor, nn};
-use thrust_rl::policy::{snake_cnn::SnakeCNN, inference::TrainingMetadata};
+use thrust_rl::policy::{inference::TrainingMetadata, snake_cnn::SnakeCNN};
 
 fn main() -> Result<()> {
     // Get command line arguments
@@ -19,7 +18,10 @@ fn main() -> Result<()> {
         eprintln!();
         eprintln!("Examples:");
         eprintln!("  {} models/snake_policy.pt web/public/snake_model.json", args[0]);
-        eprintln!("  {} models/snake_policy.pt web/public/snake_model.json --with-metadata", args[0]);
+        eprintln!(
+            "  {} models/snake_policy.pt web/public/snake_model.json --with-metadata",
+            args[0]
+        );
         std::process::exit(1);
     }
 
