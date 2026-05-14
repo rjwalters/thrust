@@ -196,20 +196,26 @@ mod tests {
     fn test_snake_collision_detection() {
         let mut snake = Snake::new(0, Position::new(1, 1), Direction::Right);
         snake.grow();
-        snake.move_forward(); // Now at (2,1) with body at (1,1)
+        snake.move_forward(); // head now at (2, 1) — last in-bounds column on 3x3
+        assert!(!snake.collides_with_wall(3, 3), "(2, 1) is in-bounds on 3x3");
 
-        // Wall collision
-        assert!(snake.collides_with_wall(3, 3)); // Grid is 3x3 (0-2)
+        // Wall collision — step off the right edge
+        snake.move_forward(); // head now at (3, 1) — off the right edge
+        assert!(snake.collides_with_wall(3, 3), "(3, 1) is out-of-bounds on 3x3");
 
-        // Self collision - move to create collision
+        // Self collision - grow long enough to loop back onto own body
         let mut snake2 = Snake::new(0, Position::new(5, 5), Direction::Right);
         snake2.grow();
-        snake2.move_forward();
+        snake2.grow();
+        snake2.grow();
+        snake2.grow(); // length is now 5 (initial 1 + 4 grows)
+        snake2.move_forward(); // head (6, 5)
         snake2.change_direction(Direction::Down);
-        snake2.move_forward();
+        snake2.move_forward(); // head (6, 6)
         snake2.change_direction(Direction::Left);
-        snake2.move_forward();
-        // Now should be colliding with itself
+        snake2.move_forward(); // head (5, 6)
+        snake2.change_direction(Direction::Up);
+        snake2.move_forward(); // head back at (5, 5) — collides with body tail
         assert!(snake2.collides_with_self());
     }
 
