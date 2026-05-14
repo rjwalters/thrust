@@ -10,4 +10,7 @@ pub mod universal_inference;
 pub mod mlp;
 
 #[cfg(feature = "training")]
+pub mod multi_discrete_mlp;
+
+#[cfg(feature = "training")]
 pub mod snake_cnn;

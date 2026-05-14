@@ -100,10 +100,68 @@ impl<P> PPOTrainer<P> {
         old_values: &Tensor,
         advantages: &Tensor,
         returns: &Tensor,
-        mut forward_fn: F,
+        forward_fn: F,
     ) -> Result<TrainingStats>
     where
         F: FnMut(&Tensor, &Tensor) -> (Tensor, Tensor, Tensor),
+    {
+        // Delegate to the aux-aware variant with a no-op aux closure.
+        self.train_step_with_aux(
+            observations,
+            actions,
+            old_log_probs,
+            old_values,
+            advantages,
+            returns,
+            forward_fn,
+            |_obs: &Tensor| None,
+        )
+    }
+
+    /// Train for one PPO update with an auxiliary loss term.
+    ///
+    /// Identical to [`Self::train_step`] except that `aux_fn` is invoked on
+    /// each minibatch's observations and may return an optional scalar tensor
+    /// that is added to the total loss before the backward pass:
+    ///
+    /// ```text
+    /// total_loss = policy_loss
+    ///            + vf_coef * value_loss
+    ///            + ent_coef * entropy_loss
+    ///            + aux_loss   // <-- this
+    /// ```
+    ///
+    /// The aux loss should already incorporate any scaling coefficient
+    /// (`λ * f(features)`); the trainer doesn't scale it. The corresponding
+    /// scalar is reported in [`TrainingStats::aux_loss`].
+    ///
+    /// Use cases:
+    /// - **Cross-agent representation regularizers** (Slepian-Wolf MARL P3):
+    ///   compute pairwise cross-correlation across agents' `encoder_features`.
+    /// - **Behavioural diversity bonuses** (DIAYN-style).
+    /// - **Imitation / KL-to-demo** regularizers.
+    /// - **Self-supervised auxiliaries** (forward/inverse models, BYOL, etc.).
+    ///
+    /// # Arguments
+    /// Same as [`Self::train_step`], plus:
+    /// * `aux_fn` --- `FnMut(&Tensor /* minibatch obs */) -> Option<Tensor>`.
+    ///   Return `None` to skip the auxiliary term on this minibatch; return
+    ///   `Some(scalar_loss)` (already scaled) to have it added to total_loss.
+    #[allow(clippy::too_many_arguments)]
+    pub fn train_step_with_aux<F, A>(
+        &mut self,
+        observations: &Tensor,
+        actions: &Tensor,
+        old_log_probs: &Tensor,
+        old_values: &Tensor,
+        advantages: &Tensor,
+        returns: &Tensor,
+        mut forward_fn: F,
+        mut aux_fn: A,
+    ) -> Result<TrainingStats>
+    where
+        F: FnMut(&Tensor, &Tensor) -> (Tensor, Tensor, Tensor),
+        A: FnMut(&Tensor) -> Option<Tensor>,
     {
         let optimizer = self
             .optimizer
@@ -166,15 +224,26 @@ impl<P> PPOTrainer<P> {
 
                 let entropy_loss = compute_entropy_loss(&entropy);
 
+                // Optional auxiliary loss --- caller-supplied scalar tensor
+                // (already scaled by any coefficient the caller wants).
+                let aux_loss_opt = aux_fn(&mb_obs);
+
                 // Extract scalar values before tensors are moved
                 let policy_loss_val: f64 = f64::try_from(&policy_loss).unwrap_or(0.0);
                 let value_loss_val: f64 = f64::try_from(&value_loss).unwrap_or(0.0);
                 let entropy_val: f64 = f64::try_from(&entropy).unwrap_or(0.0);
+                let aux_loss_val: f64 = aux_loss_opt
+                    .as_ref()
+                    .and_then(|t| f64::try_from(t).ok())
+                    .unwrap_or(0.0);
 
                 // Total loss
-                let loss = &policy_loss
+                let mut loss = &policy_loss
                     + self.config.vf_coef * &value_loss
                     + self.config.ent_coef * &entropy_loss;
+                if let Some(aux) = aux_loss_opt {
+                    loss = loss + aux;
+                }
 
                 let total_loss_val: f64 = f64::try_from(&loss).unwrap_or(0.0);
 
@@ -197,7 +266,8 @@ impl<P> PPOTrainer<P> {
                     clip_fraction,
                     approx_kl,
                     explained_var,
-                );
+                )
+                .with_aux_loss(aux_loss_val);
                 stats_sum.add(&step_stats);
                 num_updates += 1;
 

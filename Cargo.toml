@@ -50,6 +50,10 @@ thiserror = "1.0"
 # Date/time utilities (optional for training metadata)
 chrono = { version = "0.4", optional = true }
 
+# Bucket Brigade environment (Slepian-Wolf MARL experiments). Default = no
+# Python features; pure Rust core.
+bucket-brigade-core = { path = "envs/bucket-brigade/bucket-brigade-core", default-features = false, optional = true }
+
 # WASM support
 wasm-bindgen = { version = "0.2", optional = true }
 web-sys = { version = "0.3", features = ["console"], optional = true }
@@ -60,6 +64,12 @@ console_error_panic_hook = { version = "0.1", optional = true }
 default = ["training"]
 training = ["tch", "tokio", "rayon", "bincode", "tracing", "tracing-subscriber", "crossbeam-channel", "chrono"]  # Include PyTorch and async deps for training
 wasm = ["wasm-bindgen", "web-sys", "js-sys", "console_error_panic_hook"]  # Pure Rust for WASM
+# Bucket Brigade env adapter for the Slepian-Wolf MARL experiments. Pulls in
+# the bucket-brigade-core crate as a pure-Rust dep --- does *not* require
+# the `training` feature on its own, so the env can be tested without
+# libtorch. The accompanying joint-trainer binary will declare
+# `required-features = ["env-bucket-brigade", "training"]`.
+env-bucket-brigade = ["bucket-brigade-core"]
 
 [dev-dependencies]
 criterion = "0.5"
@@ -164,3 +174,9 @@ required-features = ["training"]
 name = "test_json_inference"
 path = "examples/games/cartpole/test_json_inference.rs"
 required-features = ["training"]
+
+# Bucket Brigade examples (Slepian-Wolf MARL)
+[[example]]
+name = "train_p3"
+path = "examples/games/bucket_brigade/train_p3.rs"
+required-features = ["training", "env-bucket-brigade"]
