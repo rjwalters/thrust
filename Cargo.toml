@@ -9,6 +9,11 @@ repository = "https://github.com/yourusername/thrust"
 keywords = ["reinforcement-learning", "machine-learning", "rl", "deep-learning", "cuda"]
 categories = ["science", "algorithms"]
 readme = "README.md"
+# Build script defeats GNU ld's --as-needed for libtorch_cuda on Linux.
+# See build.rs for the rationale (in short: without it, the binary silently
+# falls back to CPU even on a CUDA-equipped box). No-op on macOS/Windows
+# and on CPU-only feature builds.
+build = "build.rs"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -180,3 +185,11 @@ required-features = ["training"]
 name = "train_p3"
 path = "examples/games/bucket_brigade/train_p3.rs"
 required-features = ["training", "env-bucket-brigade"]
+
+# Diagnostics --- verifies that the CUDA link fix from build.rs is working.
+# Run with `./scripts/gpu-train.sh test_cuda` or directly via cargo on a
+# CUDA-equipped Linux box. On macOS this still builds but will report `Cpu`.
+[[example]]
+name = "test_cuda"
+path = "examples/test_cuda.rs"
+required-features = ["training"]

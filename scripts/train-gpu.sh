@@ -50,13 +50,18 @@ export LIBTORCH_USE_PYTORCH=1
 TORCH_LIB=$(python3 -c "import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))")
 export LD_LIBRARY_PATH="${TORCH_LIB}:${LD_LIBRARY_PATH}"
 
-# CRITICAL: Preload CUDA libraries to ensure they're loaded at runtime
-# The linker drops these as "unused" even with --no-as-needed, so we force-load them
-export LD_PRELOAD="${TORCH_LIB}/libtorch_cuda.so:${TORCH_LIB}/libtorch.so"
+# Catch silent CPU fallback. The crate-root build.rs is responsible for
+# keeping libtorch_cuda.so in NEEDED, but if anything goes wrong we want a
+# loud fatal error rather than a 5x-slower run on CPU.
+export THRUST_EXPECT_CUDA=1
 
-# CRITICAL: Force linker to keep CUDA library dependency
-# Without this, the linker removes libtorch_cuda.so as "unused" even though it's needed at runtime
-export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
+# NOTE: As of issue #9 the crate-root build.rs now emits positional
+# `-Wl,--no-as-needed` + `-ltorch_cuda` + `-lc10_cuda` so the linker keeps
+# the CUDA libs in DT_NEEDED. The historical LD_PRELOAD + RUSTFLAGS
+# workaround is no longer required. Uncomment if you need a belt-and-
+# suspenders fallback for a non-standard libtorch install.
+# export LD_PRELOAD="${TORCH_LIB}/libtorch_cuda.so:${TORCH_LIB}/libtorch.so"
+# export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
 
 # IMPORTANT: Build must happen on this machine to detect CUDA at compile time
 echo "Building with CUDA support..."

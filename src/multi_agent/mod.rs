@@ -1,38 +1,33 @@
 //! Multi-agent training infrastructure for Thrust
 //!
-//! This module provides components for training multiple agents simultaneously
-//! in cooperative, competitive, and mixed-motive scenarios.
+//! This module provides two complementary multi-agent training architectures:
 //!
-//! # Architecture
+//! ## 1. Per-thread independent learners ([`PolicyLearner`], [`Population`], [`GameSimulator`])
 //!
-//! The multi-agent system consists of:
+//! Each agent runs in its own learner thread and updates from a shared rollout
+//! pool. Good for league play, self-play, evolutionary tournaments, and any
+//! setup where agents update *independently* without needing batched access
+//! to one another's parameters.
+//!
 //! - **Population**: Collection of diverse agent policies
 //! - **GameSimulator**: Thread that runs parallel games and routes experiences
 //! - **PolicyLearner**: Per-agent training thread with PPO
 //! - **Matchmaker**: Strategy for assigning agents to games
 //!
-//! # Example
+//! ## 2. Synchronized joint trainer ([`joint::JointMultiAgentTrainer`])
 //!
-//! ```rust,no_run
-//! use thrust_rl::multi_agent::*;
+//! A single process owns `N` policies and `N` optimizers and runs them in
+//! lockstep on a shared rollout buffer. Required when the loss function
+//! contains a term that depends on **all** agents' parameters evaluated on
+//! the **same** minibatch (e.g. cross-agent representational regularizers
+//! in the Slepian-Wolf MARL P3 experiments). One `.backward()` couples
+//! every agent's encoder through the auxiliary term while leaving per-agent
+//! gradient updates isolated (each optimizer reads only its own var-store).
 //!
-//! let config = PopulationConfig {
-//!     size: 8,
-//!     matchmaking: MatchmakingStrategy::RoundRobin,
-//!     learning_mode: LearningMode::OnPolicy,
-//!     update_interval: 100,
-//! };
-//!
-//! let trainer = MultiAgentTrainer::new(
-//!     config,
-//!     Box::new(|| create_environment()),
-//!     num_games: 64,
-//! );
-//!
-//! trainer.train()?;
-//! ```
+//! See [`joint`] for the detailed semantics and acceptance criteria.
 
 pub mod environment;
+pub mod joint;
 pub mod learner;
 pub mod matchmaking;
 pub mod messages;
@@ -40,6 +35,10 @@ pub mod population;
 pub mod simulator;
 
 pub use environment::{MultiAgentEnvironment, MultiAgentResult};
+pub use joint::{
+    JointEnv, JointMultiAgentTrainer, JointPolicy, JointRollout, JointStats, JointStepResult,
+    JointTrainerConfig,
+};
 pub use learner::PolicyLearner;
 pub use matchmaking::{Matchmaker, MatchmakingStrategy};
 pub use messages::{ControlMessage, Experience, PolicyUpdate, TrainingStats};

@@ -14,12 +14,16 @@
 //! [`crate::policy::multi_discrete_mlp::MultiDiscreteMlpPolicy`] with
 //! `action_dims = vec![10, 2]`.
 //!
-//! Does **not** implement [`crate::multi_agent::MultiAgentEnvironment`]
-//! because that trait currently takes `&[i64]` and doesn't support factored
-//! action spaces (see upstream issue #3). When the trait is widened, this
-//! struct can grow a trivial impl.
+//! In addition to its inherent [`BucketBrigadeMaEnv::step`] API (which takes
+//! the typed `&[[u8; 2]]` form), this type implements the multi-discrete
+//! [`crate::multi_agent::MultiAgentEnvironment`] trait so it can be driven
+//! through the generic multi-agent rollout surface (one `Vec<i64>` per
+//! agent, length matching [`BucketBrigadeMaEnv::action_dims`]).
 
 use bucket_brigade_core::{Action, AgentObservation, BucketBrigade, Scenario};
+
+use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
+use crate::multi_agent::{MultiAgentEnvironment, MultiAgentResult};
 
 /// Number of houses on the Bucket Brigade ring. Constant; the engine
 /// hard-codes 10.
@@ -127,6 +131,128 @@ impl BucketBrigadeMaEnv {
             .collect();
 
         MaStepResult { rewards: result.rewards, done: result.done, observations }
+    }
+}
+
+// -------- Single-agent `Environment` adapter --------
+//
+// `MultiAgentEnvironment` requires `Environment`. Bucket Brigade is
+// fundamentally multi-agent, so this single-agent surface exists only to
+// satisfy the trait hierarchy: it returns agent 0's observation and treats a
+// single scalar action as a Cartesian-product index over `[house, mode]`.
+// Real consumers should drive the env through `MultiAgentEnvironment`.
+impl Environment for BucketBrigadeMaEnv {
+    fn reset(&mut self) {
+        let _ = BucketBrigadeMaEnv::reset(self, None);
+    }
+
+    fn get_observation(&self) -> Vec<f32> {
+        flatten_observation(&self.inner.get_observation(0))
+    }
+
+    fn step(&mut self, action: i64) -> StepResult {
+        // Single-agent surface: decode the scalar Cartesian-product index
+        // `house * 2 + mode` and broadcast it to every agent. This is a
+        // degenerate path; multi-agent consumers should use
+        // [`MultiAgentEnvironment::step_multi`] instead.
+        let house = ((action / 2) % NUM_HOUSES as i64) as u8;
+        let mode = (action % 2) as u8;
+        let actions: Vec<[u8; 2]> = (0..self.num_agents).map(|_| [house, mode]).collect();
+        let r = BucketBrigadeMaEnv::step(self, &actions);
+        StepResult {
+            observation: r.observations.into_iter().next().unwrap_or_default(),
+            reward: r.rewards.first().copied().unwrap_or(0.0),
+            terminated: r.done,
+            truncated: false,
+            info: StepInfo::default(),
+        }
+    }
+
+    fn observation_space(&self) -> SpaceInfo {
+        SpaceInfo { shape: vec![self.obs_dim()], space_type: SpaceType::Box }
+    }
+
+    fn action_space(&self) -> SpaceInfo {
+        // Cartesian-product flattening for the single-agent surface only.
+        SpaceInfo { shape: vec![], space_type: SpaceType::Discrete(NUM_HOUSES * 2) }
+    }
+
+    fn render(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn close(&mut self) {}
+}
+
+// -------- Multi-agent factored action surface --------
+impl MultiAgentEnvironment for BucketBrigadeMaEnv {
+    fn num_agents(&self) -> usize {
+        self.num_agents
+    }
+
+    fn get_agent_observation(&self, agent_id: usize) -> Vec<f32> {
+        flatten_observation(&self.inner.get_observation(agent_id))
+    }
+
+    fn agent_action_space(&self, _agent_id: usize) -> Vec<usize> {
+        // Factored `[house_index, mode]` -- matches
+        // `MultiDiscreteMlpPolicy::action_dims` used by the BB trainer.
+        vec![NUM_HOUSES, 2]
+    }
+
+    fn step_multi(&mut self, actions: &[Vec<i64>]) -> MultiAgentResult {
+        assert_eq!(
+            actions.len(),
+            self.num_agents,
+            "BucketBrigadeMaEnv::step_multi: expected {} actions, got {}",
+            self.num_agents,
+            actions.len()
+        );
+
+        let inner_actions: Vec<[u8; 2]> = actions
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                assert_eq!(
+                    a.len(),
+                    2,
+                    "BucketBrigadeMaEnv::step_multi: agent {} action must have 2 dims \
+                     ([house_index, mode]), got {}",
+                    i,
+                    a.len()
+                );
+                assert!(
+                    (0..NUM_HOUSES as i64).contains(&a[0]),
+                    "BucketBrigadeMaEnv::step_multi: agent {} house_index {} out of range \
+                     0..{}",
+                    i,
+                    a[0],
+                    NUM_HOUSES
+                );
+                assert!(
+                    a[1] == 0 || a[1] == 1,
+                    "BucketBrigadeMaEnv::step_multi: agent {} mode {} must be 0 or 1",
+                    i,
+                    a[1]
+                );
+                [a[0] as u8, a[1] as u8]
+            })
+            .collect();
+
+        let result = BucketBrigadeMaEnv::step(self, &inner_actions);
+        let n = self.num_agents;
+        MultiAgentResult::new(
+            result.observations,
+            result.rewards,
+            vec![result.done; n],
+            vec![false; n],
+        )
+    }
+
+    fn active_agents(&self) -> Vec<bool> {
+        // The underlying engine has no per-agent termination signal; either
+        // the whole night is still running or the episode is over.
+        vec![true; self.num_agents]
     }
 }
 
