@@ -74,6 +74,11 @@ pub struct MlpPolicy {
     policy_head: nn::Linear,
     value_head: nn::Linear,
     device: Device,
+    /// Number of discrete actions (cardinality of the policy head's output
+    /// dim). Stored so the trainer can introspect the action shape without
+    /// having to sample a probe action via `get_action` (which would consume
+    /// libtorch RNG draws and shift parity with reference implementations).
+    action_dim: i64,
     config: MlpConfig,
 }
 
@@ -167,7 +172,17 @@ impl MlpPolicy {
         let value_head = nn::linear(&root / "value", config.hidden_dim, 1, output_config);
         let device = vs.device();
 
-        Self { vs, shared, policy_head, value_head, device, config }
+        Self { vs, shared, policy_head, value_head, device, action_dim, config }
+    }
+
+    /// Number of discrete actions (the cardinality of the policy head's
+    /// output dimension).
+    ///
+    /// This is the value passed as `action_dim` at construction. Exposed so
+    /// callers can size action buffers / one-hot encodings without consulting
+    /// the var-store or sampling a probe action.
+    pub fn action_dim(&self) -> i64 {
+        self.action_dim
     }
 
     /// Forward pass: compute action logits and values
