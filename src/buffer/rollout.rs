@@ -36,7 +36,7 @@ impl RolloutBuffer {
     /// This is a convenience method that calls the module-level function.
     ///
     /// # Arguments
-    /// * `last_values` - Value estimates for the final states [num_envs]
+    /// * `last_values` - Value estimates for the final states `[num_envs]`
     /// * `gamma` - Discount factor
     /// * `gae_lambda` - GAE lambda parameter
     pub fn compute_advantages(&mut self, last_values: &[f32], gamma: f32, gae_lambda: f32) {

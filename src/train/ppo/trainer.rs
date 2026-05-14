@@ -82,12 +82,12 @@ impl<P> PPOTrainer<P> {
     ///
     /// # Arguments
     ///
-    /// * `observations` - Observation tensor [batch_size, obs_dim]
-    /// * `actions` - Action tensor [batch_size]
-    /// * `old_log_probs` - Old log probabilities [batch_size]
-    /// * `old_values` - Old value estimates [batch_size]
-    /// * `advantages` - Computed advantages [batch_size]
-    /// * `returns` - Computed returns [batch_size]
+    /// * `observations` - Observation tensor `[batch_size, obs_dim]`
+    /// * `actions` - Action tensor `[batch_size]`
+    /// * `old_log_probs` - Old log probabilities `[batch_size]`
+    /// * `old_values` - Old value estimates `[batch_size]`
+    /// * `advantages` - Computed advantages `[batch_size]`
+    /// * `returns` - Computed returns `[batch_size]`
     /// * `forward_fn` - Function that performs forward pass through policy
     ///
     /// # Returns
@@ -330,12 +330,12 @@ impl<P> PPOTrainer<P> {
     /// # Arguments
     ///
     /// * `policy` - Policy to evaluate
-    /// * `observations` - Observation tensor [batch_size, obs_dim]
-    /// * `actions` - Action tensor [batch_size]
-    /// * `old_log_probs` - Old log probabilities [batch_size]
-    /// * `old_values` - Old value estimates [batch_size]
-    /// * `advantages` - Computed advantages [batch_size]
-    /// * `returns` - Computed returns [batch_size]
+    /// * `observations` - Observation tensor `[batch_size, obs_dim]`
+    /// * `actions` - Action tensor `[batch_size]`
+    /// * `old_log_probs` - Old log probabilities `[batch_size]`
+    /// * `old_values` - Old value estimates `[batch_size]`
+    /// * `advantages` - Computed advantages `[batch_size]`
+    /// * `returns` - Computed returns `[batch_size]`
     /// * `evaluate_fn` - Function that evaluates policy at (obs, actions)
     ///
     /// # Returns

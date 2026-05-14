@@ -2,7 +2,7 @@
 //!
 //! This module provides two complementary multi-agent training architectures:
 //!
-//! ## 1. Per-thread independent learners ([`PolicyLearner`], [`Population`], [`GameSimulator`])
+//! ## 1. Per-thread independent learners ([`crate::multi_agent::learner::PolicyLearner`], [`crate::multi_agent::population::Population`], [`crate::multi_agent::simulator::GameSimulator`])
 //!
 //! Each agent runs in its own learner thread and updates from a shared rollout
 //! pool. Good for league play, self-play, evolutionary tournaments, and any
@@ -14,7 +14,7 @@
 //! - **PolicyLearner**: Per-agent training thread with PPO
 //! - **Matchmaker**: Strategy for assigning agents to games
 //!
-//! ## 2. Synchronized joint trainer ([`joint::JointMultiAgentTrainer`])
+//! ## 2. Synchronized joint trainer ([`crate::multi_agent::joint::JointMultiAgentTrainer`])
 //!
 //! A single process owns `N` policies and `N` optimizers and runs them in
 //! lockstep on a shared rollout buffer. Required when the loss function
@@ -24,7 +24,8 @@
 //! every agent's encoder through the auxiliary term while leaving per-agent
 //! gradient updates isolated (each optimizer reads only its own var-store).
 //!
-//! See [`joint`] for the detailed semantics and acceptance criteria.
+//! See [`crate::multi_agent::joint`] for the detailed semantics and acceptance
+//! criteria.
 
 pub mod environment;
 pub mod joint;

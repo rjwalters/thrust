@@ -10,10 +10,11 @@
 //! inflates the policy head dimension multiplicatively and discards the
 //! factorization structure PPO can exploit.
 //!
-//! This module provides the multi-discrete analogue of [`MlpPolicy`]: a
-//! shared trunk plus one [`nn::Linear`] action head per dimension. Per-step
-//! log-probs are summed across dims (treating the dims as conditionally
-//! independent), and per-step entropies are averaged.
+//! This module provides the multi-discrete analogue of
+//! [`crate::policy::mlp::MlpPolicy`]: a shared trunk plus one [`nn::Linear`]
+//! action head per dimension. Per-step log-probs are summed across dims
+//! (treating the dims as conditionally independent), and per-step entropies are
+//! averaged.
 //!
 //! # Architecture
 //!

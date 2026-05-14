@@ -11,7 +11,7 @@
 ///
 /// # Arguments
 /// * `buffer` - Rollout buffer to compute advantages for
-/// * `last_values` - Value estimates for the final states [num_envs]
+/// * `last_values` - Value estimates for the final states `[num_envs]`
 /// * `gamma` - Discount factor (0 < gamma <= 1)
 /// * `gae_lambda` - GAE lambda parameter (0 < lambda <= 1)
 ///
@@ -136,7 +136,7 @@ fn compute_gae_single_env(
 ///
 /// # Arguments
 /// * `buffer` - Rollout buffer to compute returns for
-/// * `last_values` - Value estimates for final states [num_envs]
+/// * `last_values` - Value estimates for final states `[num_envs]`
 /// * `gamma` - Discount factor
 pub fn compute_nstep_returns(
     buffer: &mut super::storage::RolloutBuffer,

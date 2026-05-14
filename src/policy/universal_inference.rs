@@ -302,7 +302,7 @@ impl Layer {
 /// Multi-dimensional tensor representation for intermediate activations
 #[derive(Debug, Clone)]
 pub enum Tensor {
-    /// 1D tensor [size]
+    /// 1D tensor `[size]`
     D1(Vec<f32>),
     /// 3D tensor [channels, height, width]
     D3(Vec<Vec<Vec<f32>>>),
