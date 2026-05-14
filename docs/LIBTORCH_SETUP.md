@@ -1,188 +1,186 @@
 # LibTorch Setup Guide
 
-This guide covers installing LibTorch (PyTorch C++ backend) for use with tch-rs.
+This guide covers installing LibTorch (PyTorch C++ backend) for use with
+`tch-rs` in Thrust. The current pinned versions (per `Cargo.toml` and
+`VERSIONS.md`) are:
 
-## Quick Install (macOS)
+- **`tch-rs`**: `0.22.x`
+- **LibTorch / PyTorch**: `2.9.x`
 
-### Option 1: Homebrew (Recommended for macOS)
+> **Heads up (macOS)**: `brew install pytorch` is **no longer the recommended
+> path**. The Homebrew bottle links libtorch against specific minor versions
+> of `protobuf` / `abseil` that drift out of sync with current Homebrew the
+> moment any of them updates, producing `dyld: Library not loaded:
+> libprotobuf.33.0.0.dylib` and similar errors at runtime. The two
+> recommended paths below both sidestep Homebrew entirely.
+
+## Quick Install (Recommended): pip torch in a venv
+
+This pattern is identical to what the Linux GPU box uses and is immune to
+Homebrew bottle drift on macOS because the pip wheel ships its own bundled
+deps.
 
 ```bash
-# Install PyTorch via Homebrew (includes libtorch)
-brew install pytorch
+# One-shot: creates ./venv, pip installs torch>=2.9, writes .envrc.libtorch
+./scripts/setup-libtorch.sh
 
-# Set environment variable to use the Homebrew PyTorch
-export LIBTORCH_USE_PYTORCH=1
+# Load the env into your current shell (the script prints the exact exports
+# it wrote; you can either source the file or copy the block into ~/.zshrc):
+source .envrc.libtorch
 
-# Add to your shell profile (~/.zshrc or ~/.bashrc)
-echo 'export LIBTORCH_USE_PYTORCH=1' >> ~/.zshrc
-
-# Reload shell
-source ~/.zshrc
+# Verify cargo can find libtorch:
+cargo check --features training
 ```
 
-That's it! Now `tch-rs` will automatically use the Homebrew-installed PyTorch.
-
-### Option 2: Download Pre-built LibTorch
+The wrapper scripts auto-detect `./venv` so you typically don't need to
+re-source on each invocation:
 
 ```bash
-# Download LibTorch (CPU version for macOS)
-cd /tmp
-wget https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-2.1.2.zip
-# Or for x86:
-# wget https://download.pytorch.org/libtorch/cpu/libtorch-macos-x86_64-2.1.2.zip
-
-# Extract
-unzip libtorch-macos-*.zip
-
-# Move to a permanent location
-sudo mv libtorch /usr/local/
-
-# Set environment variable
-export LIBTORCH=/usr/local/libtorch
-export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
-export DYLD_LIBRARY_PATH=${LIBTORCH}/lib:$DYLD_LIBRARY_PATH
-
-# Add to your shell profile (~/.zshrc or ~/.bashrc)
-echo 'export LIBTORCH=/usr/local/libtorch' >> ~/.zshrc
-echo 'export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH' >> ~/.zshrc
-echo 'export DYLD_LIBRARY_PATH=${LIBTORCH}/lib:$DYLD_LIBRARY_PATH' >> ~/.zshrc
+./scripts/test.sh                    # cargo test, with libtorch env
+./scripts/check.sh                   # fmt + clippy + test
+./scripts/train-cpu.sh train_cartpole
+./scripts/train-gpu.sh train_cartpole   # Linux + NVIDIA only
 ```
 
-### Option 3: Use Existing PyTorch Installation
-
-If you already have PyTorch installed via pip/conda:
+### What the venv path sets under the hood
 
 ```bash
-# Find your PyTorch installation
-python3 -c "import torch; print(torch.__path__[0])"
-
-# Set LIBTORCH_USE_PYTORCH
-export LIBTORCH_USE_PYTORCH=1
-
-# Add to shell profile
-echo 'export LIBTORCH_USE_PYTORCH=1' >> ~/.zshrc
+source venv/bin/activate
+export LIBTORCH_USE_PYTORCH=1                 # tch-rs reads torch from python pkg
+export LIBTORCH_BYPASS_VERSION_CHECK=1        # tch is overly strict on patch versions
+# macOS:
+export DYLD_LIBRARY_PATH="$(python3 -c 'import torch, os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))'):${DYLD_LIBRARY_PATH:-}"
+# Linux:
+export LD_LIBRARY_PATH="$(python3 -c 'import torch, os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))'):${LD_LIBRARY_PATH:-}"
 ```
 
-## Quick Install (Linux)
+> **macOS note**: macOS uses `DYLD_LIBRARY_PATH`, NOT `LD_LIBRARY_PATH`.
+> On SIP-enabled systems, `DYLD_LIBRARY_PATH` is stripped from child
+> processes of system binaries, but `cargo` / `rustc` / examples spawned
+> by them are unaffected in practice.
+
+## Alternative: Download self-contained libtorch (no Python)
+
+If you want to avoid Python entirely, `pytorch.org` publishes a
+self-contained libtorch zip that bundles its own protobuf / abseil:
 
 ```bash
-# Download LibTorch (choose your CUDA version or CPU)
-cd /tmp
+./scripts/download-libtorch.sh           # default: 2.9.0 CPU, current arch
 
-# CPU version:
-wget https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.1.2%2Bcpu.zip
+# Or pick a different version / CUDA tag:
+PYTORCH_VERSION=2.9.0 CUDA_TAG=cu121 ./scripts/download-libtorch.sh
+```
 
-# CUDA 11.8:
-# wget https://download.pytorch.org/libtorch/cu118/libtorch-cxx11-abi-shared-with-deps-2.1.2%2Bcu118.zip
+The script writes `./libtorch/` (gitignored) and prints the export block.
+The wrapper scripts auto-detect `./libtorch` as a fallback when `./venv`
+is absent.
 
-# CUDA 12.1:
-# wget https://download.pytorch.org/libtorch/cu121/libtorch-cxx11-abi-shared-with-deps-2.1.2%2Bcu121.zip
+Manual install:
 
-# Extract
-unzip libtorch-*.zip
+```bash
+# macOS arm64:
+curl -L https://download.pytorch.org/libtorch/cpu/libtorch-macos-arm64-2.9.0.zip -o /tmp/libtorch.zip
+# macOS x86_64:
+# curl -L https://download.pytorch.org/libtorch/cpu/libtorch-macos-x86_64-2.9.0.zip -o /tmp/libtorch.zip
+# Linux x86_64 CPU:
+# curl -L 'https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.9.0%2Bcpu.zip' -o /tmp/libtorch.zip
 
-# Move to permanent location
-sudo mv libtorch /usr/local/
-
-# Set environment variables
-export LIBTORCH=/usr/local/libtorch
-export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
-
-# Add to shell profile
-echo 'export LIBTORCH=/usr/local/libtorch' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+unzip /tmp/libtorch.zip -d "$(pwd)"
+export LIBTORCH="$(pwd)/libtorch"
+export DYLD_LIBRARY_PATH="$LIBTORCH/lib:${DYLD_LIBRARY_PATH:-}"   # macOS
+# export LD_LIBRARY_PATH="$LIBTORCH/lib:${LD_LIBRARY_PATH:-}"      # Linux
 ```
 
 ## Verify Installation
 
 ```bash
-# Check that libtorch is accessible
-ls $LIBTORCH/lib/
+# Cargo should compile and start linking torch-sys:
+cargo check --features training
 
-# Try building thrust
-cd /path/to/thrust
-cargo check
-
-# Should see: "Compiling tch..." and "Compiling torch-sys..."
+# Full sanity check (runs a minimal training):
+./scripts/train-cpu.sh train_cartpole
 ```
 
 ## Troubleshooting
 
-### Issue: "Cannot find libtorch"
+### `dyld: Library not loaded: .../libprotobuf.33.0.0.dylib` (macOS)
 
-**Solution**: Make sure `LIBTORCH` environment variable is set:
+You almost certainly have `./libtorch/` populated from `brew install pytorch`
+(directly or by a previous version of this repo's setup). Fix:
+
 ```bash
-echo $LIBTORCH
-# Should print: /usr/local/libtorch (or your path)
+rm -rf libtorch venv
+./scripts/setup-libtorch.sh
+source .envrc.libtorch
 ```
 
-### Issue: "dyld: Library not loaded"  (macOS)
+See [issue #8](https://github.com/rjwalters/thrust/issues/8) for the gory
+detail. Short version: Homebrew's pytorch bottle hardcodes the exact SONAME
+of the protobuf / abseil it built against (e.g. `libprotobuf.33.0.0.dylib`),
+and macOS dyld will not relax that to whatever current Homebrew installed.
 
-**Solution**: Add libtorch to dynamic library path:
+### `dyld: Library not loaded: .../libabsl_log_internal_check_op.2508.0.0.dylib`
+
+Same root cause as above. Same fix.
+
+### `error: linking with `cc` failed: ... -ltorch ...`
+
+`LIBTORCH` is set but the path is wrong, or `LIBTORCH_USE_PYTORCH` is not
+exported. Re-source the env:
+
 ```bash
-export DYLD_LIBRARY_PATH=${LIBTORCH}/lib:$DYLD_LIBRARY_PATH
+source .envrc.libtorch     # if you used the venv path
+# OR
+export LIBTORCH="$(pwd)/libtorch"   # if you used download-libtorch.sh
 ```
 
-### Issue: "error while loading shared libraries" (Linux)
+### `error while loading shared libraries` (Linux)
 
-**Solution**: Update LD_LIBRARY_PATH:
+Update `LD_LIBRARY_PATH`:
+
 ```bash
-export LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
-# Or add to /etc/ld.so.conf.d/libtorch.conf and run ldconfig
+export LD_LIBRARY_PATH="$LIBTORCH/lib:$LD_LIBRARY_PATH"
+# Or persistently: add a file under /etc/ld.so.conf.d/ and run ldconfig
 ```
 
-### Issue: CUDA version mismatch
+### CUDA version mismatch (Linux GPU)
 
-**Solution**: Download the correct LibTorch version matching your CUDA installation:
+The pip wheel installed by `scripts/setup-libtorch.sh` matches the system
+CUDA in most cases. If not, override the index URL:
+
 ```bash
-# Check your CUDA version
-nvcc --version
-
-# Download matching LibTorch (11.8, 12.1, etc.)
+source venv/bin/activate
+pip install torch==2.9.0+cu121 --index-url https://download.pytorch.org/whl/cu121
 ```
+
+### "tch version doesn't match" panic
+
+Set `LIBTORCH_BYPASS_VERSION_CHECK=1` (the wrapper scripts already do this).
+`tch-rs` is overly strict on patch versions; the actual ABI is stable
+across patch releases of the same minor PyTorch version.
 
 ## Version Compatibility
 
-| Rust tch-rs | LibTorch | PyTorch |
-|-------------|----------|---------|
-| 0.16.x      | 2.1.x    | 2.1.x   |
-| 0.17.x      | 2.2.x    | 2.2.x   |
+| Rust `tch-rs` | LibTorch / PyTorch | Notes |
+|---------------|--------------------|-------|
+| `0.15.x`      | `2.2.x`            | Older GPU recipe (see `VERSIONS.md`) |
+| `0.22.x`      | `2.9.x`            | Current pin (`Cargo.toml`) |
 
-**Recommendation**: Use LibTorch 2.1.2 with tch-rs 0.16 for maximum compatibility.
-
-## Alternative: Docker
-
-If you prefer a containerized setup:
+## Docker (optional)
 
 ```dockerfile
 FROM rust:latest
-
-# Install LibTorch
-RUN cd /tmp && \
-    wget https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.1.2%2Bcpu.zip && \
-    unzip libtorch-*.zip && \
-    mv libtorch /usr/local/
-
-ENV LIBTORCH=/usr/local/libtorch
-ENV LD_LIBRARY_PATH=${LIBTORCH}/lib:$LD_LIBRARY_PATH
-
-# Build thrust
+RUN apt-get update && apt-get install -y python3 python3-venv python3-pip unzip curl
 WORKDIR /workspace
 COPY . .
-RUN cargo build --release
+RUN ./scripts/setup-libtorch.sh
+# `setup-libtorch.sh` wrote .envrc.libtorch -- source it before cargo:
+RUN bash -c 'source .envrc.libtorch && cargo build --release --features training'
 ```
-
-## Next Steps
-
-Once LibTorch is installed:
-
-1. Uncomment `tch = "0.16"` in `Cargo.toml`
-2. Uncomment the full MLP implementation in `src/policy/mlp.rs`
-3. Run `cargo check` to verify
-4. Run `cargo test` to test the policy
 
 ## References
 
-- [tch-rs Repository](https://github.com/LaurentMazare/tch-rs)
-- [PyTorch Downloads](https://pytorch.org/get-started/locally/)
-- [LibTorch C++ Documentation](https://pytorch.org/cppdocs/)
+- [tch-rs repository](https://github.com/LaurentMazare/tch-rs)
+- [PyTorch downloads](https://pytorch.org/get-started/locally/)
+- [LibTorch C++ docs](https://pytorch.org/cppdocs/)
+- [Issue #8 — Homebrew bottle drift root cause](https://github.com/rjwalters/thrust/issues/8)

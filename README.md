@@ -118,15 +118,29 @@ Thrust is inspired by:
 
 ## 🚀 Quick Start
 
-### GPU Training
-
-Train agents with CUDA acceleration:
+### Local Development (macOS / Linux CPU)
 
 ```bash
-# Install PyTorch with CUDA support
+# One-shot: creates ./venv, installs PyTorch >=2.9, writes .envrc.libtorch
 ./scripts/setup-libtorch.sh
+source .envrc.libtorch
 
-# Train CartPole agent
+# Build and run a CartPole training (CPU)
+./scripts/train-cpu.sh train_cartpole
+```
+
+> **macOS users:** do NOT `brew install pytorch`. The Homebrew bottle is
+> fragile against Homebrew's own dep updates and produces `dyld: Library
+> not loaded: ...libprotobuf.*.dylib` errors. The script above uses pip
+> torch in a venv, which bundles its own protobuf / abseil and is immune
+> to that problem. See [docs/LIBTORCH_SETUP.md](docs/LIBTORCH_SETUP.md).
+
+### GPU Training (Linux + NVIDIA)
+
+Train agents with CUDA acceleration on a Linux GPU box:
+
+```bash
+./scripts/setup-libtorch.sh                  # auto-detects NVIDIA GPU
 ./scripts/train-gpu.sh train_cartpole_best
 ```
 
