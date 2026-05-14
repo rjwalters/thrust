@@ -23,7 +23,10 @@ jobs:
         with:
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        # NB: do not use --all -- that descends into path-dep submodules
+        # (envs/bucket-brigade/) which have their own upstream rustfmt config
+        # and cannot be reformatted from this repo.
+        run: cargo fmt -- --check
 
   # Cheap "does it parse" check without libtorch.
   # `--no-default-features` drops the `training` feature (and thus `tch`).

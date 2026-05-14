@@ -1,3 +1,13 @@
 [toolchain]
+# Nightly is required because:
+#   - the crate uses `edition = "2024"`
+#   - `rustfmt.toml` uses nightly-only options (`imports_granularity`, `group_imports`)
+#   - `tch` 0.22 / PyTorch 2.9 expect nightly features
+#
+# Components (rustfmt, clippy) are intentionally NOT listed here so this file
+# composes cleanly with `dtolnay/rust-toolchain@nightly` in CI (which installs
+# `rustfmt-preview` -- listing `rustfmt` here causes rustup to try to install
+# the stable variant of the same component and fail with a `bin/cargo-fmt`
+# conflict). On a developer machine, `rustup component add rustfmt clippy
+# --toolchain nightly` once is sufficient.
 channel = "nightly"
-components = ["rustfmt", "clippy"]
