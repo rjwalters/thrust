@@ -166,10 +166,17 @@ where
                     values.push(value_val as f32);
                 }
 
-                // Step environment with all actions
-                // Convert Vec<i64> to Vec<E::Action> if needed
-                // For now, assume E::Action = i64 (discrete action spaces)
-                let result = env.step_multi(&actions);
+                // Step environment with all actions.
+                //
+                // The simulator's `Experience::action` is a scalar `i64`, so
+                // for now we only drive pure-discrete agents through the
+                // `MultiAgentEnvironment` trait. Each scalar action is wrapped
+                // in a length-1 `Vec<i64>` to match the multi-discrete trait
+                // signature. End-to-end multi-discrete support (widening
+                // `Experience::action` to `Vec<i64>`) is tracked separately
+                // -- see issue #3 scope notes.
+                let actions_md: Vec<Vec<i64>> = actions.iter().map(|&a| vec![a]).collect();
+                let result = env.step_multi(&actions_md);
 
                 // Send experiences to learners
                 for (i, &agent_id) in agent_ids.iter().enumerate() {
@@ -261,50 +268,76 @@ mod tests {
         multi_agent::{environment::MultiAgentResult, population::PopulationConfig},
     };
 
-    #[derive(Clone)]
-    struct MockObs;
+    /// Minimal `Environment` impl for tests.
+    ///
+    /// `num_agents` is fixed at 4 and each agent observes a 4-dim zero vector.
+    struct MockEnv {
+        num_agents: usize,
+        obs_dim: usize,
+    }
 
-    struct MockEnv;
+    impl MockEnv {
+        fn new() -> Self {
+            Self { num_agents: 4, obs_dim: 4 }
+        }
+    }
 
     impl Environment for MockEnv {
-        type Observation = MockObs;
-        type Action = i64;
+        fn reset(&mut self) {}
 
-        fn reset(&mut self) -> Result<Self::Observation> {
-            Ok(MockObs)
+        fn get_observation(&self) -> Vec<f32> {
+            vec![0.0; self.obs_dim]
         }
 
-        fn step(&mut self, _action: Self::Action) -> Result<StepResult<Self::Observation>> {
-            Ok(StepResult {
-                observation: MockObs,
+        fn step(&mut self, _action: i64) -> StepResult {
+            StepResult {
+                observation: vec![0.0; self.obs_dim],
                 reward: 0.0,
                 terminated: false,
                 truncated: false,
                 info: StepInfo::default(),
-            })
+            }
         }
 
         fn observation_space(&self) -> SpaceInfo {
-            SpaceInfo { shape: vec![], dtype: SpaceType::Discrete(2) }
+            SpaceInfo { shape: vec![self.obs_dim], space_type: SpaceType::Box }
         }
 
         fn action_space(&self) -> SpaceInfo {
-            SpaceInfo { shape: vec![], dtype: SpaceType::Discrete(2) }
+            SpaceInfo { shape: vec![], space_type: SpaceType::Discrete(2) }
         }
+
+        fn render(&self) -> Vec<u8> {
+            Vec::new()
+        }
+
+        fn close(&mut self) {}
     }
 
     impl MultiAgentEnvironment for MockEnv {
         fn num_agents(&self) -> usize {
-            4
+            self.num_agents
         }
 
-        fn get_observation(&self, _agent_id: usize) -> Self::Observation {
-            MockObs
+        fn get_agent_observation(&self, _agent_id: usize) -> Vec<f32> {
+            vec![0.0; self.obs_dim]
         }
 
-        fn step_multi(&mut self, actions: &[Self::Action]) -> MultiAgentResult<Self> {
+        fn agent_action_space(&self, _agent_id: usize) -> Vec<usize> {
+            // Pure-discrete agent with 2 choices: a single action dim.
+            vec![2]
+        }
+
+        fn step_multi(&mut self, actions: &[Vec<i64>]) -> MultiAgentResult {
+            assert_eq!(
+                actions.len(),
+                self.num_agents,
+                "MockEnv::step_multi: expected {} actions, got {}",
+                self.num_agents,
+                actions.len()
+            );
             MultiAgentResult::new(
-                vec![MockObs; actions.len()],
+                vec![vec![0.0; self.obs_dim]; actions.len()],
                 vec![1.0; actions.len()],
                 vec![false; actions.len()],
                 vec![false; actions.len()],
@@ -312,7 +345,7 @@ mod tests {
         }
 
         fn active_agents(&self) -> Vec<bool> {
-            vec![true; 4]
+            vec![true; self.num_agents]
         }
     }
 
@@ -327,7 +360,7 @@ mod tests {
         let (_policy_sender, policy_receiver) = crossbeam_channel::unbounded();
 
         let _simulator = GameSimulator::new(
-            &|| MockEnv,
+            &MockEnv::new,
             4, // num_envs
             population,
             matchmaker,
@@ -335,5 +368,23 @@ mod tests {
             exp_senders,
             policy_receiver,
         );
+    }
+
+    #[test]
+    fn test_mock_env_step_multi_shape() {
+        // Sanity check that the test mock satisfies the trait contract:
+        // each agent's action vec has length 1 (pure-discrete) and the
+        // result has one entry per agent.
+        let mut env = MockEnv::new();
+        let actions: Vec<Vec<i64>> = (0..env.num_agents()).map(|_| vec![0]).collect();
+        let result = env.step_multi(&actions);
+        assert_eq!(result.rewards.len(), env.num_agents());
+        assert_eq!(result.observations.len(), env.num_agents());
+        for obs in &result.observations {
+            assert_eq!(obs.len(), 4);
+        }
+        for aid in 0..env.num_agents() {
+            assert_eq!(env.agent_action_space(aid), vec![2]);
+        }
     }
 }

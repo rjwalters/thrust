@@ -12,6 +12,20 @@ use crate::env::Environment;
 /// Environments implementing this trait support multiple agents interacting
 /// in the same game instance, enabling cooperative, competitive, and
 /// mixed-motive scenarios.
+///
+/// # Multi-discrete action spaces
+///
+/// This trait supports both pure-discrete and *factored* (multi-discrete)
+/// action spaces. Each agent's action is a `Vec<i64>` whose length equals the
+/// number of action dimensions for that agent:
+///
+/// - Pure-discrete agent with `n` choices: action vector has length 1
+///   (e.g. `vec![3]` to pick action `3`).
+/// - Factored Bucket-Brigade agent with `[house_index, mode]`: action vector
+///   has length 2 (e.g. `vec![7, 1]` for "house 7, mode 1").
+///
+/// The per-agent layout is published via
+/// [`agent_action_space`](MultiAgentEnvironment::agent_action_space).
 pub trait MultiAgentEnvironment: Environment {
     /// Number of agents in this environment
     fn num_agents(&self) -> usize;
@@ -23,17 +37,32 @@ pub trait MultiAgentEnvironment: Environment {
     /// * `agent_id` - Index of the agent (0 to num_agents - 1)
     fn get_agent_observation(&self, agent_id: usize) -> Vec<f32>;
 
-    /// Step the environment with multiple actions (one per agent)
+    /// Per-agent action-space layout.
+    ///
+    /// Returns one bin count per action dimension for the agent. For a
+    /// pure-discrete agent with `n` choices this is `vec![n]`; for a factored
+    /// Bucket-Brigade agent with `[house_index, mode]` this is `vec![10, 2]`.
+    ///
+    /// The length of this vector must match the length of each per-agent
+    /// action passed to [`step_multi`](MultiAgentEnvironment::step_multi), and
+    /// it must match the `action_dims` of any policy driving this agent.
+    fn agent_action_space(&self, agent_id: usize) -> Vec<usize>;
+
+    /// Step the environment with multiple actions (one per agent).
     ///
     /// # Arguments
     ///
-    /// * `actions` - Slice of actions, one for each agent
+    /// * `actions` - One action vector per agent. `actions.len()` must equal
+    ///   [`num_agents`](MultiAgentEnvironment::num_agents). Each inner
+    ///   `Vec<i64>` carries one entry per action dimension and must match the
+    ///   layout reported by
+    ///   [`agent_action_space`](MultiAgentEnvironment::agent_action_space).
     ///
     /// # Returns
     ///
     /// Multi-agent result containing observations, rewards, and termination
     /// flags for each agent.
-    fn step_multi(&mut self, actions: &[i64]) -> MultiAgentResult;
+    fn step_multi(&mut self, actions: &[Vec<i64>]) -> MultiAgentResult;
 
     /// Get which agents are currently active (not terminated)
     fn active_agents(&self) -> Vec<bool>;
