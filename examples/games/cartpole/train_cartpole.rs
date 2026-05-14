@@ -35,7 +35,7 @@ fn main() -> Result<()> {
     let action_space = env.action_space();
 
     let obs_dim = obs_space.shape[0] as i64;
-    let action_dim = match action_space.dtype {
+    let action_dim = match action_space.space_type {
         thrust_rl::env::SpaceType::Discrete(n) => n as i64,
         _ => panic!("Expected discrete action space"),
     };
@@ -110,7 +110,7 @@ fn main() -> Result<()> {
                 buffer.add(
                     step,
                     env_id,
-                    observations[env_id].clone(),
+                    &observations[env_id],
                     actions_vec[env_id],
                     results[env_id].reward,
                     values_vec[env_id],

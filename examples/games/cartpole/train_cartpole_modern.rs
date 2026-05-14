@@ -259,6 +259,7 @@ fn main() -> Result<()> {
         environment: "CartPole-v1".to_string(),
         algorithm: "PPO (Proximal Policy Optimization)".to_string(),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        hyperparameters: None,
         notes: Some(format!(
             "Modern RL training: ReLU activation, 128 hidden units, n_steps=256, lr=0.0003->0 (linear decay), \
              no obs normalization (inference compatible). \
