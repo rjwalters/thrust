@@ -47,8 +47,11 @@ pub struct PolicyLearner {
     model_save_dir: String,
 
     /// Index into the rollout buffer for the next experience to be inserted.
-    /// Wraps modulo `config.buffer_size` and is reset to 0 after each
-    /// `train()` cycle (when the buffer is cleared via `reset`).
+    /// Monotonically increments as experiences are ingested and is reset
+    /// to 0 after each successful `train()` cycle. The collection loop
+    /// bounds it above by `config.buffer_size`, so it is always in
+    /// `0..=config.buffer_size`. Doubles as the canonical fill count
+    /// (`RolloutBuffer::len()` returns capacity, not fill).
     buffer_step_idx: usize,
 
     /// Snapshot of the most recently received experience for the current
@@ -137,8 +140,16 @@ impl PolicyLearner {
             //      true`), `V(s_{T+1}) = 0`.
             //    - Otherwise (truncation / buffer-full), bootstrap with `V(s_{T+1})` from
             //      the current policy, computed under `no_grad`.
+            //
+            //    Restrict the GAE backward iteration to the filled prefix
+            //    (`buffer_step_idx` rows). Otherwise the unwritten tail —
+            //    zero rewards, zero values, `terminated == false` — would
+            //    propagate `γ^k * last_value` backward through the padding
+            //    into the real rows, corrupting advantages on the actual
+            //    data.
             let last_values = self.compute_bootstrap_last_values();
-            self.buffer.compute_advantages(
+            self.buffer.compute_advantages_partial(
+                self.buffer_step_idx,
                 &last_values,
                 self.config.gamma as f32,
                 self.config.gae_lambda as f32,
@@ -290,8 +301,12 @@ impl PolicyLearner {
 
     /// Run PPO training step
     fn train_step(&mut self) -> Result<TrainingStats> {
-        // Get batch from buffer
-        let batch = self.buffer.get_batch();
+        // Get batch from the filled prefix of the buffer. `RolloutBuffer`
+        // pre-allocates its full capacity at construction, so calling
+        // `get_batch()` here would include zero-padded unwritten rows
+        // when the rollout ended before `buffer_size` (early-terminating
+        // episode, truncation, etc.) and feed fake transitions to PPO.
+        let batch = self.buffer.get_filled_batch(self.buffer_step_idx);
 
         // Convert Vec data to Tensors
         let device = self.trainer.policy().device();
@@ -585,6 +600,120 @@ mod tests {
         );
         let stats = learner.train_step().expect("train_step should run end-to-end");
         // Loss values must be finite (no NaN/Inf).
+        assert!(stats.total_loss.is_finite(), "total_loss must be finite");
+        assert!(stats.policy_loss.is_finite(), "policy_loss must be finite");
+        assert!(stats.value_loss.is_finite(), "value_loss must be finite");
+    }
+
+    /// Regression test for issue #28: `PolicyLearner::train_step` must not
+    /// consume zero-padded unwritten rows from `RolloutBuffer`, and the
+    /// preceding GAE pass must not walk backward through them either.
+    ///
+    /// With `buffer_size = 64` and 10 ingested experiences, the PPO batch
+    /// must contain exactly 10 rows — not 64. The strongest single signal
+    /// is that every batch entry's `old_log_prob` equals the sentinel
+    /// value (`-0.69`) we send through the channel, since the buffer's
+    /// storage default is `0.0`. If any zero-padded row leaked into the
+    /// batch, that assertion would fail.
+    #[test]
+    fn test_train_step_does_not_zero_pad_partial_rollout() {
+        let obs_dim: usize = 4;
+        let action_dim: i64 = 2;
+        let policy = MlpPolicy::new(obs_dim as i64, action_dim, 16);
+
+        let (exp_sender, exp_receiver) = crossbeam_channel::unbounded();
+        let (policy_sender, _policy_receiver) = crossbeam_channel::unbounded();
+
+        let config = LearnerConfig {
+            obs_dim,
+            buffer_size: 64,
+            min_batch_size: 4,
+            n_epochs: 1,
+            ..LearnerConfig::default()
+        };
+
+        let mut learner =
+            PolicyLearner::new(0, policy, exp_receiver, policy_sender, config, "/tmp".to_string())
+                .expect("learner construction should succeed");
+
+        // Ingest exactly 10 experiences (well under buffer_size = 64).
+        // Each experience carries the sentinel log_prob `-0.69`, distinct
+        // from the storage default of `0.0`.
+        let n_exp = 10usize;
+        let sentinel_log_prob: f32 = -0.69;
+        for i in 0..n_exp {
+            let obs = Tensor::ones([obs_dim as i64], (Kind::Float, tch::Device::Cpu));
+            let next_obs = Tensor::ones([obs_dim as i64], (Kind::Float, tch::Device::Cpu));
+            let terminated = i == n_exp - 1;
+            let exp = Experience::new(
+                0,
+                obs,
+                (i % action_dim as usize) as i64,
+                1.0,
+                next_obs,
+                terminated,
+                false,
+                0.5,
+                sentinel_log_prob,
+            );
+            exp_sender.send(exp).expect("channel send should succeed");
+        }
+        // Drop sender so `collect_experiences` times out instead of
+        // blocking after consuming the queue.
+        drop(exp_sender);
+
+        learner.collect_experiences().expect("collect_experiences should not error");
+        assert_eq!(
+            learner.buffer_step_idx, n_exp,
+            "buffer_step_idx must reflect every received experience"
+        );
+
+        // Run partial-fill GAE on just the filled prefix. Bootstrap value
+        // is 0.0 because the final experience is terminal.
+        let last_values = learner.compute_bootstrap_last_values();
+        learner.buffer.compute_advantages_partial(
+            learner.buffer_step_idx,
+            &last_values,
+            learner.config.gamma as f32,
+            learner.config.gae_lambda as f32,
+        );
+
+        // Core assertion: the batch consumed by PPO is sized to the
+        // filled prefix, not to buffer capacity.
+        let batch = learner.buffer.get_filled_batch(learner.buffer_step_idx);
+        assert_eq!(batch.actions.len(), n_exp, "batch must contain only filled rows");
+        assert_eq!(batch.old_log_probs.len(), n_exp);
+        assert_eq!(batch.old_values.len(), n_exp);
+        assert_eq!(batch.advantages.len(), n_exp);
+        assert_eq!(batch.returns.len(), n_exp);
+        assert_eq!(batch.observations.len(), n_exp * obs_dim);
+
+        // Sanity: every batch row came from real data — its
+        // `old_log_prob` must equal the sentinel we sent, not the
+        // storage default `0.0`. This is the single strongest signal
+        // that no zero-padded row leaked into the batch.
+        for &lp in &batch.old_log_probs {
+            assert!(
+                (lp - sentinel_log_prob).abs() < 1e-6,
+                "old_log_prob in batch must be real (-0.69), not zero-padded; got {}",
+                lp
+            );
+        }
+
+        // Same sanity check for `old_values` (we sent `0.5`).
+        for &v in &batch.old_values {
+            assert!(
+                (v - 0.5).abs() < 1e-6,
+                "old_value in batch must be real (0.5), not zero-padded; got {}",
+                v
+            );
+        }
+
+        // End-to-end: a full `train_step` on the partial rollout must
+        // produce finite losses. (Bad GAE contamination from padded
+        // rows could in principle push losses to NaN/Inf via outsized
+        // advantage normalization; this is a backstop assertion.)
+        let stats = learner.train_step().expect("train_step end-to-end should not error");
         assert!(stats.total_loss.is_finite(), "total_loss must be finite");
         assert!(stats.policy_loss.is_finite(), "policy_loss must be finite");
         assert!(stats.value_loss.is_finite(), "value_loss must be finite");

@@ -231,8 +231,33 @@ pub struct RolloutBatch {
 
 impl RolloutBatch {
     /// Create a new batch from rollout buffer
+    ///
+    /// Iterates the full `[num_steps, num_envs]` capacity. If the buffer
+    /// was only partially filled, the unwritten tail surfaces as
+    /// zero-initialized rows. Use [`Self::from_buffer_partial`] (or
+    /// [`super::RolloutBuffer::get_filled_batch`]) when the caller
+    /// knows the fill count.
     pub fn from_buffer(buffer: &RolloutBuffer) -> Self {
-        let batch_size = buffer.len();
+        Self::from_buffer_partial(buffer, buffer.num_steps)
+    }
+
+    /// Create a new batch from the first `valid_steps` rows of the buffer.
+    ///
+    /// Rows in `valid_steps..num_steps` (the unfilled tail of a partial
+    /// rollout) are skipped, preventing zero-padded rows from
+    /// contaminating PPO gradients.
+    ///
+    /// # Panics
+    /// Panics if `valid_steps > buffer.num_steps`.
+    pub fn from_buffer_partial(buffer: &RolloutBuffer, valid_steps: usize) -> Self {
+        assert!(
+            valid_steps <= buffer.num_steps,
+            "valid_steps ({}) must not exceed buffer.num_steps ({})",
+            valid_steps,
+            buffer.num_steps
+        );
+
+        let batch_size = valid_steps * buffer.num_envs;
         let obs_size = batch_size * buffer.obs_dim;
 
         let mut observations = Vec::with_capacity(obs_size);
@@ -242,8 +267,8 @@ impl RolloutBatch {
         let mut advantages = Vec::with_capacity(batch_size);
         let mut returns = Vec::with_capacity(batch_size);
 
-        // Flatten all data into 1D arrays
-        for step in 0..buffer.num_steps {
+        // Flatten the filled prefix into 1D arrays
+        for step in 0..valid_steps {
             for env in 0..buffer.num_envs {
                 observations.extend_from_slice(&buffer.observations[step][env]);
                 actions.push(buffer.actions[step][env]);
@@ -332,6 +357,52 @@ mod tests {
         assert_eq!(batch.advantages, vec![0.5, 0.8]);
         assert_eq!(batch.returns, vec![1.3, 2.0]);
         assert_eq!(batch.observations, vec![1.0, 2.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_rollout_batch_from_buffer_partial_skips_unfilled_tail() {
+        // 4-step buffer, single env, only the first 2 rows filled.
+        let mut buffer = RolloutBuffer::new(4, 1, 2);
+
+        buffer.add(0, 0, &[1.0, 2.0], 1, 1.5, 0.8, -0.2, false, false);
+        buffer.add(1, 0, &[2.0, 3.0], 0, 2.0, 1.2, -0.1, false, false);
+        buffer.advantages_mut()[0][0] = 0.5;
+        buffer.returns_mut()[0][0] = 1.3;
+        buffer.advantages_mut()[1][0] = 0.8;
+        buffer.returns_mut()[1][0] = 2.0;
+
+        let batch = RolloutBatch::from_buffer_partial(&buffer, 2);
+
+        // Batch has exactly 2 rows — the zero-initialized tail (rows 2-3)
+        // is skipped.
+        assert_eq!(batch.len(), 2);
+        assert_eq!(batch.actions, vec![1, 0]);
+        assert_eq!(batch.old_values, vec![0.8, 1.2]);
+        assert_eq!(batch.old_log_probs, vec![-0.2, -0.1]);
+        assert_eq!(batch.advantages, vec![0.5, 0.8]);
+        assert_eq!(batch.returns, vec![1.3, 2.0]);
+        assert_eq!(batch.observations, vec![1.0, 2.0, 2.0, 3.0]);
+
+        // `from_buffer` (full capacity) still emits 4 rows; the 2-row
+        // partial batch is a strict subset.
+        let full_batch = RolloutBatch::from_buffer(&buffer);
+        assert_eq!(full_batch.len(), 4);
+    }
+
+    #[test]
+    fn test_rollout_batch_from_buffer_partial_zero_valid() {
+        let buffer = RolloutBuffer::new(4, 2, 3);
+        let batch = RolloutBatch::from_buffer_partial(&buffer, 0);
+        assert!(batch.is_empty());
+        assert_eq!(batch.actions.len(), 0);
+        assert_eq!(batch.observations.len(), 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "valid_steps")]
+    fn test_rollout_batch_from_buffer_partial_panics_on_overflow() {
+        let buffer = RolloutBuffer::new(4, 1, 2);
+        let _ = RolloutBatch::from_buffer_partial(&buffer, 5);
     }
 
     #[test]

@@ -34,9 +34,53 @@ pub fn compute_advantages(
     gamma: f32,
     gae_lambda: f32,
 ) {
+    let num_steps = buffer.shape().0;
+    compute_advantages_partial(buffer, num_steps, last_values, gamma, gae_lambda);
+}
+
+/// Compute Generalized Advantage Estimation (GAE) over the first
+/// `valid_steps` rows of the buffer.
+///
+/// This is the partial-fill counterpart to [`compute_advantages`]. The
+/// backward GAE iteration is restricted to `(0..valid_steps).rev()`, so
+/// zero-padded tail rows (rows in `valid_steps..num_steps`) do not
+/// contaminate the advantage/return signal on the real rows.
+///
+/// `last_values[env_id]` is the bootstrap `V(s_{T+1})` for the state
+/// immediately after row `valid_steps - 1` — exactly the same semantics
+/// as for the full-capacity variant, just anchored to the end of the
+/// filled prefix rather than the end of capacity.
+///
+/// # Arguments
+/// * `buffer` - Rollout buffer to compute advantages for
+/// * `valid_steps` - Number of filled rows at the start of the buffer. Must be
+///   `<= buffer.shape().0`.
+/// * `last_values` - Value estimates for the final states `[num_envs]`
+/// * `gamma` - Discount factor (0 < gamma <= 1)
+/// * `gae_lambda` - GAE lambda parameter (0 < lambda <= 1)
+///
+/// # Panics
+/// Panics if `valid_steps > buffer.shape().0`.
+pub fn compute_advantages_partial(
+    buffer: &mut super::storage::RolloutBuffer,
+    valid_steps: usize,
+    last_values: &[f32],
+    gamma: f32,
+    gae_lambda: f32,
+) {
     let (num_steps, num_envs) = (buffer.shape().0, buffer.shape().1);
 
+    assert!(
+        valid_steps <= num_steps,
+        "valid_steps ({}) must not exceed buffer.num_steps ({})",
+        valid_steps,
+        num_steps
+    );
     debug_assert_eq!(last_values.len(), num_envs, "last_values length mismatch");
+
+    if valid_steps == 0 {
+        return;
+    }
 
     // Collect all immutable data first to avoid borrow checker issues
     let rewards: Vec<Vec<f32>> = buffer.rewards().iter().map(|step| step.to_vec()).collect();
@@ -46,14 +90,18 @@ pub fn compute_advantages(
     // Now we can get mutable access to both advantages and returns
     let (advantages, returns) = buffer.advantages_and_returns_mut();
 
-    // Compute advantages and returns for each environment
+    // Compute advantages and returns for each environment, restricted to
+    // the filled prefix.
     for env_id in 0..num_envs {
-        let env_rewards: Vec<f32> = rewards.iter().map(|step| step[env_id]).collect();
-        let env_values: Vec<f32> = values.iter().map(|step| step[env_id]).collect();
-        let env_terminated: Vec<bool> = terminated.iter().map(|step| step[env_id]).collect();
+        let env_rewards: Vec<f32> =
+            rewards.iter().take(valid_steps).map(|step| step[env_id]).collect();
+        let env_values: Vec<f32> =
+            values.iter().take(valid_steps).map(|step| step[env_id]).collect();
+        let env_terminated: Vec<bool> =
+            terminated.iter().take(valid_steps).map(|step| step[env_id]).collect();
 
-        let mut env_advantages: Vec<f32> = vec![0.0; num_steps];
-        let mut env_returns: Vec<f32> = vec![0.0; num_steps];
+        let mut env_advantages: Vec<f32> = vec![0.0; valid_steps];
+        let mut env_returns: Vec<f32> = vec![0.0; valid_steps];
 
         compute_gae_single_env(
             &env_rewards,
@@ -66,8 +114,8 @@ pub fn compute_advantages(
             &mut env_returns,
         );
 
-        // Copy results back
-        for step in 0..num_steps {
+        // Copy results back into the filled prefix only.
+        for step in 0..valid_steps {
             advantages[step][env_id] = env_advantages[step];
             returns[step][env_id] = env_returns[step];
         }
@@ -239,5 +287,182 @@ pub fn normalize_advantages(buffer: &mut super::storage::RolloutBuffer) {
         for env in 0..num_envs {
             advantages[step][env] = (advantages[step][env] - mean) / std;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffer::rollout::storage::RolloutBuffer;
+
+    /// `compute_advantages_partial` over the first `valid_steps` rows must
+    /// match the values that `compute_advantages` would produce on a
+    /// shorter buffer containing only those rows. This locks in the
+    /// invariant that the partial variant is purely a loop-bound change
+    /// and not a math change.
+    #[test]
+    fn test_compute_advantages_partial_matches_full_on_prefix() {
+        let valid_steps = 3usize;
+        let total_capacity = 8usize;
+        let num_envs = 1usize;
+        let obs_dim = 1usize;
+
+        // Build a full-capacity buffer where rows 0..valid_steps carry
+        // real data and rows valid_steps..total_capacity are left at the
+        // zero-initialized default.
+        let mut partial_buffer = RolloutBuffer::new(total_capacity, num_envs, obs_dim);
+        let rewards = [1.0_f32, 0.5, -0.25];
+        let values = [0.4_f32, 0.6, 0.8];
+        let log_probs = [-0.1_f32, -0.2, -0.3];
+        for step in 0..valid_steps {
+            partial_buffer.add(
+                step,
+                0,
+                &[0.0],
+                0,
+                rewards[step],
+                values[step],
+                log_probs[step],
+                false,
+                false,
+            );
+        }
+
+        // Build a tight buffer with only `valid_steps` rows holding the
+        // same data.
+        let mut tight_buffer = RolloutBuffer::new(valid_steps, num_envs, obs_dim);
+        for step in 0..valid_steps {
+            tight_buffer.add(
+                step,
+                0,
+                &[0.0],
+                0,
+                rewards[step],
+                values[step],
+                log_probs[step],
+                false,
+                false,
+            );
+        }
+
+        let last_values = vec![0.7_f32];
+        let gamma = 0.99_f32;
+        let gae_lambda = 0.95_f32;
+
+        compute_advantages_partial(
+            &mut partial_buffer,
+            valid_steps,
+            &last_values,
+            gamma,
+            gae_lambda,
+        );
+        compute_advantages(&mut tight_buffer, &last_values, gamma, gae_lambda);
+
+        // Filled prefix: partial and tight buffers must agree exactly.
+        for step in 0..valid_steps {
+            let p_adv = partial_buffer.advantages()[step][0];
+            let t_adv = tight_buffer.advantages()[step][0];
+            let p_ret = partial_buffer.returns()[step][0];
+            let t_ret = tight_buffer.returns()[step][0];
+            assert!(
+                (p_adv - t_adv).abs() < 1e-6_f32,
+                "advantage mismatch at step {}: partial={}, tight={}",
+                step,
+                p_adv,
+                t_adv
+            );
+            assert!(
+                (p_ret - t_ret).abs() < 1e-6_f32,
+                "return mismatch at step {}: partial={}, tight={}",
+                step,
+                p_ret,
+                t_ret
+            );
+        }
+
+        // Unwritten tail: advantages and returns must remain at the
+        // zero-initialized default. If `compute_advantages_partial` had
+        // accidentally written into the tail, this would catch it.
+        for step in valid_steps..total_capacity {
+            assert_eq!(partial_buffer.advantages()[step][0], 0.0);
+            assert_eq!(partial_buffer.returns()[step][0], 0.0);
+        }
+    }
+
+    /// Direct regression for the second contamination point flagged on
+    /// issue #28: with the old full-capacity GAE, a partially-filled
+    /// buffer with a non-zero bootstrap propagates `γ^k * last_value`
+    /// backward through the zero-padded tail and into the real prefix.
+    /// `compute_advantages_partial` must not exhibit that behavior.
+    #[test]
+    fn test_compute_advantages_partial_does_not_leak_bootstrap_through_padding() {
+        let valid_steps = 2usize;
+        let total_capacity = 16usize;
+        let num_envs = 1usize;
+
+        let mut buffer = RolloutBuffer::new(total_capacity, num_envs, 1);
+        // Two real rows, neither terminal. With a single step left after
+        // index 1, the bootstrap should hit at row 1 (index valid_steps - 1).
+        buffer.add(0, 0, &[0.0], 0, 0.0, 0.0, 0.0, false, false);
+        buffer.add(1, 0, &[0.0], 0, 0.0, 0.0, 0.0, false, false);
+
+        let bootstrap = 1.0_f32;
+        let last_values = vec![bootstrap];
+        let gamma = 0.99_f32;
+        let gae_lambda = 0.95_f32;
+
+        compute_advantages_partial(&mut buffer, valid_steps, &last_values, gamma, gae_lambda);
+
+        // Expected (closed form, single env, no terminations):
+        //   delta_1 = 0 + γ * bootstrap - 0 = γ * bootstrap
+        //   gae_1   = delta_1                = γ * bootstrap
+        //   delta_0 = 0 + γ * V_1 - 0        = 0  (since V_1 = 0)
+        //   gae_0   = 0 + γ * λ * gae_1      = γ^2 * λ * bootstrap
+        let expected_adv_1 = gamma * bootstrap;
+        let expected_adv_0 = gamma * gamma * gae_lambda * bootstrap;
+
+        let a1 = buffer.advantages()[1][0];
+        let a0 = buffer.advantages()[0][0];
+        assert!(
+            (a1 - expected_adv_1).abs() < 1e-6_f32,
+            "advantage[1] expected {}, got {}",
+            expected_adv_1,
+            a1
+        );
+        assert!(
+            (a0 - expected_adv_0).abs() < 1e-6_f32,
+            "advantage[0] expected {} (γ²λ * bootstrap), got {}. \
+             If this is closer to γ^15 * bootstrap, the GAE iteration is \
+             still walking through padded rows.",
+            expected_adv_0,
+            a0
+        );
+
+        // Tail must stay zero.
+        for step in valid_steps..total_capacity {
+            assert_eq!(buffer.advantages()[step][0], 0.0);
+        }
+    }
+
+    /// `valid_steps == 0` is a defensive edge case — the function should
+    /// be a no-op (no panics, no writes to advantages/returns).
+    #[test]
+    fn test_compute_advantages_partial_zero_valid_is_noop() {
+        let mut buffer = RolloutBuffer::new(4, 1, 1);
+        buffer.add(0, 0, &[0.0], 0, 1.0, 0.5, 0.0, false, false);
+        // Pre-stamp the advantage so we can detect any rogue write.
+        buffer.advantages_mut()[0][0] = 99.0;
+
+        compute_advantages_partial(&mut buffer, 0, &[0.0], 0.99, 0.95);
+
+        assert_eq!(buffer.advantages()[0][0], 99.0);
+    }
+
+    /// Passing `valid_steps > num_steps` must panic with a clear message.
+    #[test]
+    #[should_panic(expected = "valid_steps")]
+    fn test_compute_advantages_partial_panics_on_overflow() {
+        let mut buffer = RolloutBuffer::new(4, 1, 1);
+        compute_advantages_partial(&mut buffer, 5, &[0.0], 0.99, 0.95);
     }
 }
