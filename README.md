@@ -55,7 +55,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 - [x] SimpleBandit environment (contextual bandits)
 
 ### Phase 2: Multi-Agent & WASM (In Progress - 60%)
-- [x] Multi-agent training infrastructure
+- [x] Multi-agent training infrastructure (`multi_agent::PolicyLearner` is experimental — API may change)
 - [x] Population-based training design
 - [x] Pure Rust inference (no PyTorch in production)
 - [x] Universal inference system (JSON model format)

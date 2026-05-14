@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
-use tch::Tensor;
+use tch::{Tensor, no_grad};
 
 use super::{
     messages::{Experience, PolicyUpdate, TrainingStats},
@@ -45,6 +45,30 @@ pub struct PolicyLearner {
 
     /// Path for saving models
     model_save_dir: String,
+
+    /// Index into the rollout buffer for the next experience to be inserted.
+    /// Wraps modulo `config.buffer_size` and is reset to 0 after each
+    /// `train()` cycle (when the buffer is cleared via `reset`).
+    buffer_step_idx: usize,
+
+    /// Snapshot of the most recently received experience for the current
+    /// rollout. Used to compute the GAE bootstrap value `V(s_{T+1})` when
+    /// the rollout ends in a non-terminal state (e.g. truncation or buffer
+    /// full). `None` when the buffer is empty.
+    last_experience: Option<LastExperience>,
+}
+
+/// Minimal information about the most recent experience needed to compute
+/// the GAE bootstrap value on a non-terminal rollout boundary.
+struct LastExperience {
+    /// Flattened next observation for the final inserted transition.
+    next_observation: Vec<f32>,
+
+    /// Whether the final inserted transition terminated the episode.
+    /// A terminal end uses `0.0` as the bootstrap value; a non-terminal
+    /// end (truncation / buffer-full) requires `V(s_{T+1})` from the
+    /// current policy.
+    terminated: bool,
 }
 
 impl PolicyLearner {
@@ -70,7 +94,7 @@ impl PolicyLearner {
         let buffer = RolloutBuffer::new(
             config.buffer_size,
             1, // num_envs
-            4, // obs_dim - TODO: make configurable
+            config.obs_dim,
         );
 
         Ok(Self {
@@ -82,6 +106,8 @@ impl PolicyLearner {
             config,
             step: 0,
             model_save_dir,
+            buffer_step_idx: 0,
+            last_experience: None,
         })
     }
 
@@ -96,16 +122,23 @@ impl PolicyLearner {
                 continue;
             }
 
-            // 2. Check if we have enough data to train
-            if self.buffer.len() < self.config.min_batch_size {
+            // 2. Check if we have enough data to train.
+            //
+            // Note: `RolloutBuffer::len()` returns the *capacity*
+            // (`num_steps * num_envs`), not the count of inserted
+            // transitions. Use `buffer_step_idx`, which tracks how many
+            // experiences have actually been written since the last reset.
+            if self.buffer_step_idx < self.config.min_batch_size {
                 continue;
             }
 
-            // 3. Compute advantages
-            // TODO: Fix API - compute_advantages needs last_values
-            // self.buffer.compute_advantages(&last_values, self.config.gamma,
-            // self.config.gae_lambda);
-            let last_values = vec![0.0]; // Placeholder
+            // 3. Compute advantages with a correct GAE bootstrap value.
+            //    - If the final inserted transition ended the episode
+            //      (`terminated == true`), `V(s_{T+1}) = 0`.
+            //    - Otherwise (truncation / buffer-full), bootstrap with
+            //      `V(s_{T+1})` from the current policy, computed under
+            //      `no_grad`.
+            let last_values = self.compute_bootstrap_last_values();
             self.buffer.compute_advantages(
                 &last_values,
                 self.config.gamma as f32,
@@ -117,6 +150,8 @@ impl PolicyLearner {
 
             // 5. Clear buffer for next batch
             self.buffer.reset();
+            self.buffer_step_idx = 0;
+            self.last_experience = None;
 
             self.step += 1;
 
@@ -141,26 +176,33 @@ impl PolicyLearner {
         }
     }
 
-    /// Collect experiences from simulator
+    /// Collect experiences from the simulator and push them into the
+    /// rollout buffer.
+    ///
+    /// Each `Experience` received on the channel is translated into a
+    /// `RolloutBuffer::add(...)` call. The local `buffer_step_idx`
+    /// tracks the next free row in the buffer; this is the canonical
+    /// "how many transitions have we written" counter since
+    /// `RolloutBuffer::len()` returns the buffer's full capacity, not
+    /// its fill level.
+    ///
+    /// `last_experience` is updated on every successful insert so that
+    /// the GAE bootstrap value can be computed from `V(s_{T+1})` when
+    /// the rollout ends in a non-terminal state.
     fn collect_experiences(&mut self) -> Result<()> {
         let timeout = Duration::from_millis(100);
-        let start_len = self.buffer.len();
-        // TODO: Fix - buffer doesn't have capacity() method
+        let start_idx = self.buffer_step_idx;
         let target_len = self.config.buffer_size;
 
-        // Try to fill buffer, but don't block forever
-        while self.buffer.len() < target_len {
+        // Try to fill buffer, but don't block forever.
+        while self.buffer_step_idx < target_len {
             match self.experience_receiver.recv_timeout(timeout) {
-                Ok(_exp) => {
-                    // TODO: Fix - buffer.add() API doesn't match
-                    // Need to adapt Experience format to buffer's expected
-                    // format For now, just count the
-                    // received experience self.buffer.add(.
-                    // ..)?;
+                Ok(exp) => {
+                    self.ingest_experience(exp)?;
                 }
                 Err(_) => {
-                    // Timeout - check if we have enough data
-                    if self.buffer.len() > start_len {
+                    // Timeout - check if we have new data
+                    if self.buffer_step_idx > start_idx {
                         break; // Got some new data, good enough
                     }
                 }
@@ -168,6 +210,82 @@ impl PolicyLearner {
         }
 
         Ok(())
+    }
+
+    /// Translate a single `Experience` into a `RolloutBuffer::add(...)`
+    /// call and advance `buffer_step_idx`. The observation tensor is
+    /// converted to `Vec<f32>` and validated against the configured
+    /// `obs_dim`. The last-inserted experience snapshot (used for
+    /// the GAE bootstrap) is updated.
+    fn ingest_experience(&mut self, exp: Experience) -> Result<()> {
+        // Tensors may live on GPU; move to CPU before extracting to Vec.
+        let obs_cpu = exp.observation.to_device(tch::Device::Cpu);
+        let obs_vec: Vec<f32> = Vec::<f32>::try_from(&obs_cpu)
+            .map_err(|e| anyhow::anyhow!("Failed to convert observation tensor to Vec<f32>: {e}"))?;
+
+        if obs_vec.len() != self.config.obs_dim {
+            return Err(anyhow::anyhow!(
+                "Experience observation dim {} does not match configured obs_dim {}",
+                obs_vec.len(),
+                self.config.obs_dim
+            ));
+        }
+
+        let next_obs_cpu = exp.next_observation.to_device(tch::Device::Cpu);
+        let next_obs_vec: Vec<f32> = Vec::<f32>::try_from(&next_obs_cpu).map_err(|e| {
+            anyhow::anyhow!("Failed to convert next_observation tensor to Vec<f32>: {e}")
+        })?;
+
+        // Single-env learner: env_id is always 0. If/when multi-env per
+        // learner support is added, this should be threaded through.
+        let env_id = 0;
+        let step = self.buffer_step_idx;
+
+        self.buffer.add(
+            step,
+            env_id,
+            &obs_vec,
+            exp.action,
+            exp.reward,
+            exp.value,
+            exp.log_prob,
+            exp.terminated,
+            exp.truncated,
+        );
+
+        self.last_experience =
+            Some(LastExperience { next_observation: next_obs_vec, terminated: exp.terminated });
+
+        self.buffer_step_idx += 1;
+
+        Ok(())
+    }
+
+    /// Compute the GAE bootstrap value vector `last_values`.
+    ///
+    /// Returns `vec![0.0]` for the single-env case when:
+    /// - no experiences have been seen yet (defensive default), or
+    /// - the last received experience ended the episode (`terminated`).
+    ///
+    /// Otherwise runs the current policy on the final `next_observation`
+    /// under `no_grad` and returns `V(s_{T+1})`.
+    fn compute_bootstrap_last_values(&self) -> Vec<f32> {
+        match self.last_experience.as_ref() {
+            None => vec![0.0],
+            Some(last) if last.terminated => vec![0.0],
+            Some(last) => {
+                let policy = self.trainer.policy();
+                let device = policy.device();
+                let obs_tensor = Tensor::from_slice(&last.next_observation)
+                    .view([1, last.next_observation.len() as i64])
+                    .to_device(device);
+                let last_value = no_grad(|| {
+                    let (_logits, value) = policy.forward(&obs_tensor);
+                    value.double_value(&[]) as f32
+                });
+                vec![last_value]
+            }
+        }
     }
 
     /// Run PPO training step
@@ -288,6 +406,13 @@ pub struct LearnerConfig {
 
     /// Update interval (send policy updates every N steps)
     pub update_interval: usize,
+
+    /// Dimensionality of observations. Must match the environment's
+    /// `observation_space().shape()` and the policy network's input
+    /// dimension. The default value (`4`) matches CartPole for
+    /// backward compatibility — explicit configuration is required
+    /// for any other environment.
+    pub obs_dim: usize,
 }
 
 impl Default for LearnerConfig {
@@ -303,6 +428,8 @@ impl Default for LearnerConfig {
             min_batch_size: 256,
             n_epochs: 4,
             update_interval: 10,
+            // CartPole-compatible default; override for other envs.
+            obs_dim: 4,
         }
     }
 }
@@ -328,6 +455,8 @@ impl From<LearnerConfig> for crate::train::ppo::PPOConfig {
 
 #[cfg(test)]
 mod tests {
+    use tch::Kind;
+
     use super::*;
 
     #[test]
@@ -336,6 +465,8 @@ mod tests {
         assert_eq!(config.learning_rate, 3e-4);
         assert_eq!(config.gamma, 0.99);
         assert_eq!(config.buffer_size, 2048);
+        // obs_dim defaults to 4 for backward compatibility with CartPole.
+        assert_eq!(config.obs_dim, 4);
     }
 
     #[test]
@@ -350,5 +481,122 @@ mod tests {
 
         assert!(learner.is_ok());
         assert_eq!(learner.unwrap().agent_id, 0);
+    }
+
+    /// Regression test for issue #4: the four TODO/placeholder defects in
+    /// `PolicyLearner`.
+    ///
+    /// This test exercises the previously-broken path end-to-end:
+    /// - Constructs a learner with a non-trivial `obs_dim` (8, not 4).
+    /// - Feeds a batch of `Experience` values through the channel.
+    /// - Verifies experiences are translated into `RolloutBuffer::add(...)`
+    ///   calls (defect #4: the buffer used to never be populated).
+    /// - Verifies a full training cycle (collect → compute_advantages →
+    ///   train_step → reset) runs without panicking.
+    /// - Verifies `compute_bootstrap_last_values` returns `vec![0.0]`
+    ///   for a terminal end and a non-zero `V(s_{T+1})` (or at least a
+    ///   distinct policy-derived value) for a non-terminal end (defect #2).
+    #[test]
+    fn test_learner_ingests_experiences_and_trains() {
+        let obs_dim: usize = 8;
+        let action_dim: i64 = 3;
+        let policy = MlpPolicy::new(obs_dim as i64, action_dim, 32);
+
+        let (exp_sender, exp_receiver) = crossbeam_channel::unbounded();
+        let (policy_sender, _policy_receiver) = crossbeam_channel::unbounded();
+
+        // Small buffer / batch sizes so the test runs quickly.
+        let config = LearnerConfig {
+            obs_dim,
+            buffer_size: 8,
+            min_batch_size: 4,
+            n_epochs: 1,
+            ..LearnerConfig::default()
+        };
+
+        let mut learner = PolicyLearner::new(
+            0,
+            policy,
+            exp_receiver,
+            policy_sender,
+            config,
+            "/tmp".to_string(),
+        )
+        .expect("learner construction should succeed");
+
+        // Push a small batch of experiences with the last one terminal.
+        let n_exp = 6;
+        for i in 0..n_exp {
+            let obs = Tensor::ones([obs_dim as i64], (Kind::Float, tch::Device::Cpu));
+            let next_obs =
+                Tensor::ones([obs_dim as i64], (Kind::Float, tch::Device::Cpu)) * (i as f64 + 1.0);
+            let terminated = i == n_exp - 1;
+            let exp = Experience::new(
+                0,
+                obs,
+                (i % action_dim as usize) as i64,
+                1.0,
+                next_obs,
+                terminated,
+                false,
+                0.5,
+                -0.69,
+            );
+            exp_sender.send(exp).expect("channel send should succeed");
+        }
+        // Drop sender so collect_experiences times out cleanly instead of
+        // blocking after consuming the queue.
+        drop(exp_sender);
+
+        // Defect #4 regression: collect_experiences must actually fill
+        // the buffer (it used to drop `_exp` on the floor).
+        learner.collect_experiences().expect("collect_experiences should not error");
+        assert_eq!(
+            learner.buffer_step_idx, n_exp,
+            "buffer_step_idx must reflect every received experience"
+        );
+        assert!(learner.last_experience.is_some(), "last_experience must be tracked");
+        let last = learner.last_experience.as_ref().unwrap();
+        assert!(last.terminated, "final experience was terminal");
+        assert_eq!(last.next_observation.len(), obs_dim);
+
+        // Defect #2 regression: bootstrap returns 0.0 for terminal ends.
+        let last_values_term = learner.compute_bootstrap_last_values();
+        assert_eq!(last_values_term, vec![0.0], "terminal end must give 0.0 bootstrap");
+
+        // Force a non-terminal last_experience and verify the policy is
+        // consulted (the result is a real f32 — not the placeholder 0.0
+        // unconditionally).
+        learner.last_experience = Some(LastExperience {
+            next_observation: vec![0.5_f32; obs_dim],
+            terminated: false,
+        });
+        let last_values_trunc = learner.compute_bootstrap_last_values();
+        assert_eq!(last_values_trunc.len(), 1);
+        assert!(last_values_trunc[0].is_finite(), "bootstrap value must be finite");
+
+        // Defect #1 regression: `RolloutBuffer` was constructed with the
+        // configured `obs_dim` (8), not the hardcoded 4. If it had been
+        // hardcoded, `buffer.add(... &obs_vec ...)` above would have
+        // panicked the debug_assert on obs dim mismatch.
+
+        // Run one full training cycle to confirm the loop is no longer
+        // a silent no-op. Restore terminal state first so GAE bootstrap
+        // is deterministic.
+        learner.last_experience = Some(LastExperience {
+            next_observation: vec![0.0_f32; obs_dim],
+            terminated: true,
+        });
+        let last_values = learner.compute_bootstrap_last_values();
+        learner.buffer.compute_advantages(
+            &last_values,
+            learner.config.gamma as f32,
+            learner.config.gae_lambda as f32,
+        );
+        let stats = learner.train_step().expect("train_step should run end-to-end");
+        // Loss values must be finite (no NaN/Inf).
+        assert!(stats.total_loss.is_finite(), "total_loss must be finite");
+        assert!(stats.policy_loss.is_finite(), "policy_loss must be finite");
+        assert!(stats.value_loss.is_finite(), "value_loss must be finite");
     }
 }
