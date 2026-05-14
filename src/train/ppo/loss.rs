@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(loss.size().len(), 0);
 
         // Entropy loss should be negative (since it's -entropy)
-        let loss_val: f32 = loss.into();
+        let loss_val = loss.double_value(&[]) as f32;
         assert!(loss_val < 0.0);
     }
 

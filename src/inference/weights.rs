@@ -55,6 +55,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     use super::*;
+    use crate::inference::LayerWeights;
 
     fn create_test_model() -> ExportedModel {
         let feature_weights = LayerWeights::new(vec![1.0, 0.0, 0.0, 1.0], vec![0.0, 0.0], 2, 2);
