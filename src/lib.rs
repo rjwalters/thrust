@@ -13,7 +13,11 @@
 //! // Coming soon: Simple training example
 //! ```
 
-#![warn(missing_docs)]
+// `missing_docs` is intentionally allowed pre-1.0 while the public API is
+// still reshaping. The `unresolved link` rustdoc gate stays active so doc
+// quality is maintained where docs exist. Re-enable as `#![warn(missing_docs)]`
+// once the API has stabilized — tracked in #33.
+#![allow(missing_docs)]
 #![warn(clippy::all)]
 
 /// Environment traits and implementations
