@@ -28,7 +28,7 @@ impl RunningMeanStd {
     /// Update statistics with a batch of observations
     ///
     /// # Arguments
-    /// * `observations` - Batch of observations [batch_size][obs_dim]
+    /// * `observations` - Batch of observations `[batch_size][obs_dim]`
     pub fn update(&mut self, observations: &[Vec<f32>]) {
         if observations.is_empty() {
             return;
@@ -87,7 +87,7 @@ impl RunningMeanStd {
     /// Normalize observations
     ///
     /// # Arguments
-    /// * `observations` - Observations to normalize [obs_dim]
+    /// * `observations` - Observations to normalize `[obs_dim]`
     ///
     /// # Returns
     /// * Normalized observations (mean=0, std=1)
@@ -103,7 +103,7 @@ impl RunningMeanStd {
     /// Normalize a batch of observations in-place
     ///
     /// # Arguments
-    /// * `observations` - Batch of observations [batch_size][obs_dim]
+    /// * `observations` - Batch of observations `[batch_size][obs_dim]`
     pub fn normalize_batch(&self, observations: &mut [Vec<f32>]) {
         for obs in observations {
             *obs = self.normalize(obs);

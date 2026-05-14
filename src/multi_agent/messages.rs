@@ -14,7 +14,7 @@ pub struct Experience {
     /// Agent that generated this experience
     pub agent_id: AgentId,
 
-    /// Observation tensor [obs_dim]
+    /// Observation tensor `[obs_dim]`
     pub observation: Tensor,
 
     /// Action taken
@@ -23,7 +23,7 @@ pub struct Experience {
     /// Reward received
     pub reward: f32,
 
-    /// Next observation tensor [obs_dim]
+    /// Next observation tensor `[obs_dim]`
     pub next_observation: Tensor,
 
     /// Whether episode terminated

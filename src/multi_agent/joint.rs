@@ -335,9 +335,7 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
     /// Construct a trainer from a fully-initialized set of policies.
     ///
     /// `optimizers` must have one entry per policy and be configured for the
-    /// caller's choice of learning rate / weight decay. Use
-    /// [`Self::with_adam`] for the common case of a fresh Adam optimizer per
-    /// policy at a single shared learning rate.
+    /// caller's choice of learning rate / weight decay.
     ///
     /// All policies must be on the same device.
     pub fn new(

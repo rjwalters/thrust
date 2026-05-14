@@ -114,7 +114,7 @@ pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<
 /// # Arguments
 /// * `rewards` - Reward tensor [num_steps, num_envs]
 /// * `values` - Value estimates [num_steps, num_envs]
-/// * `next_values` - Next step value estimates [num_envs]
+/// * `next_values` - Next step value estimates `[num_envs]`
 /// * `dones` - Done flags [num_steps, num_envs]
 /// * `gamma` - Discount factor
 /// * `gae_lambda` - GAE lambda parameter

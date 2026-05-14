@@ -129,7 +129,7 @@ impl SnakeCNNInference {
     ///   [c0_pixels..., c1_pixels..., ...]
     ///
     /// # Returns
-    /// * `(logits, value)` - Action logits [num_actions] and state value
+    /// * `(logits, value)` - Action logits `[num_actions]` and state value
     ///   (scalar)
     pub fn forward(&self, grid: &[f32]) -> (Vec<f32>, f32) {
         let grid_size = self.grid_width * self.grid_height;
@@ -271,22 +271,22 @@ pub struct InferenceModel {
 
     /// Shared layer 1: weights [obs_dim, hidden_dim]
     pub shared_fc1_weight: Vec<Vec<f32>>,
-    /// Shared layer 1: bias [hidden_dim]
+    /// Shared layer 1: bias `[hidden_dim]`
     pub shared_fc1_bias: Vec<f32>,
 
     /// Shared layer 2: weights [hidden_dim, hidden_dim]
     pub shared_fc2_weight: Vec<Vec<f32>>,
-    /// Shared layer 2: bias [hidden_dim]
+    /// Shared layer 2: bias `[hidden_dim]`
     pub shared_fc2_bias: Vec<f32>,
 
     /// Policy head: weights [hidden_dim, action_dim]
     pub policy_weight: Vec<Vec<f32>>,
-    /// Policy head: bias [action_dim]
+    /// Policy head: bias `[action_dim]`
     pub policy_bias: Vec<f32>,
 
     /// Value head: weights [hidden_dim, 1]
     pub value_weight: Vec<Vec<f32>>,
-    /// Value head: bias [1]
+    /// Value head: bias `[1]`
     pub value_bias: Vec<f32>,
 }
 
@@ -327,10 +327,10 @@ impl InferenceModel {
     /// Forward pass: compute action logits and value
     ///
     /// # Arguments
-    /// * `obs` - Observation vector [obs_dim]
+    /// * `obs` - Observation vector `[obs_dim]`
     ///
     /// # Returns
-    /// * `(logits, value)` - Action logits [action_dim] and state value
+    /// * `(logits, value)` - Action logits `[action_dim]` and state value
     ///   (scalar)
     pub fn forward(&self, obs: &[f32]) -> (Vec<f32>, f32) {
         assert_eq!(obs.len(), self.obs_dim, "Observation dimension mismatch");
@@ -377,7 +377,7 @@ impl InferenceModel {
     /// Get action from observation using softmax sampling
     ///
     /// # Arguments
-    /// * `obs` - Observation vector [obs_dim]
+    /// * `obs` - Observation vector `[obs_dim]`
     ///
     /// # Returns
     /// * Action index

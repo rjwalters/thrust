@@ -91,19 +91,19 @@ pub struct Minibatch {
     /// Observations [batch_size * obs_dim]
     pub observations: Vec<f32>,
 
-    /// Actions [batch_size]
+    /// Actions `[batch_size]`
     pub actions: Vec<i64>,
 
-    /// Old log probabilities [batch_size]
+    /// Old log probabilities `[batch_size]`
     pub old_log_probs: Vec<f32>,
 
-    /// Old value estimates [batch_size]
+    /// Old value estimates `[batch_size]`
     pub old_values: Vec<f32>,
 
-    /// Advantages [batch_size]
+    /// Advantages `[batch_size]`
     pub advantages: Vec<f32>,
 
-    /// Returns [batch_size]
+    /// Returns `[batch_size]`
     pub returns: Vec<f32>,
 
     /// Observation dimension

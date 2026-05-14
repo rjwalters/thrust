@@ -112,7 +112,7 @@ impl SnakeCNNInference {
     ///   [c0_pixels..., c1_pixels..., ...]
     ///
     /// # Returns
-    /// * `(logits, value)` - Action logits [num_actions] and state value
+    /// * `(logits, value)` - Action logits `[num_actions]` and state value
     ///   (scalar)
     pub fn forward(&self, grid: &[f32]) -> (Vec<f32>, f32) {
         let grid_size = self.grid_width * self.grid_height;
