@@ -174,3 +174,9 @@ required-features = ["training"]
 name = "test_json_inference"
 path = "examples/games/cartpole/test_json_inference.rs"
 required-features = ["training"]
+
+# Bucket Brigade examples (Slepian-Wolf MARL)
+[[example]]
+name = "train_p3"
+path = "examples/games/bucket_brigade/train_p3.rs"
+required-features = ["training", "env-bucket-brigade"]
