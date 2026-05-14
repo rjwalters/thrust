@@ -14,11 +14,12 @@
 //! ```rust,no_run
 //! # #[cfg(feature = "training")]
 //! # fn main() {
-//! use thrust_rl::utils::cuda::ensure_cuda_if_expected;
 //! use tch::Device;
+//! use thrust_rl::utils::cuda::ensure_cuda_if_expected;
 //!
 //! let device = Device::cuda_if_available();
 //! ensure_cuda_if_expected(device); // exits(2) if THRUST_EXPECT_CUDA=1 and device == Cpu
+//! //
 //! # }
 //! # #[cfg(not(feature = "training"))] fn main() {}
 //! ```

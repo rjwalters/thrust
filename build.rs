@@ -131,20 +131,20 @@ fn main() {
     // `-Wl,--no-as-needed` covers the `-ltorch_cuda` we re-list here AND any
     // late `-ltorch_cuda` already emitted by `torch-sys`'s own build script.
     //
-    // We use the `-examples` / `-tests` / `-benches` variants of
-    // `rustc-link-arg` so the flags apply to binary artifacts that link this
-    // crate (not the rlib itself, which is a static archive and doesn't go
-    // through the linker). `rustc-link-lib` applies to every artifact and
-    // doesn't need a variant. We deliberately omit `-bins`: `thrust-rl` is
-    // library-only (no `[[bin]]` target), and emitting `rustc-link-arg-bins`
-    // when there are no bins triggers `error: invalid instruction` on stable
-    // Cargo.
-    for variant in ["examples", "tests", "benches"] {
+    // We use the `-examples` and `-tests` variants of `rustc-link-arg` so
+    // the flags apply to binary artifacts that link this crate (not the
+    // rlib itself, which is a static archive and doesn't go through the
+    // linker). `rustc-link-lib` applies to every artifact and doesn't need
+    // a variant. We deliberately omit `-bins` and `-benches`: `thrust-rl`
+    // is library-only (no `[[bin]]` or `[[bench]]` targets), and emitting
+    // the corresponding variants when no such targets exist triggers
+    // `error: invalid instruction` from Cargo.
+    for variant in ["examples", "tests"] {
         println!("cargo:rustc-link-arg-{variant}=-Wl,--no-as-needed");
     }
     println!("cargo:rustc-link-lib=torch_cuda");
     println!("cargo:rustc-link-lib=c10_cuda");
-    for variant in ["examples", "tests", "benches"] {
+    for variant in ["examples", "tests"] {
         println!("cargo:rustc-link-arg-{variant}=-Wl,--as-needed");
     }
 
@@ -153,7 +153,7 @@ fn main() {
     // use `-Wl,-rpath,...` rather than passing `-rpath` directly so the
     // flag survives gcc/clang's argument forwarding (rustc invokes the
     // system linker via the C compiler driver).
-    for variant in ["examples", "tests", "benches"] {
+    for variant in ["examples", "tests"] {
         println!("cargo:rustc-link-arg-{variant}=-Wl,-rpath,{}", cuda_lib_dir.display());
     }
 }

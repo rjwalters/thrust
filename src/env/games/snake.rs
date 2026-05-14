@@ -9,7 +9,8 @@
 
 // TODO: Fix multi-agent implementation - temporarily disabled
 // #[cfg(feature = "training")]
-// use crate::multi_agent::environment::{MultiAgentEnvironment, MultiAgentResult};
+// use crate::multi_agent::environment::{MultiAgentEnvironment,
+// MultiAgentResult};
 use anyhow::Result;
 pub use environment::SnakeEnv;
 use rand::Rng;

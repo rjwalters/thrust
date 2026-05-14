@@ -163,12 +163,11 @@ impl MultiDiscreteMlpPolicy {
 
     /// Forward pass: per-dim action logits plus value estimate.
     ///
-    /// Returns `(Vec<logits_i>, value)` where `logits_i: [batch, action_dims[i]]`
-    /// and `value: [batch]`.
+    /// Returns `(Vec<logits_i>, value)` where `logits_i: [batch,
+    /// action_dims[i]]` and `value: [batch]`.
     pub fn forward(&self, obs: &Tensor) -> (Vec<Tensor>, Tensor) {
         let features = self.shared.forward(obs);
-        let logits: Vec<Tensor> =
-            self.action_heads.iter().map(|h| h.forward(&features)).collect();
+        let logits: Vec<Tensor> = self.action_heads.iter().map(|h| h.forward(&features)).collect();
         let values = self.value_head.forward(&features).squeeze_dim(-1);
         (logits, values)
     }
@@ -195,9 +194,7 @@ impl MultiDiscreteMlpPolicy {
             let log_probs_all = logits.log_softmax(-1, Kind::Float);
             let probs = logits.softmax(-1, Kind::Float);
             let action = probs.multinomial(1, true).squeeze_dim(-1);
-            let log_p = log_probs_all
-                .gather(-1, &action.unsqueeze(-1), false)
-                .squeeze_dim(-1);
+            let log_p = log_probs_all.gather(-1, &action.unsqueeze(-1), false).squeeze_dim(-1);
             per_dim_actions.push(action);
             per_dim_log_probs.push(log_p);
         }
@@ -225,11 +222,7 @@ impl MultiDiscreteMlpPolicy {
     /// # Returns
     /// `(log_probs [batch], entropy [batch], values [batch])`.
     /// `log_probs` is summed across dims; `entropy` is averaged across dims.
-    pub fn evaluate_actions(
-        &self,
-        obs: &Tensor,
-        actions: &Tensor,
-    ) -> (Tensor, Tensor, Tensor) {
+    pub fn evaluate_actions(&self, obs: &Tensor, actions: &Tensor) -> (Tensor, Tensor, Tensor) {
         let (logits_per_dim, values) = self.forward(obs);
 
         let num_dims = logits_per_dim.len() as i64;
@@ -239,17 +232,13 @@ impl MultiDiscreteMlpPolicy {
         for (i, logits) in logits_per_dim.iter().enumerate() {
             let log_probs = logits.log_softmax(-1, Kind::Float);
             let probs = log_probs.exp();
-            let per_dim_entropy = -(&probs * &log_probs).sum_dim_intlist(
-                [-1i64].as_slice(),
-                false,
-                Kind::Float,
-            );
+            let per_dim_entropy =
+                -(&probs * &log_probs).sum_dim_intlist([-1i64].as_slice(), false, Kind::Float);
 
             // actions[:, i]
             let actions_i = actions.select(1, i as i64);
-            let per_dim_log_p = log_probs
-                .gather(-1, &actions_i.unsqueeze(-1), false)
-                .squeeze_dim(-1);
+            let per_dim_log_p =
+                log_probs.gather(-1, &actions_i.unsqueeze(-1), false).squeeze_dim(-1);
 
             summed_log_probs = Some(match summed_log_probs.take() {
                 Some(acc) => acc + per_dim_log_p,
@@ -281,11 +270,7 @@ impl MultiDiscreteMlpPolicy {
 
     /// Total parameter count (handy for logging).
     pub fn num_parameters(&self) -> i64 {
-        self.vs
-            .trainable_variables()
-            .iter()
-            .map(|t| t.numel() as i64)
-            .sum()
+        self.vs.trainable_variables().iter().map(|t| t.numel() as i64).sum()
     }
 
     /// Architecture configuration (read-only).

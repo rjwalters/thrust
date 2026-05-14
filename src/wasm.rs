@@ -100,8 +100,13 @@ impl WasmCartPole {
         #[cfg(feature = "wasm")]
         {
             use web_sys::console;
-            console::log_1(&format!("Model loaded: obs_dim={}, action_dim={}, hidden_dim={}, activation={:?}",
-                policy.obs_dim, policy.action_dim, policy.hidden_dim, policy.activation).into());
+            console::log_1(
+                &format!(
+                    "Model loaded: obs_dim={}, action_dim={}, hidden_dim={}, activation={:?}",
+                    policy.obs_dim, policy.action_dim, policy.hidden_dim, policy.activation
+                )
+                .into(),
+            );
         }
 
         self.policy = Some(policy);

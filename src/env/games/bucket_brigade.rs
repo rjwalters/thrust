@@ -22,8 +22,10 @@
 
 use bucket_brigade_core::{Action, AgentObservation, BucketBrigade, Scenario};
 
-use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
-use crate::multi_agent::{MultiAgentEnvironment, MultiAgentResult};
+use crate::{
+    env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult},
+    multi_agent::{MultiAgentEnvironment, MultiAgentResult},
+};
 
 /// Number of houses on the Bucket Brigade ring. Constant; the engine
 /// hard-codes 10.
@@ -276,4 +278,3 @@ fn flatten_observation(obs: &AgentObservation) -> Vec<f32> {
     out.extend(obs.scenario_info.iter().copied());
     out
 }
-

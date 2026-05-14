@@ -19,8 +19,8 @@ use crate::env::Environment;
 /// action spaces. Each agent's action is a `Vec<i64>` whose length equals the
 /// number of action dimensions for that agent:
 ///
-/// - Pure-discrete agent with `n` choices: action vector has length 1
-///   (e.g. `vec![3]` to pick action `3`).
+/// - Pure-discrete agent with `n` choices: action vector has length 1 (e.g.
+///   `vec![3]` to pick action `3`).
 /// - Factored Bucket-Brigade agent with `[house_index, mode]`: action vector
 ///   has length 2 (e.g. `vec![7, 1]` for "house 7, mode 1").
 ///
@@ -131,7 +131,7 @@ impl MultiAgentResult {
 //         }
 //
 //         fn step(&mut self, _action: Self::Action) ->
-// Result<crate::env::StepResult<Self::Observation>> {             
+// Result<crate::env::StepResult<Self::Observation>> {
 // Ok(crate::env::StepResult {                 observation: MockObs,
 //                 reward: 0.0,
 //                 terminated: false,

@@ -1,8 +1,8 @@
 //! Pong environment
 //!
-//! A classic two-player Pong game for adversarial multi-agent reinforcement learning.
-//! Two paddles compete to bounce a ball back and forth, earning points when the opponent
-//! misses.
+//! A classic two-player Pong game for adversarial multi-agent reinforcement
+//! learning. Two paddles compete to bounce a ball back and forth, earning
+//! points when the opponent misses.
 //!
 //! # Game Mechanics
 //!
@@ -110,8 +110,8 @@ impl Pong {
     /// Create a Pong environment configured for self-play training
     ///
     /// # Arguments
-    /// * `mirror_observations` - If true, the right agent receives mirrored observations,
-    ///   allowing a single shared policy to play both sides
+    /// * `mirror_observations` - If true, the right agent receives mirrored
+    ///   observations, allowing a single shared policy to play both sides
     ///
     /// # Example
     /// ```
@@ -147,11 +147,13 @@ impl Pong {
     /// * `agent_id` - 0 for left paddle, 1 for right paddle
     ///
     /// # Returns
-    /// A 6-element vector: [ball_x, ball_y, ball_vx, ball_vy, own_paddle_y, opp_paddle_y]
+    /// A 6-element vector: [ball_x, ball_y, ball_vx, ball_vy, own_paddle_y,
+    /// opp_paddle_y]
     ///
-    /// If `mirror_observations` is true and agent_id is 1, the observation is mirrored
-    /// so the right agent "thinks" it's playing from the left side. This enables
-    /// a single shared policy to control both agents in self-play.
+    /// If `mirror_observations` is true and agent_id is 1, the observation is
+    /// mirrored so the right agent "thinks" it's playing from the left
+    /// side. This enables a single shared policy to control both agents in
+    /// self-play.
     pub fn get_agent_observation(&self, agent_id: usize) -> Vec<f32> {
         let (own_paddle, opp_paddle) = if agent_id == 0 {
             (self.paddle_left_y, self.paddle_right_y)
@@ -162,21 +164,21 @@ impl Pong {
         // If mirroring is enabled for right agent, flip x-coordinates
         if self.mirror_observations && agent_id == 1 {
             vec![
-                1.0 - (self.ball_x / self.width),           // Mirrored ball x
-                self.ball_y / self.height,                   // Ball y unchanged
-                -self.ball_vx / (self.ball_speed * 2.0),    // Flipped ball vx
-                self.ball_vy / (self.ball_speed * 2.0),     // Ball vy unchanged
-                own_paddle / self.height,                    // Own paddle y
-                opp_paddle / self.height,                    // Opp paddle y
+                1.0 - (self.ball_x / self.width),        // Mirrored ball x
+                self.ball_y / self.height,               // Ball y unchanged
+                -self.ball_vx / (self.ball_speed * 2.0), // Flipped ball vx
+                self.ball_vy / (self.ball_speed * 2.0),  // Ball vy unchanged
+                own_paddle / self.height,                // Own paddle y
+                opp_paddle / self.height,                // Opp paddle y
             ]
         } else {
             vec![
-                self.ball_x / self.width,                    // Ball x (0-1)
-                self.ball_y / self.height,                   // Ball y (0-1)
-                self.ball_vx / (self.ball_speed * 2.0),      // Ball vx (normalized)
-                self.ball_vy / (self.ball_speed * 2.0),      // Ball vy (normalized)
-                own_paddle / self.height,                    // Own paddle y (0-1)
-                opp_paddle / self.height,                    // Opp paddle y (0-1)
+                self.ball_x / self.width,               // Ball x (0-1)
+                self.ball_y / self.height,              // Ball y (0-1)
+                self.ball_vx / (self.ball_speed * 2.0), // Ball vx (normalized)
+                self.ball_vy / (self.ball_speed * 2.0), // Ball vy (normalized)
+                own_paddle / self.height,               // Own paddle y (0-1)
+                opp_paddle / self.height,               // Opp paddle y (0-1)
             ]
         }
     }
@@ -336,7 +338,8 @@ impl Default for Pong {
     }
 }
 
-// Implement Environment trait for single-agent control (controls left paddle, right is random)
+// Implement Environment trait for single-agent control (controls left paddle,
+// right is random)
 impl Environment for Pong {
     fn reset(&mut self) {
         self.ball_x = self.width / 2.0;
@@ -361,10 +364,7 @@ impl Environment for Pong {
     }
 
     fn observation_space(&self) -> SpaceInfo {
-        SpaceInfo {
-            shape: vec![6],
-            space_type: SpaceType::Box,
-        }
+        SpaceInfo { shape: vec![6], space_type: SpaceType::Box }
     }
 
     fn action_space(&self) -> SpaceInfo {
