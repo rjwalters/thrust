@@ -61,9 +61,7 @@
 //! with. The `THRUST_EXPECT_CUDA` runtime check (see `src/utils/cuda.rs`)
 //! is independent of this opt-out.
 
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
+use std::{env, path::PathBuf, process::Command};
 
 fn main() {
     // Re-run conditions: only re-run when the relevant environment variables
@@ -122,10 +120,7 @@ fn main() {
     // Add a `rustc-link-search` directive so the linker can find the CUDA
     // libs at link time. `torch-sys` typically already adds this; we re-emit
     // it as a belt-and-suspenders guard.
-    println!(
-        "cargo:rustc-link-search=native={}",
-        cuda_lib_dir.display()
-    );
+    println!("cargo:rustc-link-search=native={}", cuda_lib_dir.display());
 
     // The bracket: enable --no-as-needed, list the libraries we want to keep
     // referenced, then restore --as-needed so we don't accidentally retain
@@ -159,10 +154,7 @@ fn main() {
     // flag survives gcc/clang's argument forwarding (rustc invokes the
     // system linker via the C compiler driver).
     for variant in ["examples", "tests", "benches"] {
-        println!(
-            "cargo:rustc-link-arg-{variant}=-Wl,-rpath,{}",
-            cuda_lib_dir.display()
-        );
+        println!("cargo:rustc-link-arg-{variant}=-Wl,-rpath,{}", cuda_lib_dir.display());
     }
 }
 

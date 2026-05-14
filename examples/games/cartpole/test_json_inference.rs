@@ -21,8 +21,12 @@ fn main() -> Result<()> {
     tracing::info!("Loading {}...", model_path);
     let model = InferenceModel::load_json(model_path)?;
     tracing::info!("✅ Model loaded successfully");
-    tracing::info!("   Obs dim: {}, Action dim: {}, Hidden dim: {}",
-                   model.obs_dim, model.action_dim, model.hidden_dim);
+    tracing::info!(
+        "   Obs dim: {}, Action dim: {}, Hidden dim: {}",
+        model.obs_dim,
+        model.action_dim,
+        model.hidden_dim
+    );
     tracing::info!("   Activation: {:?}", model.activation);
 
     if let Some(ref metadata) = model.metadata {
@@ -70,10 +74,16 @@ fn main() -> Result<()> {
     tracing::info!("  Max: {} steps", max_steps);
 
     if avg_steps < 100.0 {
-        tracing::error!("\n❌ Performance is POOR! Expected >450 steps/episode but got {:.1}", avg_steps);
+        tracing::error!(
+            "\n❌ Performance is POOR! Expected >450 steps/episode but got {:.1}",
+            avg_steps
+        );
         tracing::error!("   This indicates a bug in the model export or inference code.");
     } else if avg_steps < 400.0 {
-        tracing::warn!("\n⚠️  Performance is suboptimal. Expected >450 steps/episode but got {:.1}", avg_steps);
+        tracing::warn!(
+            "\n⚠️  Performance is suboptimal. Expected >450 steps/episode but got {:.1}",
+            avg_steps
+        );
     } else {
         tracing::info!("\n✅ Performance looks good! ({:.1} steps/episode)", avg_steps);
     }

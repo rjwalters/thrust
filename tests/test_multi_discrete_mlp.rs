@@ -32,10 +32,7 @@ fn get_action_returns_correct_shapes_and_ranges() {
     for _row in 0..16 {
         for (col, &max) in [5_i64, 3, 2].iter().enumerate() {
             let a = actions_vec[idx];
-            assert!(
-                a >= 0 && a < max,
-                "actions[row, {col}] = {a} not in 0..{max}",
-            );
+            assert!(a >= 0 && a < max, "actions[row, {col}] = {a} not in 0..{max}",);
             idx += 1;
         }
     }

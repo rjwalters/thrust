@@ -4,25 +4,49 @@ This document specifies the working version combinations for local development a
 
 ## Local Development (macOS)
 
-- **Operating System**: macOS 14+ (Darwin)
+- **Operating System**: macOS 14+ (Darwin, arm64 or x86_64)
 - **Rust**: nightly-2025-xx-xx (edition 2024 support required)
-- **PyTorch**: 2.9.0 (via Homebrew: `brew install pytorch`)
+- **PyTorch**: 2.9.0 (via pip into a local venv — see below)
 - **tch-rs**: 0.22.0
-- **CUDA**: N/A (CPU/MPS only)
+- **CUDA**: N/A (CPU / MPS only)
 
-### Setup
+> **DO NOT `brew install pytorch`.** The Homebrew bottle hardcodes specific
+> minor versions of `protobuf` / `abseil` into its libtorch dylibs (e.g.
+> `libprotobuf.33.0.0.dylib`). As soon as Homebrew bumps those formulae
+> (which it does frequently), the dylibs cannot find their deps any more
+> and you get `dyld: Library not loaded: ...` at runtime. The pip torch
+> wheel bundles its own protobuf / abseil and is the canonical macOS path.
+> See `docs/LIBTORCH_SETUP.md` and
+> [issue #8](https://github.com/rjwalters/thrust/issues/8).
+
+### Setup (canonical)
+
 ```bash
-# Install PyTorch via Homebrew
-brew install pytorch
+# One-shot: creates ./venv, pip-installs torch>=2.9, writes .envrc.libtorch
+./scripts/setup-libtorch.sh
 
-# Set environment variables
-export LIBTORCH="$(brew --prefix pytorch)/lib"
-export DYLD_LIBRARY_PATH="$LIBTORCH:$DYLD_LIBRARY_PATH"
-export LIBTORCH_USE_PYTORCH=1
+# Load env into current shell
+source .envrc.libtorch
 
 # Build and run
-cargo +nightly build --release
-cargo +nightly run --example train_cartpole
+cargo +nightly build --release --features training
+cargo +nightly run --example train_cartpole --release
+```
+
+Or use the wrapper scripts, which auto-detect ./venv:
+
+```bash
+./scripts/train-cpu.sh train_cartpole
+./scripts/test.sh
+./scripts/check.sh
+```
+
+### Setup (alternative: standalone libtorch, no Python)
+
+```bash
+./scripts/download-libtorch.sh           # downloads & extracts to ./libtorch/
+export LIBTORCH="$(pwd)/libtorch"
+export DYLD_LIBRARY_PATH="$LIBTORCH/lib:${DYLD_LIBRARY_PATH:-}"
 ```
 
 ## GPU Training (Linux - rwalters-sandbox-2)
@@ -75,10 +99,11 @@ Use the provided helper scripts on the GPU machine:
 
 ## Why Different Versions?
 
-### Local (tch 0.22 + PyTorch 2.9)
+### Local (tch 0.22 + PyTorch 2.9 via pip venv)
 - **Latest stable**: Uses the newest tch-rs with latest PyTorch
 - **Edition 2024 support**: Required for nightly Rust features
 - **Development speed**: Newer versions often have better compilation times
+- **Robust against Homebrew drift**: pip wheel bundles its own protobuf / abseil
 
 ### GPU (tch 0.15 + PyTorch 2.2.0)
 - **CUDA availability**: PyTorch 2.2.0 is widely available with CUDA 12.1

@@ -17,7 +17,8 @@ use thrust_rl::env::games::bucket_brigade::BucketBrigadeMaEnv;
 fn env_constructs_with_correct_obs_dim() {
     let scenario = SCENARIOS["default"].clone();
     let env = BucketBrigadeMaEnv::new(scenario, 4, Some(42));
-    // 10 (houses) + 4 (signals) + 4 (locations) + 8 (last_actions) + 12 (scenario) = 38
+    // 10 (houses) + 4 (signals) + 4 (locations) + 8 (last_actions) + 12 (scenario)
+    // = 38
     assert_eq!(env.obs_dim(), 38);
     assert_eq!(env.action_dims(), [10, 2]);
 }
@@ -93,10 +94,7 @@ fn reset_recovers_after_done() {
     // never RUINED (=2).
     for o in &obs {
         for (i, &h) in o[..10].iter().enumerate() {
-            assert!(
-                h == 0.0 || h == 1.0,
-                "house {i} = {h} after reset (must be SAFE or BURNING)",
-            );
+            assert!(h == 0.0 || h == 1.0, "house {i} = {h} after reset (must be SAFE or BURNING)",);
         }
     }
 }

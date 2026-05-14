@@ -29,20 +29,16 @@
 //!     -- --scenario default --lambda-red 0.01 --seed 42
 //! ```
 
-use anyhow::Result;
-use std::path::PathBuf;
-use std::time::Instant;
+use std::{path::PathBuf, time::Instant};
 
+use anyhow::Result;
+use bucket_brigade_core::SCENARIOS;
 use tch::{Kind, Tensor, nn::OptimizerConfig};
 use thrust_rl::{
     env::games::bucket_brigade::BucketBrigadeMaEnv,
-    multi_agent::joint::{
-        JointEnv, JointMultiAgentTrainer, JointStepResult, JointTrainerConfig,
-    },
+    multi_agent::joint::{JointEnv, JointMultiAgentTrainer, JointStepResult, JointTrainerConfig},
     policy::multi_discrete_mlp::MultiDiscreteMlpPolicy,
 };
-
-use bucket_brigade_core::SCENARIOS;
 
 // =====================================================================
 // Configuration (experiment-local)
@@ -199,10 +195,7 @@ fn main() -> Result<()> {
     let cfg = parse_args();
     tracing_subscriber::fmt::init();
 
-    let scenario = SCENARIOS
-        .get(cfg.scenario.as_str())
-        .expect("unknown scenario")
-        .clone();
+    let scenario = SCENARIOS.get(cfg.scenario.as_str()).expect("unknown scenario").clone();
 
     let env_inner = BucketBrigadeMaEnv::new(scenario, cfg.num_agents, Some(cfg.seed));
     let obs_dim = env_inner.obs_dim();
@@ -213,11 +206,7 @@ fn main() -> Result<()> {
     let mut policies: Vec<MultiDiscreteMlpPolicy> = Vec::with_capacity(cfg.num_agents);
     let mut optimizers: Vec<tch::nn::Optimizer> = Vec::with_capacity(cfg.num_agents);
     for _ in 0..cfg.num_agents {
-        let p = MultiDiscreteMlpPolicy::new(
-            obs_dim as i64,
-            action_dims.to_vec(),
-            cfg.hidden_dim,
-        );
+        let p = MultiDiscreteMlpPolicy::new(obs_dim as i64, action_dims.to_vec(), cfg.hidden_dim);
         let opt = tch::nn::Adam::default().build(p.var_store(), cfg.lr)?;
         policies.push(p);
         optimizers.push(opt);
@@ -303,9 +292,6 @@ fn main() -> Result<()> {
             .save(&path)
             .map_err(|e| anyhow::anyhow!("save policy {}: {}", i, e))?;
     }
-    println!(
-        "saved {} policy checkpoints to {:?}",
-        cfg.num_agents, cfg.output_dir
-    );
+    println!("saved {} policy checkpoints to {:?}", cfg.num_agents, cfg.output_dir);
     Ok(())
 }

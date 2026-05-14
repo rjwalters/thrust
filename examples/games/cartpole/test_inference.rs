@@ -3,8 +3,7 @@
 use anyhow::Result;
 use thrust_rl::{
     env::{Environment, cartpole::CartPole},
-    policy::inference::InferenceModel,
-    policy::mlp::MlpPolicy,
+    policy::{inference::InferenceModel, mlp::MlpPolicy},
 };
 
 fn main() -> Result<()> {
@@ -26,7 +25,8 @@ fn main() -> Result<()> {
     tracing::info!("Initial observation: {:?}", obs);
 
     // Test both models on same observation
-    let obs_tensor = tch::Tensor::from_slice(&obs).reshape([1, 4]).to_device(pytorch_policy.device());
+    let obs_tensor =
+        tch::Tensor::from_slice(&obs).reshape([1, 4]).to_device(pytorch_policy.device());
 
     // PyTorch model
     let (pytorch_actions, _, _) = pytorch_policy.get_action(&obs_tensor);
@@ -38,7 +38,11 @@ fn main() -> Result<()> {
     tracing::info!("Inference action: {}", inference_action);
 
     if pytorch_action as usize != inference_action {
-        tracing::error!("❌ MISMATCH! PyTorch: {}, Inference: {}", pytorch_action, inference_action);
+        tracing::error!(
+            "❌ MISMATCH! PyTorch: {}, Inference: {}",
+            pytorch_action,
+            inference_action
+        );
     } else {
         tracing::info!("✅ Actions match!");
     }
@@ -65,7 +69,8 @@ fn test_policy_pytorch(policy: &mut MlpPolicy, num_episodes: usize) -> Result<f6
 
         loop {
             let obs = env.get_state();
-            let obs_tensor = tch::Tensor::from_slice(&obs).reshape([1, 4]).to_device(policy.device());
+            let obs_tensor =
+                tch::Tensor::from_slice(&obs).reshape([1, 4]).to_device(policy.device());
             let (actions, _, _) = policy.get_action(&obs_tensor);
             let action: i64 = actions.int64_value(&[0]);
 

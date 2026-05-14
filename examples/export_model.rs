@@ -13,11 +13,10 @@
 //! cargo run --example export_model cartpole_model_best.pt cartpole_model_best.json --with-metadata
 //! ```
 
-use std::env;
-use std::collections::HashMap;
+use std::{collections::HashMap, env};
 
 use anyhow::Result;
-use thrust_rl::policy::{mlp::MlpPolicy, inference::TrainingMetadata};
+use thrust_rl::policy::{inference::TrainingMetadata, mlp::MlpPolicy};
 
 fn main() -> Result<()> {
     // Get command line arguments
@@ -89,13 +88,16 @@ fn main() -> Result<()> {
             total_steps: 1_000_000,
             total_episodes: 2_200,
             final_performance: 500.0,  // CartPole max
-            training_time_secs: 600.0,  // Approximate
+            training_time_secs: 600.0, // Approximate
             device: format!("{:?}", device),
             environment: "CartPole-v1".to_string(),
             algorithm: "PPO".to_string(),
             timestamp: Some(chrono::Utc::now().to_rfc3339()),
             hyperparameters: Some(hyperparameters),
-            notes: Some("Trained agent that successfully balances the pole for maximum episode length".to_string()),
+            notes: Some(
+                "Trained agent that successfully balances the pole for maximum episode length"
+                    .to_string(),
+            ),
         };
 
         exported_model.metadata = Some(metadata);

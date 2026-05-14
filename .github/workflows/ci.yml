@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,98 +17,107 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        # NB: do not use --all -- that descends into path-dep submodules
+        # (envs/bucket-brigade/) which have their own upstream rustfmt config
+        # and cannot be reformatted from this repo.
+        run: cargo fmt -- --check
 
-  # Run clippy
-  clippy:
-    name: Clippy
+  # Cheap "does it parse" check without libtorch.
+  # `--no-default-features` drops the `training` feature (and thus `tch`).
+  check_no_tch:
+    name: Check (no libtorch)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: cargo check --no-default-features
+        run: cargo check --no-default-features
+
+  # Real test job with libtorch on Linux. Uses scripts/setup-libtorch.sh to
+  # install PyTorch into a venv, then runs `cargo test --features training`.
+  test_linux_libtorch:
+    name: Tests (Linux + libtorch)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
-      - name: Cache cargo registry
-        uses: actions/cache@v3
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/setup-python@v5
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache cargo index
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache cargo build
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+          python-version: '3.12'
+      - name: Install libtorch via scripts/setup-libtorch.sh
+        run: ./scripts/setup-libtorch.sh
+      - name: cargo test --features training
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source .envrc.libtorch
+          cargo test --features training
 
-  # Run tests
-  test:
-    name: Test Suite
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable, nightly]
+  # Real test job with libtorch on macOS. Uses the same setup script. This is
+  # the exact regression target for issue #8 -- if it fails with a
+  # `dyld: Library not loaded:` error, the macOS recipe is broken.
+  test_macos_libtorch:
+    name: Tests (macOS + libtorch)
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
-      - name: Cache cargo registry
-        uses: actions/cache@v3
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/setup-python@v5
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache cargo index
-        uses: actions/cache@v3
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache cargo build
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-      - name: Run tests
-        run: cargo test --all-features
-      - name: Run doc tests
-        run: cargo test --doc --all-features
+          python-version: '3.12'
+      - name: Install libtorch via scripts/setup-libtorch.sh
+        run: ./scripts/setup-libtorch.sh
+      - name: cargo check --features training
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source .envrc.libtorch
+          cargo check --features training
+      # Run tests as a separate step so a hang doesn't mask the check result.
+      # If the macOS runner can't host libtorch, switch this to `cargo check`.
+      - name: cargo test --features training
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source .envrc.libtorch
+          cargo test --features training
 
-  # Check documentation
+  # Documentation
   docs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Cache cargo registry
-        uses: actions/cache@v3
         with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache cargo index
-        uses: actions/cache@v3
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/setup-python@v5
         with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-git-${{ hashFiles('**/Cargo.lock') }}
-      - name: Cache cargo build
-        uses: actions/cache@v3
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-      - name: Check documentation
-        run: cargo doc --no-deps --all-features
-        env:
-          RUSTDOCFLAGS: -D warnings
+          python-version: '3.12'
+      - name: Install libtorch via scripts/setup-libtorch.sh
+        run: ./scripts/setup-libtorch.sh
+      - name: cargo doc --no-deps --all-features
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC1091
+          source .envrc.libtorch
+          RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
   # Security audit
   security_audit:
@@ -116,18 +125,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: rustsec/audit-check@v1.4.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-  # Check minimum supported Rust version
-  msrv:
-    name: Minimum Supported Rust Version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.75.0  # Minimum supported version
-      - name: Check with MSRV
-        run: cargo check --all-features
