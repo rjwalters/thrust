@@ -178,6 +178,21 @@ impl MlpPolicy {
         (logits, values)
     }
 
+    /// Compute the shared-trunk feature representation for the given
+    /// observations.
+    ///
+    /// This is the natural quantity to feed into auxiliary loss terms that
+    /// regularize the *representation* a policy is learning (cross-agent
+    /// redundancy penalties, behavioural-diversity bonuses, contrastive or
+    /// predictive auxiliaries). Gradients flow back into the shared trunk.
+    ///
+    /// # Returns
+    /// A tensor of shape `[batch, hidden_dim]` --- the activations just
+    /// before the policy / value heads.
+    pub fn encoder_features(&self, obs: &Tensor) -> Tensor {
+        self.shared.forward(obs)
+    }
+
     /// Get action, log probability, and value for given observations
     pub fn get_action(&self, obs: &Tensor) -> (Tensor, Tensor, Tensor) {
         let (logits, values) = self.forward(obs);
