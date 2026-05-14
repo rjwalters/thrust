@@ -266,6 +266,13 @@ impl RolloutBatch {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Get the observation shape as (batch_size, obs_dim)
+    pub fn obs_shape(&self) -> (usize, usize) {
+        let batch_size = self.len();
+        let obs_dim = if batch_size == 0 { 0 } else { self.observations.len() / batch_size };
+        (batch_size, obs_dim)
+    }
 }
 
 #[cfg(test)]
@@ -316,7 +323,7 @@ mod tests {
 
         let batch = RolloutBatch::from_buffer(&buffer);
 
-        assert_eq!(batch.size(), 2);
+        assert_eq!(batch.len(), 2);
         assert_eq!(batch.actions, vec![1, 0]);
         assert_eq!(batch.advantages, vec![0.5, 0.8]);
         assert_eq!(batch.returns, vec![1.3, 2.0]);
@@ -334,7 +341,7 @@ mod tests {
             returns: vec![1.0, 1.5],
         };
 
-        assert_eq!(batch.size(), 2);
+        assert_eq!(batch.len(), 2);
         assert_eq!(batch.obs_shape(), (2, 2)); // 2 samples, 2 obs dims each
         assert!(!batch.is_empty());
     }
