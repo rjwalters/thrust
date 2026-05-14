@@ -61,7 +61,11 @@
 //! with. The `THRUST_EXPECT_CUDA` runtime check (see `src/utils/cuda.rs`)
 //! is independent of this opt-out.
 
-use std::{env, path::PathBuf, process::Command};
+use std::{
+    env,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn main() {
     // Re-run conditions: only re-run when the relevant environment variables
@@ -162,12 +166,11 @@ fn main() {
 /// or `None` if we can't find them (CPU-only or non-Linux libtorch).
 fn detect_cuda_lib_dir() -> Option<PathBuf> {
     // Strategy 1: pip-installed PyTorch via LIBTORCH_USE_PYTORCH=1.
-    if env::var("LIBTORCH_USE_PYTORCH").as_deref() == Ok("1") {
-        if let Some(dir) = pytorch_lib_dir_from_python() {
-            if has_cuda_libs(&dir) {
-                return Some(dir);
-            }
-        }
+    if env::var("LIBTORCH_USE_PYTORCH").as_deref() == Ok("1")
+        && let Some(dir) = pytorch_lib_dir_from_python()
+        && has_cuda_libs(&dir)
+    {
+        return Some(dir);
     }
 
     // Strategy 2: explicit LIBTORCH path.
@@ -183,10 +186,10 @@ fn detect_cuda_lib_dir() -> Option<PathBuf> {
     // LIBTORCH_USE_PYTORCH=1 explicitly --- if we can find a CUDA-enabled
     // torch we may as well emit the link args (they're a no-op without the
     // matching torch-sys link directives anyway).
-    if let Some(dir) = pytorch_lib_dir_from_python() {
-        if has_cuda_libs(&dir) {
-            return Some(dir);
-        }
+    if let Some(dir) = pytorch_lib_dir_from_python()
+        && has_cuda_libs(&dir)
+    {
+        return Some(dir);
     }
 
     None
@@ -203,18 +206,18 @@ fn pytorch_lib_dir_from_python() -> Option<PathBuf> {
                  print(os.path.join(os.path.dirname(torch.__file__), 'lib'))",
             )
             .output();
-        if let Ok(out) = out {
-            if out.status.success() {
-                let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !path.is_empty() {
-                    return Some(PathBuf::from(path));
-                }
+        if let Ok(out) = out
+            && out.status.success()
+        {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path.is_empty() {
+                return Some(PathBuf::from(path));
             }
         }
     }
     None
 }
 
-fn has_cuda_libs(dir: &PathBuf) -> bool {
+fn has_cuda_libs(dir: &Path) -> bool {
     dir.join("libtorch_cuda.so").exists() && dir.join("libc10_cuda.so").exists()
 }
