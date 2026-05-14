@@ -15,7 +15,8 @@ fn main() -> Result<()> {
     let device = policy.device();
 
     // Reset environment
-    let mut obs = env.reset()?;
+    env.reset();
+    let mut obs = env.get_observation();
     println!("Initial observation: {:?}", obs);
     println!();
 
@@ -36,7 +37,7 @@ fn main() -> Result<()> {
         println!("  Value estimate: {:.4}", value);
 
         // Step environment
-        let result = env.step(action)?;
+        let result = env.step(action);
 
         println!("  Reward: {}", result.reward);
         println!("  Terminated: {}", result.terminated);
