@@ -133,11 +133,10 @@ impl PolicyLearner {
             }
 
             // 3. Compute advantages with a correct GAE bootstrap value.
-            //    - If the final inserted transition ended the episode
-            //      (`terminated == true`), `V(s_{T+1}) = 0`.
-            //    - Otherwise (truncation / buffer-full), bootstrap with
-            //      `V(s_{T+1})` from the current policy, computed under
-            //      `no_grad`.
+            //    - If the final inserted transition ended the episode (`terminated ==
+            //      true`), `V(s_{T+1}) = 0`.
+            //    - Otherwise (truncation / buffer-full), bootstrap with `V(s_{T+1})` from
+            //      the current policy, computed under `no_grad`.
             let last_values = self.compute_bootstrap_last_values();
             self.buffer.compute_advantages(
                 &last_values,
@@ -220,8 +219,9 @@ impl PolicyLearner {
     fn ingest_experience(&mut self, exp: Experience) -> Result<()> {
         // Tensors may live on GPU; move to CPU before extracting to Vec.
         let obs_cpu = exp.observation.to_device(tch::Device::Cpu);
-        let obs_vec: Vec<f32> = Vec::<f32>::try_from(&obs_cpu)
-            .map_err(|e| anyhow::anyhow!("Failed to convert observation tensor to Vec<f32>: {e}"))?;
+        let obs_vec: Vec<f32> = Vec::<f32>::try_from(&obs_cpu).map_err(|e| {
+            anyhow::anyhow!("Failed to convert observation tensor to Vec<f32>: {e}")
+        })?;
 
         if obs_vec.len() != self.config.obs_dim {
             return Err(anyhow::anyhow!(
@@ -493,9 +493,9 @@ mod tests {
     ///   calls (defect #4: the buffer used to never be populated).
     /// - Verifies a full training cycle (collect → compute_advantages →
     ///   train_step → reset) runs without panicking.
-    /// - Verifies `compute_bootstrap_last_values` returns `vec![0.0]`
-    ///   for a terminal end and a non-zero `V(s_{T+1})` (or at least a
-    ///   distinct policy-derived value) for a non-terminal end (defect #2).
+    /// - Verifies `compute_bootstrap_last_values` returns `vec![0.0]` for a
+    ///   terminal end and a non-zero `V(s_{T+1})` (or at least a distinct
+    ///   policy-derived value) for a non-terminal end (defect #2).
     #[test]
     fn test_learner_ingests_experiences_and_trains() {
         let obs_dim: usize = 8;
@@ -514,15 +514,9 @@ mod tests {
             ..LearnerConfig::default()
         };
 
-        let mut learner = PolicyLearner::new(
-            0,
-            policy,
-            exp_receiver,
-            policy_sender,
-            config,
-            "/tmp".to_string(),
-        )
-        .expect("learner construction should succeed");
+        let mut learner =
+            PolicyLearner::new(0, policy, exp_receiver, policy_sender, config, "/tmp".to_string())
+                .expect("learner construction should succeed");
 
         // Push a small batch of experiences with the last one terminal.
         let n_exp = 6;
@@ -567,10 +561,8 @@ mod tests {
         // Force a non-terminal last_experience and verify the policy is
         // consulted (the result is a real f32 — not the placeholder 0.0
         // unconditionally).
-        learner.last_experience = Some(LastExperience {
-            next_observation: vec![0.5_f32; obs_dim],
-            terminated: false,
-        });
+        learner.last_experience =
+            Some(LastExperience { next_observation: vec![0.5_f32; obs_dim], terminated: false });
         let last_values_trunc = learner.compute_bootstrap_last_values();
         assert_eq!(last_values_trunc.len(), 1);
         assert!(last_values_trunc[0].is_finite(), "bootstrap value must be finite");
@@ -583,10 +575,8 @@ mod tests {
         // Run one full training cycle to confirm the loop is no longer
         // a silent no-op. Restore terminal state first so GAE bootstrap
         // is deterministic.
-        learner.last_experience = Some(LastExperience {
-            next_observation: vec![0.0_f32; obs_dim],
-            terminated: true,
-        });
+        learner.last_experience =
+            Some(LastExperience { next_observation: vec![0.0_f32; obs_dim], terminated: true });
         let last_values = learner.compute_bootstrap_last_values();
         learner.buffer.compute_advantages(
             &last_values,

@@ -1,8 +1,8 @@
 //! Synchronized joint multi-agent PPO trainer.
 //!
-//! This module provides [`JointMultiAgentTrainer`], a *synchronized* alternative
-//! to the per-thread architecture in [`crate::multi_agent::{PolicyLearner,
-//! Population}`].
+//! This module provides [`JointMultiAgentTrainer`], a *synchronized*
+//! alternative to the per-thread architecture in
+//! [`crate::multi_agent::{PolicyLearner, Population}`].
 //!
 //! # When to use this module
 //!
@@ -20,8 +20,8 @@
 //! encoder through one shared backward pass; per-thread learners cannot
 //! express this without heavy synchronization.
 //!
-//! Use [`crate::multi_agent::PolicyLearner`] / [`crate::multi_agent::Population`]
-//! instead when:
+//! Use [`crate::multi_agent::PolicyLearner`] /
+//! [`crate::multi_agent::Population`] instead when:
 //!
 //! - Each agent updates independently (league play, self-play, evolutionary
 //!   tournaments).
@@ -68,8 +68,8 @@ use crate::train::ppo::{compute_policy_loss, compute_value_loss};
 ///   value)` where `action` is whatever shape the policy emits (scalar
 ///   discrete: `[batch]`; multi-discrete: `[batch, num_dims]`).
 /// - **`evaluate_actions`**: re-evaluate the current policy on a previously
-///   sampled action to compute updated log-probs / entropy / value for the
-///   PPO loss.
+///   sampled action to compute updated log-probs / entropy / value for the PPO
+///   loss.
 /// - **`encoder_features`**: shared-trunk activations for the auxiliary loss.
 /// - **`var_store`** / **`device`**: book-keeping for the optimizer and
 ///   device-uniformity checks.
@@ -159,7 +159,8 @@ pub struct JointStepResult {
     pub observations: Vec<Vec<f32>>,
 }
 
-/// Minimal joint-environment surface needed by [`JointMultiAgentTrainer::collect_rollout`].
+/// Minimal joint-environment surface needed by
+/// [`JointMultiAgentTrainer::collect_rollout`].
 ///
 /// Why a fresh trait instead of [`crate::multi_agent::MultiAgentEnvironment`]?
 /// The existing trait takes `actions: &[i64]` and so cannot express factored /
@@ -399,9 +400,7 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
         let device = self.device;
 
         // Determine action shape from a probe call to policy 0.
-        let probe_obs = Tensor::from_slice(last_obs)
-            .to_device(device)
-            .view([1, obs_dim as i64]);
+        let probe_obs = Tensor::from_slice(last_obs).to_device(device).view([1, obs_dim as i64]);
         let (probe_act, _, _) = tch::no_grad(|| self.policies[0].get_action(&probe_obs));
         let probe_shape = probe_act.size();
         // Action layout:
@@ -424,17 +423,17 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
         let mut act_buf: Vec<Vec<i64>> =
             (0..num_agents).map(|_| vec![0_i64; num_steps * num_action_dims]).collect();
         let mut lp_buf: Vec<Vec<f32>> = (0..num_agents).map(|_| vec![0.0_f32; num_steps]).collect();
-        let mut val_buf: Vec<Vec<f32>> = (0..num_agents).map(|_| vec![0.0_f32; num_steps]).collect();
-        let mut rew_buf: Vec<Vec<f32>> = (0..num_agents).map(|_| vec![0.0_f32; num_steps]).collect();
+        let mut val_buf: Vec<Vec<f32>> =
+            (0..num_agents).map(|_| vec![0.0_f32; num_steps]).collect();
+        let mut rew_buf: Vec<Vec<f32>> =
+            (0..num_agents).map(|_| vec![0.0_f32; num_steps]).collect();
         let mut done_buf = vec![0.0_f32; num_steps];
 
         for t in 0..num_steps {
             let start = t * obs_dim;
             obs_buf[start..start + obs_dim].copy_from_slice(last_obs);
 
-            let obs_t = Tensor::from_slice(last_obs)
-                .to_device(device)
-                .view([1, obs_dim as i64]);
+            let obs_t = Tensor::from_slice(last_obs).to_device(device).view([1, obs_dim as i64]);
 
             let mut joint_action: Vec<Vec<i64>> = Vec::with_capacity(num_agents);
             for (i, policy) in self.policies.iter().enumerate() {
@@ -498,18 +497,12 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
                 })
                 .collect()
         };
-        let log_probs = lp_buf
-            .into_iter()
-            .map(|v| Tensor::from_slice(&v).to_device(device))
-            .collect();
-        let values = val_buf
-            .into_iter()
-            .map(|v| Tensor::from_slice(&v).to_device(device))
-            .collect();
-        let rewards = rew_buf
-            .into_iter()
-            .map(|v| Tensor::from_slice(&v).to_device(device))
-            .collect();
+        let log_probs =
+            lp_buf.into_iter().map(|v| Tensor::from_slice(&v).to_device(device)).collect();
+        let values =
+            val_buf.into_iter().map(|v| Tensor::from_slice(&v).to_device(device)).collect();
+        let rewards =
+            rew_buf.into_iter().map(|v| Tensor::from_slice(&v).to_device(device)).collect();
         let dones = Tensor::from_slice(&done_buf).to_device(device);
 
         JointRollout { observations, actions, log_probs, values, rewards, dones }
@@ -590,16 +583,11 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
 
                 let (policy_loss, clip_frac, kl) =
                     compute_policy_loss(&new_lp, &old_lp_mb, &adv_mb, self.config.clip_range);
-                let (value_loss, explained_var) = compute_value_loss(
-                    &values_mb,
-                    &old_v_mb,
-                    &ret_mb,
-                    self.config.clip_range_vf,
-                );
+                let (value_loss, explained_var) =
+                    compute_value_loss(&values_mb, &old_v_mb, &ret_mb, self.config.clip_range_vf);
                 let entropy_mean = entropy.mean(Kind::Float);
 
-                let agent_loss = &policy_loss
-                    + self.config.vf_coef * &value_loss
+                let agent_loss = &policy_loss + self.config.vf_coef * &value_loss
                     - self.config.ent_coef * &entropy_mean;
 
                 stats.policy_loss[i] += f64::try_from(&policy_loss).unwrap_or(0.0);
@@ -619,10 +607,8 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
             }
             let feat_refs: Vec<&Tensor> = features.iter().collect();
             let aux_opt = aux_fn(&feat_refs);
-            let aux_scalar: f64 = aux_opt
-                .as_ref()
-                .and_then(|t| f64::try_from(t).ok())
-                .unwrap_or(0.0);
+            let aux_scalar: f64 =
+                aux_opt.as_ref().and_then(|t| f64::try_from(t).ok()).unwrap_or(0.0);
             stats.aux_loss += aux_scalar;
             if let Some(aux) = aux_opt {
                 joint_loss = joint_loss + aux;
@@ -705,10 +691,10 @@ fn compute_gae_single_agent(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::policy::mlp::MlpPolicy;
-    use crate::policy::multi_discrete_mlp::MultiDiscreteMlpPolicy;
     use tch::nn::OptimizerConfig;
+
+    use super::*;
+    use crate::policy::{mlp::MlpPolicy, multi_discrete_mlp::MultiDiscreteMlpPolicy};
 
     /// Deterministic mock env: 4-dim obs (sin/cos of t and t/100, etc.),
     /// scalar rewards = sum of actions, never terminates within rollout.
@@ -751,10 +737,7 @@ mod tests {
     /// Capture trainable variables by name into a plain map of cloned
     /// tensors. The clones are detached and independent of the graph.
     fn capture_params(vs: &nn::VarStore) -> std::collections::HashMap<String, Tensor> {
-        vs.variables()
-            .into_iter()
-            .map(|(name, t)| (name, t.detach().copy()))
-            .collect()
+        vs.variables().into_iter().map(|(name, t)| (name, t.detach().copy())).collect()
     }
 
     fn map_l2_diff(
@@ -773,9 +756,7 @@ mod tests {
     }
 
     fn make_mlp_policies(num_agents: usize, obs_dim: i64, action_dim: i64) -> Vec<MlpPolicy> {
-        (0..num_agents)
-            .map(|_| MlpPolicy::new(obs_dim, action_dim, 16))
-            .collect()
+        (0..num_agents).map(|_| MlpPolicy::new(obs_dim, action_dim, 16)).collect()
     }
 
     fn make_multi_discrete_policies(
@@ -788,10 +769,7 @@ mod tests {
             .collect()
     }
 
-    fn make_optimizers_for_mlp(
-        policies: &mut [MlpPolicy],
-        lr: f64,
-    ) -> Vec<nn::Optimizer> {
+    fn make_optimizers_for_mlp(policies: &mut [MlpPolicy], lr: f64) -> Vec<nn::Optimizer> {
         policies
             .iter_mut()
             .map(|p| nn::Adam::default().build(p.var_store_mut(), lr).unwrap())
@@ -913,8 +891,7 @@ mod tests {
             normalize_advantages: false,
             ..Default::default()
         };
-        let mut trainer =
-            JointMultiAgentTrainer::new(policies, optimizers, config).unwrap();
+        let mut trainer = JointMultiAgentTrainer::new(policies, optimizers, config).unwrap();
 
         let mut env = MockEnv::new(num_agents, obs_dim as usize);
         let initial = env.reset_joint(None);
@@ -1010,4 +987,3 @@ mod tests {
         assert!(stats.total_loss.is_finite());
     }
 }
-

@@ -3,9 +3,10 @@
 //! This module provides a pure Rust implementation of neural network inference
 //! that doesn't depend on PyTorch/LibTorch, making it suitable for WebAssembly.
 
+use std::collections::HashMap;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// A serializable CNN model for Snake inference
 ///

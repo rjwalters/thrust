@@ -232,10 +232,8 @@ impl<P> PPOTrainer<P> {
                 let policy_loss_val: f64 = f64::try_from(&policy_loss).unwrap_or(0.0);
                 let value_loss_val: f64 = f64::try_from(&value_loss).unwrap_or(0.0);
                 let entropy_val: f64 = f64::try_from(&entropy).unwrap_or(0.0);
-                let aux_loss_val: f64 = aux_loss_opt
-                    .as_ref()
-                    .and_then(|t| f64::try_from(t).ok())
-                    .unwrap_or(0.0);
+                let aux_loss_val: f64 =
+                    aux_loss_opt.as_ref().and_then(|t| f64::try_from(t).ok()).unwrap_or(0.0);
 
                 // Total loss
                 let mut loss = &policy_loss

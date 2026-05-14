@@ -40,7 +40,7 @@ impl SnakeCNN {
         let conv1 = nn::conv2d(
             vs / "conv1",
             input_channels,
-            8,  // Reduced from 16 (4x smaller for WASM)
+            8, // Reduced from 16 (4x smaller for WASM)
             3,
             nn::ConvConfig { padding: 1, ..Default::default() },
         );
@@ -48,31 +48,31 @@ impl SnakeCNN {
         let conv2 = nn::conv2d(
             vs / "conv2",
             8,  // Reduced from 16
-            16,  // Reduced from 32 (4x smaller for WASM)
+            16, // Reduced from 32 (4x smaller for WASM)
             3,
             nn::ConvConfig { padding: 1, ..Default::default() },
         );
 
         let conv3 = nn::conv2d(
             vs / "conv3",
-            16,  // Reduced from 32
-            16,  // Reduced from 32 (4x smaller for WASM)
+            16, // Reduced from 32
+            16, // Reduced from 32 (4x smaller for WASM)
             3,
             nn::ConvConfig { padding: 1, ..Default::default() },
         );
 
         // Calculate flattened size after convolutions
         // With padding=1, size stays the same after each conv
-        let flat_size = 16 * grid_size * grid_size;  // Updated for new conv3 size
+        let flat_size = 16 * grid_size * grid_size; // Updated for new conv3 size
 
         // Common feature layer - ULTRA-COMPACT for fast WASM inference!
-        let fc_common = nn::linear(vs / "fc_common", flat_size, 64, Default::default());  // Reduced from 128 (4x smaller for WASM)
+        let fc_common = nn::linear(vs / "fc_common", flat_size, 64, Default::default()); // Reduced from 128 (4x smaller for WASM)
 
         // Policy head (outputs 4 actions)
-        let fc_policy = nn::linear(vs / "policy", 64, 4, Default::default());  // Updated for new fc_common size
+        let fc_policy = nn::linear(vs / "policy", 64, 4, Default::default()); // Updated for new fc_common size
 
         // Value head (outputs single value)
-        let fc_value = nn::linear(vs / "value", 64, 1, Default::default());  // Updated for new fc_common size
+        let fc_value = nn::linear(vs / "value", 64, 1, Default::default()); // Updated for new fc_common size
 
         Self { conv1, conv2, conv3, fc_common, fc_policy, fc_value }
     }
