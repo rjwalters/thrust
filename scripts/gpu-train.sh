@@ -31,16 +31,23 @@ export PYTORCH_LIB=$(/usr/bin/python3 -c 'import torch; import os; print(os.path
 export LD_LIBRARY_PATH="$PYTORCH_LIB:${LD_LIBRARY_PATH:-}"
 export LIBTORCH_BYPASS_VERSION_CHECK=1
 
-# CRITICAL: Preload CUDA libraries to ensure they're loaded at runtime
-export LD_PRELOAD="$PYTORCH_LIB/libtorch_cuda.so:$PYTORCH_LIB/libtorch.so"
+# Make silent CPU fallback a hard error: the crate-root build.rs is supposed
+# to keep libtorch_cuda in NEEDED, but if it ever fails (e.g. a custom
+# libtorch path that doesn't ship libtorch_cuda.so), we'd rather know
+# loudly than benchmark a misleading run.
+export THRUST_EXPECT_CUDA=1
 
-# CRITICAL: Force linker to keep CUDA library dependency
-export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
+# NOTE: As of issue #9 the crate-root build.rs now emits positional
+# `-Wl,--no-as-needed` + `-ltorch_cuda` + `-lc10_cuda` so the linker does
+# NOT strip the CUDA libs from DT_NEEDED. The historical LD_PRELOAD +
+# RUSTFLAGS workaround is no longer required. If you ever need to fall
+# back, uncomment the two lines below.
+# export LD_PRELOAD="$PYTORCH_LIB/libtorch_cuda.so:$PYTORCH_LIB/libtorch.so"
+# export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
 
 echo "Debug: PYTORCH_LIB=$PYTORCH_LIB"
 echo "Debug: LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
-echo "Debug: LD_PRELOAD=$LD_PRELOAD"
-echo "Debug: RUSTFLAGS=$RUSTFLAGS"
+echo "Debug: THRUST_EXPECT_CUDA=$THRUST_EXPECT_CUDA"
 echo ""
 
 # Create log file with timestamp
