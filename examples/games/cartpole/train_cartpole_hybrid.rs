@@ -256,6 +256,7 @@ fn main() -> Result<()> {
         environment: "CartPole-v1".to_string(),
         algorithm: "PPO (Hybrid config)".to_string(),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        hyperparameters: None,
         notes: Some(format!(
             "Hybrid training: ReLU activation, 128 hidden units, n_steps=64, batch_size=256, n_epochs=15, \
              lr=0.0005->0 (linear decay), gamma=0.99, gae_lambda=0.95, ent_coef=0.005. \

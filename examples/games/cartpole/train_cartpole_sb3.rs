@@ -262,6 +262,7 @@ fn main() -> Result<()> {
         environment: "CartPole-v1".to_string(),
         algorithm: "PPO (Stable-Baselines3 config)".to_string(),
         timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        hyperparameters: None,
         notes: Some(format!(
             "SB3-matched training: n_steps=32, batch_size=256, n_epochs=20, lr=0.001->0 (linear decay), \
              gamma=0.98, gae_lambda=0.8, ent_coef=0.0, Tanh activation. \
