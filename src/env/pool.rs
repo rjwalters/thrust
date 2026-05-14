@@ -293,7 +293,11 @@ mod tests {
     fn test_pool_action_space() {
         let pool = EnvPool::new(CartPole::new, 4);
         let action_space = pool.action_space();
-        assert_eq!(action_space.shape, Vec::<usize>::new());
+        // CartPole action space reports shape `[2]` alongside SpaceType::Discrete(2);
+        // see PR #16 for the rationale. Pool delegates to env[0].action_space(),
+        // so the pool inherits the same shape semantics.
+        assert_eq!(action_space.shape, vec![2]);
+        assert!(matches!(action_space.space_type, crate::env::SpaceType::Discrete(2)));
     }
 
     #[test]
