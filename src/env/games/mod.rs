@@ -11,8 +11,14 @@ pub mod pong;
 pub mod simple_bandit;
 pub mod snake;
 
+#[cfg(feature = "env-bucket-brigade")]
+pub mod bucket_brigade;
+
 // Re-export main types for convenience
 pub use cartpole::CartPole;
 pub use pong::Pong;
 pub use simple_bandit::SimpleBandit;
 pub use snake::SnakeEnv;
+
+#[cfg(feature = "env-bucket-brigade")]
+pub use bucket_brigade::BucketBrigadeMaEnv;
