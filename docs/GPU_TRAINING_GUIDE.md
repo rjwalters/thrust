@@ -50,24 +50,32 @@ Points to PyTorch's lib directory so libraries can be found at runtime:
 export LD_LIBRARY_PATH=$(python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
 ```
 
-### 3. LD_PRELOAD (CRITICAL for GPU)
-Forces CUDA libraries to load even if linker thinks they're "unused":
+### 3. LD_PRELOAD (no longer required as of issue #9)
+The crate-root `build.rs` now keeps `libtorch_cuda.so` and
+`libc10_cuda.so` in the binary's `DT_NEEDED` list automatically, so
+setting `LD_PRELOAD` is no longer necessary. If you ever need to fall
+back (e.g. a custom libtorch that the build.rs can't auto-detect):
 ```bash
 export LD_PRELOAD="$PYTORCH_LIB/libtorch_cuda.so:$PYTORCH_LIB/libtorch.so"
 ```
 
-Without this, you get symbol lookup errors like:
+Historical symptom that this used to fix:
 ```
 undefined symbol: _ZNK3c107SymBool14guard_or_falseEPKcl
 ```
 
-### 4. RUSTFLAGS (CRITICAL for GPU)
-Prevents linker from dropping CUDA dependencies:
-```bash
-export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
-```
+### 4. RUSTFLAGS (no longer required as of issue #9)
+The `build.rs` re-emits `-Wl,--no-as-needed -ltorch_cuda -lc10_cuda` at
+the correct position on the linker command line, so the historical
+`RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"` workaround is unnecessary.
+Kept here for historical reference --- still safe to set, just redundant.
 
-### 5. LIBTORCH_BYPASS_VERSION_CHECK=1
+### 5. THRUST_EXPECT_CUDA=1 (CRITICAL for GPU runs)
+Turns silent CPU fallback into a hard error (exit 2) if for any reason
+`tch::Cuda::is_available()` ends up false. All three GPU wrapper scripts
+set this automatically.
+
+### 6. LIBTORCH_BYPASS_VERSION_CHECK=1
 Allows minor version mismatches (use carefully).
 
 ## Why Use Nightly Rust?
@@ -106,11 +114,10 @@ cd ~/thrust
 # 3. Pull latest code
 git pull
 
-# 4. Set up environment
+# 4. Set up environment (build.rs handles the linker; just point at libtorch)
 export LIBTORCH_USE_PYTORCH=1
 export LD_LIBRARY_PATH=$(python3 -c 'import torch; import os; print(os.path.join(os.path.dirname(torch.__file__), "lib"))')
-export LD_PRELOAD="$LD_LIBRARY_PATH/libtorch_cuda.so:$LD_LIBRARY_PATH/libtorch.so"
-export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
+export THRUST_EXPECT_CUDA=1   # hard-fail if tch falls back to Cpu
 
 # 5. Build with nightly
 cargo +nightly build --example train_snake_multi_v2 --release
@@ -161,16 +168,26 @@ Look for:
 ## Common Issues
 
 ### Issue 1: "Using CPU" instead of GPU
-**Cause**: CUDA libraries not properly linked or LD_PRELOAD not set
-**Fix**: Use `cargo +nightly` and set all environment variables
+**Cause**: `build.rs` did not detect a CUDA-enabled libtorch at build time,
+or `LIBTORCH_USE_PYTORCH=1` was not set. With `THRUST_EXPECT_CUDA=1`, this
+now hard-fails with exit code 2 and a diagnostic message.
+**Fix**:
+1. Verify Python has CUDA: `python3 -c 'import torch; print(torch.cuda.is_available())'`.
+2. `cargo clean` (build.rs is cached) and rebuild with `LIBTORCH_USE_PYTORCH=1`.
+3. Verify with `ldd target/release/examples/<bin> | grep torch_cuda`.
 
 ### Issue 2: Symbol lookup errors
 **Symptoms**:
 ```
 symbol lookup error: undefined symbol: _ZNK3c107SymBool...
 ```
-**Cause**: LD_PRELOAD not set, so CUDA libraries aren't loaded
-**Fix**: Set LD_PRELOAD before building AND running
+**Cause**: The CUDA libraries were not linked. This used to be the
+"`--as-needed` strips libtorch_cuda" bug; `build.rs` should now prevent it.
+**Fix**: Confirm `ldd | grep torch_cuda` shows both libtorch_cuda and
+c10_cuda. If not, see Issue 1. As a last resort:
+```bash
+export LD_PRELOAD="$PYTORCH_LIB/libtorch_cuda.so:$PYTORCH_LIB/libtorch.so"
+```
 
 ### Issue 3: PyTorch version mismatch
 **Symptoms**: Compilation errors in torch-sys about missing/changed APIs
@@ -181,17 +198,20 @@ ssh rwalters-sandbox-2
 pip3 install --break-system-packages torch==2.9.0
 ```
 
-### Issue 4: Build succeeds but runtime error
-**Cause**: Binary was built without RUSTFLAGS/LD_PRELOAD, so dependencies are wrong
-**Fix**: Clean and rebuild:
+### Issue 4: Build succeeds but runtime crash / CPU fallback
+**Cause**: Binary was built against a libtorch that lacks CUDA, or the
+build.rs failed to detect CUDA so the link args were not emitted.
+**Fix**: Clean and rebuild with `LIBTORCH_USE_PYTORCH=1` set:
 ```bash
 cargo clean
-# Then rebuild with all env vars set
+export LIBTORCH_USE_PYTORCH=1
+cargo build --example <bin> --release
 ```
 
 ### Issue 5: "Cannot find libtorch_cpu.so"
-**Cause**: LD_LIBRARY_PATH not set at runtime
-**Fix**: Set LD_LIBRARY_PATH before running (not just building)
+**Cause**: LD_LIBRARY_PATH not set at runtime (the `build.rs` adds an
+`-rpath`, but only for the CUDA lib dir).
+**Fix**: Set LD_LIBRARY_PATH before running (not just building).
 
 ## Remote Machine Setup
 
@@ -258,14 +278,17 @@ If GPU training isn't working, verify each step:
 - [ ] PyTorch version is 2.9.0: `python3 -c 'import torch; print(torch.__version__)'`
 - [ ] CUDA is available: `python3 -c 'import torch; print(torch.cuda.is_available())'`
 - [ ] Using nightly Rust: `cargo +nightly --version`
-- [ ] LIBTORCH_USE_PYTORCH=1 is set
+- [ ] LIBTORCH_USE_PYTORCH=1 is set (build.rs needs this to detect CUDA)
 - [ ] LD_LIBRARY_PATH points to PyTorch lib directory
-- [ ] LD_PRELOAD includes libtorch_cuda.so and libtorch.so
-- [ ] RUSTFLAGS includes --no-as-needed
-- [ ] Ran `cargo clean` after changing environment variables
+- [ ] `ldd target/release/examples/<bin> | grep torch_cuda` is non-empty
+- [ ] Ran `cargo clean` after changing build environment
 - [ ] Built with `cargo +nightly build --release`
 - [ ] Training code passes `--cuda` flag
+- [ ] THRUST_EXPECT_CUDA=1 set (fails loudly if anything regresses)
 - [ ] nvidia-smi shows GPU utilization during training
+
+LD_PRELOAD and RUSTFLAGS=`--no-as-needed` are no longer required as of
+issue #9. The crate-root `build.rs` handles linker behavior.
 
 ## Performance Expectations
 
