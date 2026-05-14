@@ -106,6 +106,25 @@ pub trait JointPolicy {
     /// Immutable view of the policy's var-store (for parameter inspection
     /// and checkpointing).
     fn var_store(&self) -> &nn::VarStore;
+
+    /// Per-dimension action cardinalities.
+    ///
+    /// Returns a vector whose length is the number of factored action
+    /// dimensions and whose entries are the cardinality of each dim.
+    ///
+    /// - Scalar discrete (e.g. [`crate::policy::mlp::MlpPolicy`] with
+    ///   `action_dim = 5`): returns `vec![5]` (one dim, cardinality 5). The
+    ///   rollout buffer uses `num_action_dims = 1`.
+    /// - Multi-discrete (e.g.
+    ///   [`crate::policy::multi_discrete_mlp::MultiDiscreteMlpPolicy`] with
+    ///   `action_dims = [10, 2]`): returns `vec![10, 2]`. The rollout buffer
+    ///   uses `num_action_dims = 2`.
+    ///
+    /// Used by [`JointMultiAgentTrainer::collect_rollout`] to size action
+    /// buffers without calling [`JointPolicy::get_action`] (which would
+    /// consume libtorch RNG draws -- one per action dimension via
+    /// `multinomial` -- and break parity with reference implementations).
+    fn action_dims(&self) -> Vec<i64>;
 }
 
 impl JointPolicy for crate::policy::mlp::MlpPolicy {
@@ -124,6 +143,11 @@ impl JointPolicy for crate::policy::mlp::MlpPolicy {
     fn var_store(&self) -> &nn::VarStore {
         self.var_store()
     }
+    fn action_dims(&self) -> Vec<i64> {
+        // Scalar-discrete policy: a single action dim of cardinality
+        // `self.action_dim()`.
+        vec![self.action_dim()]
+    }
 }
 
 impl JointPolicy for crate::policy::multi_discrete_mlp::MultiDiscreteMlpPolicy {
@@ -141,6 +165,15 @@ impl JointPolicy for crate::policy::multi_discrete_mlp::MultiDiscreteMlpPolicy {
     }
     fn var_store(&self) -> &nn::VarStore {
         self.var_store()
+    }
+    fn action_dims(&self) -> Vec<i64> {
+        // Naming-collision note: `MultiDiscreteMlpPolicy` already has an
+        // inherent method `action_dims(&self) -> &[i64]`. The trait method
+        // returns `Vec<i64>` (a different type), so there's no ambiguity at
+        // the language level -- the impl-block context resolves the call to
+        // the inherent method, and we materialize a `Vec` via `.to_vec()`.
+        // Readers may double-take; the comment documents the intent.
+        self.action_dims().to_vec()
     }
 }
 
@@ -397,25 +430,20 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
         let obs_dim = last_obs.len();
         let device = self.device;
 
-        // Determine action shape from a probe call to policy 0.
-        let probe_obs = Tensor::from_slice(last_obs).to_device(device).view([1, obs_dim as i64]);
-        let (probe_act, _, _) = tch::no_grad(|| self.policies[0].get_action(&probe_obs));
-        let probe_shape = probe_act.size();
-        // Action layout:
+        // Determine action shape from the policy's declared per-dim
+        // cardinalities. The previous implementation called
+        // `policies[0].get_action(&probe_obs)` here, which consumes one
+        // libtorch RNG draw per action dimension (via `multinomial`) and so
+        // shifts the per-step action sampling stream for the entire rollout.
+        // That broke first-iter numerical parity with the pre-extraction
+        // reference example at `40ec676:examples/games/bucket_brigade/train_p3.rs`.
+        // Using the trait's shape-introspection method is parity-preserving
+        // because it touches no tensor ops.
+        //
+        // Action layout (unchanged from before):
         //   scalar discrete: [1]            -> per-step action = scalar
         //   multi-discrete:  [1, num_dims]  -> per-step action = vec of dims
-        let num_action_dims: usize = if probe_shape.len() == 1 {
-            1
-        } else if probe_shape.len() == 2 {
-            probe_shape[1] as usize
-        } else {
-            panic!(
-                "JointMultiAgentTrainer::collect_rollout: unexpected action tensor rank {} (size {:?})",
-                probe_shape.len(),
-                probe_shape
-            );
-        };
-        drop(probe_act);
+        let num_action_dims: usize = self.policies[0].action_dims().len();
 
         let mut obs_buf = vec![0.0_f32; num_steps * obs_dim];
         let mut act_buf: Vec<Vec<i64>> =
