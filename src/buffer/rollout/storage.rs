@@ -270,7 +270,11 @@ impl RolloutBatch {
     /// Get the observation shape as (batch_size, obs_dim)
     pub fn obs_shape(&self) -> (usize, usize) {
         let batch_size = self.len();
-        let obs_dim = if batch_size == 0 { 0 } else { self.observations.len() / batch_size };
+        let obs_dim = if batch_size == 0 {
+            0
+        } else {
+            self.observations.len() / batch_size
+        };
         (batch_size, obs_dim)
     }
 }
