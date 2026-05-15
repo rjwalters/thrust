@@ -365,6 +365,172 @@ impl<P> PPOTrainer<P> {
         )
     }
 
+    /// Train for one PPO update using the trainer's own policy.
+    ///
+    /// Like [`Self::train_step_with_policy`], but evaluates `self.policy`
+    /// directly instead of requiring the caller to supply a separate
+    /// `&Policy` reference. This avoids the `&mut self + &self.policy`
+    /// split-borrow conflict at call sites: by performing the split-borrow
+    /// internally on disjoint struct fields (`policy` vs. `optimizer`,
+    /// `config`, etc.), the borrow checker proves disjointness in safe code.
+    ///
+    /// # Arguments
+    /// Same as [`Self::train_step`], except `evaluate_fn` receives
+    /// `&self.policy` as its first argument and is invoked per-minibatch.
+    pub fn train_step_self_policy<F>(
+        &mut self,
+        observations: &Tensor,
+        actions: &Tensor,
+        old_log_probs: &Tensor,
+        old_values: &Tensor,
+        advantages: &Tensor,
+        returns: &Tensor,
+        evaluate_fn: F,
+    ) -> Result<TrainingStats>
+    where
+        F: Fn(&P, &Tensor, &Tensor) -> (Tensor, Tensor, Tensor),
+    {
+        // Split-borrow `self` into its disjoint fields. Rust accepts this in
+        // safe code because `policy`, `optimizer`, `config`, `total_steps`,
+        // and `low_entropy_count` are non-overlapping struct fields.
+        let Self { config, policy, optimizer, total_steps, low_entropy_count, .. } = self;
+
+        let optimizer = optimizer
+            .as_mut()
+            .ok_or_else(|| anyhow!("Optimizer not set. Call set_optimizer() first."))?;
+
+        let batch_size = observations.size()[0] as usize;
+        let mut stats_sum = TrainingStats::zeros();
+        let mut num_updates = 0;
+
+        // Advantage normalization (matches train_step_with_aux).
+        let adv_mean = advantages.mean(tch::Kind::Float);
+        let adv_std = advantages.std(false);
+        let advantages_normalized = (advantages - adv_mean) / (adv_std + 1e-8);
+
+        // Multiple epochs over the data
+        for _epoch in 0..config.n_epochs {
+            let batch_indices = generate_minibatch_indices(batch_size, config.batch_size);
+
+            for indices in &batch_indices {
+                let indices_i64: Vec<i64> = indices.iter().map(|&i| i as i64).collect();
+                let indices_tensor = Tensor::from_slice(&indices_i64);
+
+                // Sample minibatch
+                let mb_obs =
+                    observations.index_select(0, &indices_tensor.to_device(observations.device()));
+                let mb_actions =
+                    actions.index_select(0, &indices_tensor.to_device(actions.device()));
+                let mb_old_log_probs = old_log_probs
+                    .index_select(0, &indices_tensor.to_device(old_log_probs.device()));
+                let mb_old_values =
+                    old_values.index_select(0, &indices_tensor.to_device(old_values.device()));
+                let mb_advantages = advantages_normalized
+                    .index_select(0, &indices_tensor.to_device(advantages_normalized.device()));
+                let mb_returns =
+                    returns.index_select(0, &indices_tensor.to_device(returns.device()));
+
+                // Forward pass: call directly through `&self.policy` via the
+                // split-borrow above. No `unsafe`, no raw pointers.
+                let (log_probs, entropy, values) = evaluate_fn(policy, &mb_obs, &mb_actions);
+
+                // Compute losses
+                let (policy_loss, clip_fraction, approx_kl) = compute_policy_loss(
+                    &log_probs,
+                    &mb_old_log_probs,
+                    &mb_advantages,
+                    config.clip_range,
+                );
+
+                let (value_loss, explained_var) =
+                    compute_value_loss(&values, &mb_old_values, &mb_returns, config.clip_range_vf);
+
+                let entropy_loss = compute_entropy_loss(&entropy);
+
+                // Extract scalar values before tensors are moved
+                let policy_loss_val: f64 = f64::try_from(&policy_loss).unwrap_or(0.0);
+                let value_loss_val: f64 = f64::try_from(&value_loss).unwrap_or(0.0);
+                let entropy_val: f64 = f64::try_from(&entropy).unwrap_or(0.0);
+
+                // Total loss
+                let loss =
+                    &policy_loss + config.vf_coef * &value_loss + config.ent_coef * &entropy_loss;
+
+                let total_loss_val: f64 = f64::try_from(&loss).unwrap_or(0.0);
+
+                // Backward pass
+                optimizer.zero_grad();
+                loss.backward();
+
+                // Gradient clipping
+                optimizer.clip_grad_norm(config.max_grad_norm);
+
+                // Optimizer step
+                optimizer.step();
+
+                // Accumulate statistics
+                let step_stats = TrainingStats::new(
+                    policy_loss_val,
+                    value_loss_val,
+                    entropy_val,
+                    total_loss_val,
+                    clip_fraction,
+                    approx_kl,
+                    explained_var,
+                );
+                stats_sum.add(&step_stats);
+                num_updates += 1;
+
+                // Early stopping based on KL divergence
+                if approx_kl > config.target_kl {
+                    break;
+                }
+            }
+        }
+
+        // Update training counters
+        *total_steps += num_updates;
+
+        // Get average statistics
+        let avg_stats = stats_sum.average();
+
+        // Check for entropy collapse (early stopping)
+        const ENTROPY_THRESHOLD: f64 = 0.05;
+        const MAX_LOW_ENTROPY_COUNT: usize = 3;
+
+        if avg_stats.entropy < ENTROPY_THRESHOLD {
+            *low_entropy_count += 1;
+            tracing::warn!(
+                "⚠️  Low entropy detected: {:.4} (count: {}/{})",
+                avg_stats.entropy,
+                *low_entropy_count,
+                MAX_LOW_ENTROPY_COUNT
+            );
+
+            if *low_entropy_count >= MAX_LOW_ENTROPY_COUNT {
+                tracing::error!(
+                    "🚨 Training stopped: Entropy collapse detected! Entropy has been below {:.3} for {} consecutive updates.",
+                    ENTROPY_THRESHOLD,
+                    MAX_LOW_ENTROPY_COUNT
+                );
+                return Err(anyhow!(
+                    "Training stopped due to entropy collapse (entropy < {} for {} updates)",
+                    ENTROPY_THRESHOLD,
+                    MAX_LOW_ENTROPY_COUNT
+                ));
+            }
+        } else if *low_entropy_count > 0 {
+            // Reset counter if entropy is healthy
+            tracing::info!(
+                "✅ Entropy recovered: {:.4} (reset low entropy counter)",
+                avg_stats.entropy
+            );
+            *low_entropy_count = 0;
+        }
+
+        Ok(avg_stats)
+    }
+
     /// Increment step counter
     pub fn increment_steps(&mut self, steps: usize) {
         self.total_steps += steps;

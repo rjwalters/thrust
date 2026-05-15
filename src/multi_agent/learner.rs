@@ -330,36 +330,23 @@ impl PolicyLearner {
         let advantages = Tensor::from_slice(&batch.advantages).to_device(device);
         let returns = Tensor::from_slice(&batch.returns).to_device(device);
 
-        // Run one PPO update. `PPOTrainer::train_step_with_policy` already
-        // performs `config.n_epochs` epochs over the batch internally and
-        // returns the averaged statistics across all minibatch updates, so we
-        // must NOT wrap this call in an additional `n_epochs` loop --- doing so
-        // would cause `n_epochs²` PPO epochs per call (see issue #41).
-        //
-        // Note: We can't use the convenience `train_step()` because it requires
-        // both `&self.policy` and `&mut self.trainer`. Instead, we call the
-        // trainer with its own policy via raw pointers.
-        //
-        // Safety: The trainer owns the policy, so this is safe as long as we don't
-        // call any methods that would try to borrow trainer mutably during policy
-        // access.
-        let trainer_ptr: *mut PPOTrainer<MlpPolicy> = &mut self.trainer;
-        let policy_ptr: *const MlpPolicy = unsafe { &*trainer_ptr }.policy();
-
-        let stats = unsafe {
-            (*trainer_ptr).train_step_with_policy(
-                &*policy_ptr,
-                &observations,
-                &actions,
-                &old_log_probs,
-                &old_values,
-                &advantages,
-                &returns,
-                |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| {
-                    policy.evaluate_actions(obs, acts)
-                },
-            )?
-        };
+        // Run one PPO update via the safe split-borrow path. The trainer's
+        // `train_step_self_policy` accesses `self.policy` and the optimizer
+        // through disjoint-field destructuring, eliminating the `unsafe`
+        // raw-pointer workaround that previously lived here (see #39). It
+        // already performs `config.n_epochs` epochs over the batch internally
+        // and returns averaged stats across all minibatches, so we must NOT
+        // wrap this call in an additional `n_epochs` loop --- doing so would
+        // cause `n_epochs²` PPO epochs per call (see #41).
+        let stats = self.trainer.train_step_self_policy(
+            &observations,
+            &actions,
+            &old_log_probs,
+            &old_values,
+            &advantages,
+            &returns,
+            |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| policy.evaluate_actions(obs, acts),
+        )?;
 
         // The trainer returns averaged stats already; just pass through the
         // fields we expose on the multi-agent `TrainingStats` message.
