@@ -28,7 +28,7 @@ Compile Rust inference code to WASM and run trained policies in the browser with
 ├─────────────────────────────────────────────────────────────┤
 │  • Load .pt model                                           │
 │  • Extract layer weights & biases                           │
-│  • Export to JSON/bincode                                   │
+│  • Export to JSON                                           │
 └─────────────────────────────────────────────────────────────┘
                           │
                           │ Portable weights
@@ -66,7 +66,6 @@ Compile Rust inference code to WASM and run trained policies in the browser with
 
 2. **Weight Export/Import** (`src/inference/weights.rs`)
    - `save_json()` / `load_json()`: JSON serialization
-   - `save_bincode()` / `load_bincode()`: Binary format
    - Tests: Roundtrip serialization
 
 3. **Training Infrastructure**

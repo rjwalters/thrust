@@ -27,27 +27,6 @@ impl ExportedModel {
         let model = serde_json::from_str(&contents)?;
         Ok(model)
     }
-
-    /// Save model to binary format (bincode)
-    /// Only available with the "training" feature
-    #[cfg(feature = "training")]
-    pub fn save_bincode<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let encoded = bincode::serialize(self)?;
-        let mut file = File::create(path)?;
-        file.write_all(&encoded)?;
-        Ok(())
-    }
-
-    /// Load model from binary format (bincode)
-    /// Only available with the "training" feature
-    #[cfg(feature = "training")]
-    pub fn load_bincode<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let mut file = File::open(path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-        let model = bincode::deserialize(&buffer)?;
-        Ok(model)
-    }
 }
 
 #[cfg(test)]
@@ -74,21 +53,6 @@ mod tests {
         assert_eq!(model.input_dim, loaded.input_dim);
         assert_eq!(model.output_dim, loaded.output_dim);
         assert_eq!(model.hidden_dim, loaded.hidden_dim);
-
-        Ok(())
-    }
-
-    #[test]
-    #[cfg(feature = "training")]
-    fn test_bincode_roundtrip() -> Result<()> {
-        let model = create_test_model();
-        let temp_file = NamedTempFile::new()?;
-
-        model.save_bincode(temp_file.path())?;
-        let loaded = ExportedModel::load_bincode(temp_file.path())?;
-
-        assert_eq!(model.input_dim, loaded.input_dim);
-        assert_eq!(model.output_dim, loaded.output_dim);
 
         Ok(())
     }

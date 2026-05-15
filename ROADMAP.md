@@ -27,7 +27,7 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 
 **WASM Infrastructure (Partial)**
 - [x] Pure Rust inference module (no PyTorch deps)
-- [x] ExportedModel with JSON/bincode serialization
+- [x] ExportedModel with JSON serialization
 - [x] Forward pass implementation (softmax, linear layers)
 - [x] 5 passing inference tests
 
