@@ -324,32 +324,25 @@ impl PolicyLearner {
         let advantages = Tensor::from_slice(&batch.advantages).to_device(device);
         let returns = Tensor::from_slice(&batch.returns).to_device(device);
 
-        // Train for multiple epochs
-        // Note: We can't use train_step() because it requires both &self.policy and
-        // &mut self.trainer Instead, we'll use a workaround by calling the
-        // trainer directly with its own policy
+        // Train for multiple epochs.
+        //
+        // `PPOTrainer::train_step_self_policy` performs the split-borrow on
+        // `self.trainer`'s disjoint fields internally, so we no longer need
+        // the `unsafe` raw-pointer workaround that previously appeared here
+        // (see issue #39).
         let mut total_stats = TrainingStats::default();
         for _ in 0..self.config.n_epochs {
-            // Safety: The trainer owns the policy, so this is safe as long as we don't
-            // call any methods that would try to borrow trainer mutably during policy
-            // access
-            let trainer_ptr: *mut PPOTrainer<MlpPolicy> = &mut self.trainer;
-            let policy_ptr: *const MlpPolicy = unsafe { &*trainer_ptr }.policy();
-
-            let stats = unsafe {
-                (*trainer_ptr).train_step_with_policy(
-                    &*policy_ptr,
-                    &observations,
-                    &actions,
-                    &old_log_probs,
-                    &old_values,
-                    &advantages,
-                    &returns,
-                    |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| {
-                        policy.evaluate_actions(obs, acts)
-                    },
-                )?
-            };
+            let stats = self.trainer.train_step_self_policy(
+                &observations,
+                &actions,
+                &old_log_probs,
+                &old_values,
+                &advantages,
+                &returns,
+                |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| {
+                    policy.evaluate_actions(obs, acts)
+                },
+            )?;
 
             // Accumulate stats
             total_stats.total_loss += stats.total_loss;
