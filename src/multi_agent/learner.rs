@@ -299,7 +299,13 @@ impl PolicyLearner {
         }
     }
 
-    /// Run PPO training step
+    /// Run a PPO training step.
+    ///
+    /// Delegates to `PPOTrainer::train_step_with_policy`, which internally
+    /// iterates over the rollout for `config.n_epochs` PPO epochs and returns
+    /// averaged statistics across all minibatch updates. This method performs
+    /// exactly one such trainer call --- it does NOT add an outer epoch loop
+    /// (doing so would compound epochs multiplicatively; see issue #41).
     fn train_step(&mut self) -> Result<TrainingStats> {
         // Get batch from the filled prefix of the buffer. `RolloutBuffer`
         // pre-allocates its full capacity at construction, so calling
@@ -324,49 +330,47 @@ impl PolicyLearner {
         let advantages = Tensor::from_slice(&batch.advantages).to_device(device);
         let returns = Tensor::from_slice(&batch.returns).to_device(device);
 
-        // Train for multiple epochs
-        // Note: We can't use train_step() because it requires both &self.policy and
-        // &mut self.trainer Instead, we'll use a workaround by calling the
-        // trainer directly with its own policy
-        let mut total_stats = TrainingStats::default();
-        for _ in 0..self.config.n_epochs {
-            // Safety: The trainer owns the policy, so this is safe as long as we don't
-            // call any methods that would try to borrow trainer mutably during policy
-            // access
-            let trainer_ptr: *mut PPOTrainer<MlpPolicy> = &mut self.trainer;
-            let policy_ptr: *const MlpPolicy = unsafe { &*trainer_ptr }.policy();
+        // Run one PPO update. `PPOTrainer::train_step_with_policy` already
+        // performs `config.n_epochs` epochs over the batch internally and
+        // returns the averaged statistics across all minibatch updates, so we
+        // must NOT wrap this call in an additional `n_epochs` loop --- doing so
+        // would cause `n_epochs²` PPO epochs per call (see issue #41).
+        //
+        // Note: We can't use the convenience `train_step()` because it requires
+        // both `&self.policy` and `&mut self.trainer`. Instead, we call the
+        // trainer with its own policy via raw pointers.
+        //
+        // Safety: The trainer owns the policy, so this is safe as long as we don't
+        // call any methods that would try to borrow trainer mutably during policy
+        // access.
+        let trainer_ptr: *mut PPOTrainer<MlpPolicy> = &mut self.trainer;
+        let policy_ptr: *const MlpPolicy = unsafe { &*trainer_ptr }.policy();
 
-            let stats = unsafe {
-                (*trainer_ptr).train_step_with_policy(
-                    &*policy_ptr,
-                    &observations,
-                    &actions,
-                    &old_log_probs,
-                    &old_values,
-                    &advantages,
-                    &returns,
-                    |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| {
-                        policy.evaluate_actions(obs, acts)
-                    },
-                )?
-            };
+        let stats = unsafe {
+            (*trainer_ptr).train_step_with_policy(
+                &*policy_ptr,
+                &observations,
+                &actions,
+                &old_log_probs,
+                &old_values,
+                &advantages,
+                &returns,
+                |policy: &MlpPolicy, obs: &Tensor, acts: &Tensor| {
+                    policy.evaluate_actions(obs, acts)
+                },
+            )?
+        };
 
-            // Accumulate stats
-            total_stats.total_loss += stats.total_loss;
-            total_stats.policy_loss += stats.policy_loss;
-            total_stats.value_loss += stats.value_loss;
-            total_stats.entropy += stats.entropy;
-        }
-
-        // Average over epochs
-        let n = self.config.n_epochs as f64;
-        total_stats.total_loss /= n;
-        total_stats.policy_loss /= n;
-        total_stats.value_loss /= n;
-        total_stats.entropy /= n;
-        total_stats.step = self.step;
-
-        Ok(total_stats)
+        // The trainer returns averaged stats already; just pass through the
+        // fields we expose on the multi-agent `TrainingStats` message.
+        Ok(TrainingStats {
+            total_loss: stats.total_loss,
+            policy_loss: stats.policy_loss,
+            value_loss: stats.value_loss,
+            entropy: stats.entropy,
+            step: self.step,
+            ..TrainingStats::default()
+        })
     }
 
     /// Send policy update to simulator
