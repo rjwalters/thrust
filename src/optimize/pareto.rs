@@ -1,5 +1,4 @@
 //! Pareto frontier computation for multi-objective optimization
-
-pub struct ParetoFrontier;
-
-// TODO: Implement Pareto frontier tracking
+//!
+//! TODO: Implement Pareto frontier tracking. When the concrete type lands,
+//! re-add it and its re-export in `super::mod.rs`.
