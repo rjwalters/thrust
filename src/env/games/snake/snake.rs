@@ -115,6 +115,9 @@ impl Snake {
 /// Food pellet in the game
 #[derive(Debug, Clone)]
 pub struct Food {
+    /// Grid cell the food occupies. Guaranteed to be in-bounds and not
+    /// overlap any live snake segment by construction (see
+    /// [`Food::generate_random`]).
     pub position: Position,
 }
 

@@ -23,29 +23,43 @@ pub struct SnakeCNNInference {
     /// Number of actions (should be 4 for Snake)
     pub num_actions: usize,
 
-    // Conv layer 1: input_channels -> 32 channels, 3x3 kernel
-    pub conv1_weight: Vec<Vec<Vec<Vec<f32>>>>, // [32, input_channels, 3, 3]
-    pub conv1_bias: Vec<f32>,                  // [32]
+    /// Conv1 kernel weights, shape `[out=32, in=input_channels, kh=3, kw=3]`.
+    /// Applied first in [`SnakeCNNInference::forward`] with `padding=1`.
+    pub conv1_weight: Vec<Vec<Vec<Vec<f32>>>>,
+    /// Conv1 per-output-channel bias, shape `[32]`.
+    pub conv1_bias: Vec<f32>,
 
-    // Conv layer 2: 32 -> 64 channels, 3x3 kernel
-    pub conv2_weight: Vec<Vec<Vec<Vec<f32>>>>, // [64, 32, 3, 3]
-    pub conv2_bias: Vec<f32>,                  // [64]
+    /// Conv2 kernel weights, shape `[out=64, in=32, kh=3, kw=3]`. Applied
+    /// after Conv1 + ReLU with `padding=1`.
+    pub conv2_weight: Vec<Vec<Vec<Vec<f32>>>>,
+    /// Conv2 per-output-channel bias, shape `[64]`.
+    pub conv2_bias: Vec<f32>,
 
-    // Conv layer 3: 64 -> 64 channels, 3x3 kernel
-    pub conv3_weight: Vec<Vec<Vec<Vec<f32>>>>, // [64, 64, 3, 3]
-    pub conv3_bias: Vec<f32>,                  // [64]
+    /// Conv3 kernel weights, shape `[out=64, in=64, kh=3, kw=3]`. Applied
+    /// after Conv2 + ReLU with `padding=1`.
+    pub conv3_weight: Vec<Vec<Vec<Vec<f32>>>>,
+    /// Conv3 per-output-channel bias, shape `[64]`.
+    pub conv3_bias: Vec<f32>,
 
-    // FC common: 64*grid_width*grid_height -> 256
-    pub fc_common_weight: Vec<Vec<f32>>, // [256, flat_size]
-    pub fc_common_bias: Vec<f32>,        // [256]
+    /// Shared fully-connected weights, shape
+    /// `[256, 64 * grid_width * grid_height]`, applied to the flattened
+    /// Conv3 output.
+    pub fc_common_weight: Vec<Vec<f32>>,
+    /// Shared fully-connected bias, shape `[256]`.
+    pub fc_common_bias: Vec<f32>,
 
-    // Policy head: 256 -> num_actions
-    pub fc_policy_weight: Vec<Vec<f32>>, // [num_actions, 256]
-    pub fc_policy_bias: Vec<f32>,        // [num_actions]
+    /// Policy head weights, shape `[num_actions, 256]`. Output is raw logits
+    /// (no softmax applied here — callers do that in
+    /// [`SnakeCNNInference::get_action`] or externally).
+    pub fc_policy_weight: Vec<Vec<f32>>,
+    /// Policy head bias, shape `[num_actions]`.
+    pub fc_policy_bias: Vec<f32>,
 
-    // Value head: 256 -> 1
-    pub fc_value_weight: Vec<Vec<f32>>, // [1, 256]
-    pub fc_value_bias: Vec<f32>,        // [1]
+    /// Value head weights, shape `[1, 256]`. Produces a scalar state-value
+    /// estimate (no activation).
+    pub fc_value_weight: Vec<Vec<f32>>,
+    /// Value head bias, shape `[1]`.
+    pub fc_value_bias: Vec<f32>,
 
     /// Optional training metadata
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -215,9 +229,18 @@ impl SnakeCNNInference {
 }
 
 /// Activation function type for inference
+///
+/// Selected at model export time and serialized into the `.json` model file.
+/// Applied element-wise inside [`InferenceModel::forward`] on the hidden
+/// layers, hence the deliberately small variant set.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum InferenceActivation {
+    /// Rectified linear unit, `max(x, 0)`. Matches PPO's default hidden
+    /// activation when training scripts export with `--activation relu`.
     ReLU,
+    /// Hyperbolic tangent, `x.tanh()`. Used as the implicit default when a
+    /// serialized model omits the `activation` field (see the serde
+    /// `default` attribute on [`InferenceModel::activation`]).
     Tanh,
 }
 
