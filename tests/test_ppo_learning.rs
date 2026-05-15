@@ -1,8 +1,14 @@
 //! Unit test to verify PPO can learn from synthetic data
 //!
-//! This test creates a simple batch where the optimal action is obvious:
-//! - When obs=0, action=0 has high advantage (should increase probability)
-//! - When obs=1, action=1 has high advantage (should increase probability)
+//! This test creates a contrastive batch where the optimal action is obvious:
+//! - (obs=0, action=0) and (obs=1, action=1) have positive advantage (good)
+//! - (obs=0, action=1) and (obs=1, action=0) have negative advantage (bad)
+//!
+//! Contrastive (not uniformly-positive) advantages are required because the
+//! trainer applies the standard PPO advantage-normalization step
+//! `(A - mean) / (std + eps)` which collapses a constant-advantage batch to
+//! identically zero gradient. With contrastive advantages, normalization
+//! preserves the relative signal and PPO converges in a handful of steps.
 //!
 //! If PPO is working correctly, after a few updates:
 //! - P(action=0 | obs=0) should increase
@@ -23,49 +29,53 @@ fn test_ppo_learns_from_synthetic_data() {
     let device = policy.device();
 
     // Create synthetic training batch
-    // 8 samples: 4 with obs=0 (should learn action=0), 4 with obs=1 (should learn
-    // action=1)
+    // 16 samples: 4 of each (obs, action) pair, with contrastive advantages so
+    // the post-normalization signal is non-zero (see module docstring).
     let observations = Tensor::from_slice(&[
-        0.0_f32, 0.0, 0.0, 0.0, // obs=0
-        1.0, 1.0, 1.0, 1.0, // obs=1
+        0.0_f32, 0.0, 0.0, 0.0, // (obs=0, action=0) -- good
+        0.0, 0.0, 0.0, 0.0, // (obs=0, action=1) -- bad
+        1.0, 1.0, 1.0, 1.0, // (obs=1, action=0) -- bad
+        1.0, 1.0, 1.0, 1.0, // (obs=1, action=1) -- good
     ])
-    .view([8, 1])
+    .view([16, 1])
     .to_device(device);
 
     let actions = Tensor::from_slice(&[
-        0_i64, 0, 0, 0, // action=0 for obs=0
-        1, 1, 1, 1, // action=1 for obs=1
+        0_i64, 0, 0, 0, // (obs=0, action=0)
+        1, 1, 1, 1, // (obs=0, action=1)
+        0, 0, 0, 0, // (obs=1, action=0)
+        1, 1, 1, 1, // (obs=1, action=1)
     ])
     .to_device(device);
 
-    // OLD log probs (all equal - uniform random policy initially)
-    let old_log_probs = Tensor::from_slice(&[
-        -0.693_f32, -0.693, -0.693, -0.693, // log(0.5)
-        -0.693, -0.693, -0.693, -0.693,
-    ])
-    .to_device(device);
+    // OLD log probs (all log(0.5) - uniform random policy initially)
+    let old_log_probs = Tensor::from_slice(&[-0.693_f32; 16]).to_device(device);
 
     // OLD values (doesn't matter for this test)
-    let old_values = Tensor::zeros([8], (Kind::Float, device));
+    let old_values = Tensor::zeros([16], (Kind::Float, device));
 
-    // ADVANTAGES: High positive advantage for correct actions
+    // ADVANTAGES: positive for correct (obs, action), negative for incorrect.
+    // The +/-10 contrast (mean 0, non-zero std) survives advantage
+    // normalization inside the trainer; a constant-advantage batch would
+    // collapse to identically zero gradient.
     let advantages = Tensor::from_slice(&[
-        10.0_f32, 10.0, 10.0, 10.0, // action=0 for obs=0 is good
-        10.0, 10.0, 10.0, 10.0, // action=1 for obs=1 is good
+        10.0_f32, 10.0, 10.0, 10.0, // (obs=0, action=0) good
+        -10.0, -10.0, -10.0, -10.0, // (obs=0, action=1) bad
+        -10.0, -10.0, -10.0, -10.0, // (obs=1, action=0) bad
+        10.0, 10.0, 10.0, 10.0, // (obs=1, action=1) good
     ])
     .to_device(device);
 
     // RETURNS (doesn't matter much for this test)
-    let returns =
-        Tensor::from_slice(&[10.0_f32, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0]).to_device(device);
+    let returns = Tensor::from_slice(&[0.0_f32; 16]).to_device(device);
 
     // Measure initial policy probabilities
     let (initial_logits, _) = policy.forward(&observations);
     let initial_probs = initial_logits.softmax(-1, Kind::Float);
 
-    // Get probabilities for obs=0
+    // Get probabilities for obs=0 (row 0 in the 16-row batch) and obs=1 (row 12).
     let obs_0_probs_before: Vec<f32> = Vec::try_from(initial_probs.get(0)).unwrap();
-    let obs_1_probs_before: Vec<f32> = Vec::try_from(initial_probs.get(4)).unwrap();
+    let obs_1_probs_before: Vec<f32> = Vec::try_from(initial_probs.get(12)).unwrap();
 
     println!("BEFORE training:");
     println!("  P(action=0 | obs=0) = {:.4}", obs_0_probs_before[0]);
@@ -75,7 +85,7 @@ fn test_ppo_learns_from_synthetic_data() {
     let config = PPOConfig::new()
         .learning_rate(0.01)  // High learning rate for fast learning
         .n_epochs(10)
-        .batch_size(8)
+        .batch_size(16)
         .clip_range(0.2)
         .vf_coef(0.5)
         .ent_coef(0.0)  // Zero entropy coefficient to focus purely on advantage
@@ -140,7 +150,7 @@ fn test_ppo_learns_from_synthetic_data() {
     let final_probs = final_logits.softmax(-1, Kind::Float);
 
     let obs_0_probs_after: Vec<f32> = Vec::try_from(final_probs.get(0)).unwrap();
-    let obs_1_probs_after: Vec<f32> = Vec::try_from(final_probs.get(4)).unwrap();
+    let obs_1_probs_after: Vec<f32> = Vec::try_from(final_probs.get(12)).unwrap();
 
     println!("\nAFTER training:");
     println!("  P(action=0 | obs=0) = {:.4}", obs_0_probs_after[0]);
