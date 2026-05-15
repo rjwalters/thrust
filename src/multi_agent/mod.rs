@@ -27,6 +27,11 @@
 //! See [`crate::multi_agent::joint`] for the detailed semantics and acceptance
 //! criteria.
 
+// Training-feature modules still owe public docs; tracked as the
+// `--features training` follow-up to #33. Re-enable as `#![warn(missing_docs)]`
+// once those items are documented.
+#![allow(missing_docs)]
+
 pub mod environment;
 pub mod joint;
 pub mod learner;

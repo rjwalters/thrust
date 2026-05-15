@@ -6,9 +6,14 @@
 /// Direction a snake can move
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
+    /// Decreasing y (delta `(0, -1)`); corresponds to action index 0.
     Up,
+    /// Increasing y (delta `(0, 1)`); corresponds to action index 1.
     Down,
+    /// Decreasing x (delta `(-1, 0)`); corresponds to action index 2.
     Left,
+    /// Increasing x (delta `(1, 0)`); corresponds to action index 3 and any
+    /// out-of-range action passed to [`Direction::from_action`].
     Right,
 }
 
@@ -47,7 +52,11 @@ impl Direction {
 /// Position on the grid
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position {
+    /// Column coordinate. May be negative or out-of-bounds for transient
+    /// values before [`Position::wrap`] or [`Position::in_bounds`] checks.
     pub x: i32,
+    /// Row coordinate. May be negative or out-of-bounds for transient values
+    /// before [`Position::wrap`] or [`Position::in_bounds`] checks.
     pub y: i32,
 }
 
@@ -84,23 +93,42 @@ impl Position {
 /// Game cell content
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Cell {
+    /// Unoccupied cell — safe to move into.
     Empty,
+    /// Cell holds a food pellet — moving into it grows the snake and triggers
+    /// a respawn of the food.
     Food,
-    SnakeHead(usize), // Snake ID
-    SnakeBody(usize), // Snake ID
+    /// Head of a snake. The `usize` payload is the snake id, i.e. the index
+    /// into [`GameState::scores`] and [`GameState::active_agents`].
+    SnakeHead(usize),
+    /// Body segment of a snake. The `usize` payload is the snake id, same
+    /// indexing as [`Cell::SnakeHead`].
+    SnakeBody(usize),
 }
 
 /// Game state for rendering
 #[derive(Debug, Clone)]
 pub struct GameState {
+    /// Row-major grid of cells: `grid[y][x]` is the cell at column `x`,
+    /// row `y`. Dimensions are `[height][width]`.
     pub grid: Vec<Vec<Cell>>,
+    /// Cumulative score per snake, indexed by snake id (same id as carried by
+    /// [`Cell::SnakeHead`] and [`Cell::SnakeBody`]).
     pub scores: Vec<i32>,
+    /// Liveness flag per snake, indexed by snake id. `false` means the snake
+    /// died (wall, self, or other-snake collision) and no longer takes
+    /// actions; its segments are removed from the grid.
     pub active_agents: Vec<bool>,
+    /// Number of completed episodes (resets) since environment construction.
     pub episode: usize,
+    /// Step count within the current episode, reset on each new episode.
     pub steps: usize,
 }
 
 impl GameState {
+    /// Construct an empty game state with a `width x height` grid of
+    /// [`Cell::Empty`] cells, zero scores, and all `num_agents` snakes
+    /// flagged alive. `episode` and `steps` both start at 0.
     pub fn new(width: usize, height: usize, num_agents: usize) -> Self {
         Self {
             grid: vec![vec![Cell::Empty; width]; height],

@@ -3,6 +3,11 @@
 //! This module provides JavaScript bindings for our Rust environments
 //! so they can be rendered in the browser.
 
+// Wasm-feature surface still owes public docs; tracked as the
+// `--features wasm` follow-up to #33. Re-enable as `#![warn(missing_docs)]`
+// once those items are documented.
+#![allow(missing_docs)]
+
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 

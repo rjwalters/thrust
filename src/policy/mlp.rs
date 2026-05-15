@@ -29,6 +29,11 @@
 //!  Actions   Value
 //! ```
 
+// Training-feature surface still owes public docs; tracked as the
+// `--features training` follow-up to #33. Re-enable as `#![warn(missing_docs)]`
+// once those items are documented.
+#![allow(missing_docs)]
+
 use anyhow::Result;
 use tch::{
     Device, Kind, Tensor,

@@ -32,6 +32,9 @@ mod types;
 // mod multi_agent;
 
 // Legacy aliases for backward compatibility
+/// Backward-compatible alias for [`SnakeEnv`]; kept so older training scripts
+/// that imported `SnakeEnvSingle` continue to compile. Prefer `SnakeEnv` in new
+/// code.
 pub type SnakeEnvSingle = SnakeEnv;
 // TODO: Re-enable after fixing multi-agent code
 // #[cfg(feature = "training")]

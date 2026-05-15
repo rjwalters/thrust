@@ -10,14 +10,25 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 /// Activation function types supported by the inference engine
+///
+/// Serialized as the enum variant name by default. `Gelu` and `Swish` use
+/// the custom serde names `"GELU"` and `"Swish"` for compatibility with the
+/// upstream JSON wire format produced by the training-side exporter.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum Activation {
+    /// Rectified linear unit, `max(x, 0)`. Most common hidden activation.
     ReLU,
+    /// Hyperbolic tangent, `x.tanh()`. Bounded output in `(-1, 1)`.
     Tanh,
+    /// Logistic sigmoid, `1 / (1 + exp(-x))`. Bounded output in `(0, 1)`.
     Sigmoid,
+    /// No-op pass-through; useful for explicit "linear" output heads.
     Identity,
+    /// Approximate Gaussian error linear unit (`tanh` approximation, see
+    /// [`Activation::apply`]). Serialized as `"GELU"`.
     #[serde(rename = "GELU")]
     Gelu,
+    /// `x * sigmoid(x)` (also known as SiLU). Serialized as `"Swish"`.
     #[serde(rename = "Swish")]
     Swish,
 }
@@ -56,41 +67,81 @@ pub enum Layer {
     /// Fully connected (linear) layer
     #[serde(rename = "linear")]
     Linear {
+        /// Human-readable layer name, propagated from the exporter (e.g.
+        /// `"fc1"`). Used only for diagnostics / pretty-printing.
         name: String,
+        /// Input feature count. Must match the size of the incoming 1D
+        /// tensor or [`Layer::forward`] returns an error.
         in_features: usize,
+        /// Output feature count, equal to `weight.len()` and `bias.len()`.
         out_features: usize,
-        weight: Vec<Vec<f32>>, // [out_features, in_features]
-        bias: Vec<f32>,        // [out_features]
+        /// Dense weight matrix, shape `[out_features, in_features]`.
+        weight: Vec<Vec<f32>>,
+        /// Per-output bias, shape `[out_features]`.
+        bias: Vec<f32>,
     },
 
     /// 2D Convolutional layer
     #[serde(rename = "conv2d")]
     Conv2d {
+        /// Human-readable layer name (e.g. `"conv1"`).
         name: String,
+        /// Expected channel depth of the input tensor.
         in_channels: usize,
+        /// Channel depth of the produced tensor (`= weight.len()`).
         out_channels: usize,
-        kernel_size: usize, // Assumes square kernel
+        /// Side length of the square kernel; both height and width.
+        kernel_size: usize,
+        /// Zero-padding applied symmetrically on all four sides before the
+        /// kernel sweep.
         padding: usize,
+        /// Step between successive kernel positions along both axes.
         stride: usize,
-        weight: Vec<Vec<Vec<Vec<f32>>>>, // [out_channels, in_channels, kernel_h, kernel_w]
-        bias: Vec<f32>,                  // [out_channels]
+        /// Kernel weights, shape
+        /// `[out_channels, in_channels, kernel_size, kernel_size]`.
+        weight: Vec<Vec<Vec<Vec<f32>>>>,
+        /// Per-output-channel bias, shape `[out_channels]`.
+        bias: Vec<f32>,
     },
 
     /// Activation layer
     #[serde(rename = "activation")]
-    Activation { name: String, activation: Activation },
+    Activation {
+        /// Human-readable layer name (e.g. `"relu1"`).
+        name: String,
+        /// Element-wise function applied in place; see [`Activation::apply`].
+        activation: Activation,
+    },
 
     /// Reshape/Flatten layer
     #[serde(rename = "flatten")]
-    Flatten { name: String },
+    Flatten {
+        /// Human-readable layer name. Flatten collapses any input rank into
+        /// a 1D tensor in `[c, h, w]` order.
+        name: String,
+    },
 
     /// Reshape layer with specific dimensions
     #[serde(rename = "reshape")]
-    Reshape { name: String, shape: Vec<usize> },
+    Reshape {
+        /// Human-readable layer name.
+        name: String,
+        /// Target tensor shape. Supported lengths are `1` (1D `[size]`) and
+        /// `3` (3D `[channels, height, width]`); other lengths cause
+        /// [`Layer::forward`] to return an error.
+        shape: Vec<usize>,
+    },
 
     /// Residual/Skip connection (adds input to output)
     #[serde(rename = "residual")]
-    Residual { name: String, layers: Vec<Layer> },
+    Residual {
+        /// Human-readable layer name (e.g. `"resblock1"`).
+        name: String,
+        /// Sub-layers applied to a clone of the input; the result is added
+        /// element-wise back into the original input. Shapes of the
+        /// pre- and post-sub-layer tensors must match.
+        layers: Vec<Layer>,
+    },
 }
 
 impl Layer {
@@ -340,43 +391,76 @@ impl Tensor {
 pub enum InputSpec {
     /// 1D vector input (e.g., for CartPole, SimpleBandit)
     #[serde(rename = "vector")]
-    Vector { size: usize },
+    Vector {
+        /// Length of the flat input vector. Callers must pass exactly this
+        /// many floats into [`UniversalModel::forward`].
+        size: usize,
+    },
 
     /// 3D grid input (e.g., for Snake)
     #[serde(rename = "grid")]
-    Grid { channels: usize, height: usize, width: usize },
+    Grid {
+        /// Number of input channels stacked along the leading axis (e.g.
+        /// 5 for Snake's body / head / food / etc. planes).
+        channels: usize,
+        /// Grid height in cells.
+        height: usize,
+        /// Grid width in cells. The expected flat input length is
+        /// `channels * height * width`, laid out as channel-major,
+        /// then row-major within each channel.
+        width: usize,
+    },
 }
 
 /// Output specification for the model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutputSpec {
-    /// Number of actions (for policy head)
+    /// Length of the policy-head logit vector. For discrete-action
+    /// environments this is the action vocabulary size.
     pub num_actions: usize,
-    /// Whether to include value head
+    /// If `true`, the model's `value_head` is expected to be present and
+    /// produces a scalar state-value estimate alongside the policy logits.
     pub has_value: bool,
 }
 
 /// Training metadata
+///
+/// All fields are optional so older `.model.json` files (or models exported
+/// without a particular field populated) continue to deserialize cleanly.
+/// `None` values are skipped during serialization.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelMetadata {
+    /// Total gradient steps the optimizer took during training.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_steps: Option<usize>,
+    /// Total environment episodes consumed during training.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_episodes: Option<usize>,
+    /// Final evaluation metric (typically mean episode return) recorded by
+    /// the trainer at the time of export. Units are algorithm-specific.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub final_performance: Option<f64>,
+    /// Wall-clock training time in seconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub training_time_secs: Option<f64>,
+    /// Name of the compute device used (e.g. `"cuda:0"`, `"cpu"`, `"mps"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device: Option<String>,
+    /// Environment identifier (e.g. `"snake-10x10"`, `"cartpole"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environment: Option<String>,
+    /// Training algorithm identifier (e.g. `"ppo"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub algorithm: Option<String>,
+    /// ISO-8601 timestamp of export, set by the trainer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+    /// Free-form notes captured at export (e.g. "trained on 4xH100").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
+    /// Hyperparameter snapshot captured at export. Values are kept as
+    /// `serde_json::Value` so the wire format is open to additional keys
+    /// without trainer/inference coupling.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hyperparameters: Option<HashMap<String, serde_json::Value>>,
 }
