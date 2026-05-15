@@ -4,10 +4,8 @@
 //! - CartPole: Classic cart-pole balancing task
 //! - Snake: Snake game with configurable grid size
 //! - SimpleBandit: Simple multi-armed bandit for testing
-//! - Pong: Two-player adversarial Pong game
 
 pub mod cartpole;
-pub mod pong;
 pub mod simple_bandit;
 pub mod snake;
 
@@ -18,6 +16,5 @@ pub mod bucket_brigade;
 #[cfg(feature = "env-bucket-brigade")]
 pub use bucket_brigade::BucketBrigadeMaEnv;
 pub use cartpole::CartPole;
-pub use pong::Pong;
 pub use simple_bandit::SimpleBandit;
 pub use snake::SnakeEnv;
