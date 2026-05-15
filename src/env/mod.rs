@@ -78,7 +78,7 @@ pub struct StepInfo {
 pub mod games;
 
 // Re-export game environments for backwards compatibility
-pub use games::{CartPole, Pong, SimpleBandit, SnakeEnv, cartpole, pong, simple_bandit, snake};
+pub use games::{CartPole, SimpleBandit, SnakeEnv, cartpole, simple_bandit, snake};
 
 // Training utilities
 #[cfg(feature = "training")]
