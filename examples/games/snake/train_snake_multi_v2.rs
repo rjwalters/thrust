@@ -66,10 +66,10 @@ impl Default for Args {
             epochs: 1000,
             learning_rate: 3e-4,
             gae_lambda: 0.95,
-            gamma: 0.99,
+            gamma: 0.97,
             clip_param: 0.2,
             value_coef: 0.5,
-            entropy_coef: 0.03,
+            entropy_coef: 0.005,
             ppo_epochs: 4,
             minibatch_size: 512,  // Larger minibatch to keep GPU busy during PPO update
             output: PathBuf::from("models/snake_policy.safetensors"),
