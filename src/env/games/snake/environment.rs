@@ -66,7 +66,7 @@ impl SnakeEnv {
             food: food_pos,
             episode: 0,
             steps: 0,
-            max_steps: 1000,
+            max_steps: 400,
             done: false,
         }
     }
@@ -74,6 +74,15 @@ impl SnakeEnv {
     /// Create new single-agent snake environment (for backward compatibility)
     pub fn new(width: i32, height: i32) -> Self {
         Self::new_multi(width, height, 1)
+    }
+
+    /// Toroidal (wraparound) distance between two positions
+    fn toroidal_distance(&self, a: &Position, b: &Position) -> f32 {
+        let dx = (a.x - b.x).unsigned_abs() as f32;
+        let dy = (a.y - b.y).unsigned_abs() as f32;
+        let dx = dx.min(self.width as f32 - dx);
+        let dy = dy.min(self.height as f32 - dy);
+        (dx * dx + dy * dy).sqrt()
     }
 
     /// Reset environment to initial state
@@ -117,13 +126,11 @@ impl SnakeEnv {
             };
         }
 
-        // Store previous distances to food for reward shaping
+        // Store previous distances to food for reward shaping (toroidal)
         let mut prev_distances: Vec<f32> = Vec::new();
         for snake in &self.snakes {
             if snake.is_alive() {
-                let dx = (snake.head.x - self.food.x) as f32;
-                let dy = (snake.head.y - self.food.y) as f32;
-                prev_distances.push((dx * dx + dy * dy).sqrt());
+                prev_distances.push(self.toroidal_distance(&snake.head, &self.food));
             } else {
                 prev_distances.push(f32::MAX); // Dead snakes don't get distance rewards
             }
@@ -149,12 +156,7 @@ impl SnakeEnv {
                 continue;
             }
 
-            // Check wall collision
-            if self.snakes[i].collides_with_wall(self.width, self.height) {
-                self.snakes[i].alive = false;
-                total_reward -= 0.5; // Reduced death penalty
-                continue;
-            }
+            // Note: no wall collision — game uses toroidal wraparound boundaries
 
             // Check self collision
             if self.snakes[i].collides_with_self() {
@@ -220,15 +222,11 @@ impl SnakeEnv {
                     total_reward += length_bonus;
                 }
 
-                // Distance-based reward shaping: reward getting closer to food
+                // Distance-based reward shaping: reward getting closer to food (toroidal)
                 if i < prev_distances.len() {
-                    let dx = (self.snakes[i].head.x - self.food.x) as f32;
-                    let dy = (self.snakes[i].head.y - self.food.y) as f32;
-                    let current_distance = (dx * dx + dy * dy).sqrt();
+                    let current_distance =
+                        self.toroidal_distance(&self.snakes[i].head, &self.food);
                     let distance_delta = prev_distances[i] - current_distance;
-
-                    // Reward for moving closer (+0.1), penalty for moving away (-0.1)
-                    // Normalized by grid size to keep rewards consistent
                     let distance_reward =
                         distance_delta / (self.width.max(self.height) as f32) * 2.0;
                     total_reward += distance_reward;
@@ -264,13 +262,11 @@ impl SnakeEnv {
             return (vec![0.0; self.snakes.len()], true, false);
         }
 
-        // Store previous distances to food for reward shaping
+        // Store previous distances to food for reward shaping (toroidal)
         let mut prev_distances: Vec<f32> = Vec::new();
         for snake in &self.snakes {
             if snake.is_alive() {
-                let dx = (snake.head.x - self.food.x) as f32;
-                let dy = (snake.head.y - self.food.y) as f32;
-                prev_distances.push((dx * dx + dy * dy).sqrt());
+                prev_distances.push(self.toroidal_distance(&snake.head, &self.food));
             } else {
                 prev_distances.push(f32::MAX); // Dead snakes don't get distance rewards
             }
@@ -362,15 +358,11 @@ impl SnakeEnv {
                     agent_rewards[i] += length_bonus;
                 }
 
-                // Distance-based reward shaping: reward getting closer to food
+                // Distance-based reward shaping: reward getting closer to food (toroidal)
                 if i < prev_distances.len() {
-                    let dx = (self.snakes[i].head.x - self.food.x) as f32;
-                    let dy = (self.snakes[i].head.y - self.food.y) as f32;
-                    let current_distance = (dx * dx + dy * dy).sqrt();
+                    let current_distance =
+                        self.toroidal_distance(&self.snakes[i].head, &self.food);
                     let distance_delta = prev_distances[i] - current_distance;
-
-                    // Reward for moving closer, penalty for moving away
-                    // Normalized by grid size to keep rewards consistent
                     let distance_reward =
                         distance_delta / (self.width.max(self.height) as f32) * 2.0;
                     agent_rewards[i] += distance_reward;

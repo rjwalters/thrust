@@ -142,19 +142,19 @@ impl SnakeCNNInference {
         x = self.conv2d(&x, &self.conv3_weight, &self.conv3_bias);
         self.relu(&mut x);
 
-        // Flatten
-        let flat_size = 64 * grid_size;
-        let mut flattened = Vec::with_capacity(flat_size);
+        // Global average pooling: collapse each channel to its spatial mean.
+        // Mirrors the training model's adaptive_avg_pool2d([1,1]).
+        let num_conv3_out = self.conv3_weight.len();
+        let spatial_size = (self.grid_height * self.grid_width) as f32;
+        let mut flattened = Vec::with_capacity(num_conv3_out);
         for channel in &x {
-            for row in channel {
-                for &val in row {
-                    flattened.push(val);
-                }
-            }
+            let sum: f32 = channel.iter().flat_map(|row| row.iter().copied()).sum();
+            flattened.push(sum / spatial_size);
         }
 
-        // FC common + ReLU
-        let mut features = vec![0.0; 256];
+        // FC common + ReLU — derive hidden size from actual weights
+        let fc_hidden = self.fc_common_weight.len();
+        let mut features = vec![0.0; fc_hidden];
         for (i, row) in self.fc_common_weight.iter().enumerate() {
             for (j, &val) in flattened.iter().enumerate() {
                 features[i] += row[j] * val;

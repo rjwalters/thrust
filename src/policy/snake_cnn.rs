@@ -35,44 +35,38 @@ impl SnakeCNN {
     ///   - Channel 2: Other snakes
     ///   - Channel 3: Food
     ///   - Channel 4: Walls/boundaries
-    pub fn new(vs: &nn::Path, grid_size: i64, input_channels: i64) -> Self {
-        // Convolutional layers - ULTRA-COMPACT for fast WASM inference!
+    /// `_grid_size` is accepted for call-site compatibility but ignored — global
+    /// average pooling makes the model grid-size invariant.
+    pub fn new(vs: &nn::Path, _grid_size: i64, input_channels: i64) -> Self {
         let conv1 = nn::conv2d(
             vs / "conv1",
             input_channels,
-            8,  // Reduced from 16 (4x smaller for WASM)
+            8,
             3,
             nn::ConvConfig { padding: 1, ..Default::default() },
         );
 
         let conv2 = nn::conv2d(
             vs / "conv2",
-            8,  // Reduced from 16
-            16,  // Reduced from 32 (4x smaller for WASM)
+            8,
+            16,
             3,
             nn::ConvConfig { padding: 1, ..Default::default() },
         );
 
         let conv3 = nn::conv2d(
             vs / "conv3",
-            16,  // Reduced from 32
-            16,  // Reduced from 32 (4x smaller for WASM)
+            16,
+            16,
             3,
             nn::ConvConfig { padding: 1, ..Default::default() },
         );
 
-        // Calculate flattened size after convolutions
-        // With padding=1, size stays the same after each conv
-        let flat_size = 16 * grid_size * grid_size;  // Updated for new conv3 size
-
-        // Common feature layer - ULTRA-COMPACT for fast WASM inference!
-        let fc_common = nn::linear(vs / "fc_common", flat_size, 64, Default::default());  // Reduced from 128 (4x smaller for WASM)
-
-        // Policy head (outputs 4 actions)
-        let fc_policy = nn::linear(vs / "policy", 64, 4, Default::default());  // Updated for new fc_common size
-
-        // Value head (outputs single value)
-        let fc_value = nn::linear(vs / "value", 64, 1, Default::default());  // Updated for new fc_common size
+        // Global average pooling collapses [B, 16, H, W] → [B, 16], so
+        // fc_common always takes 16 inputs regardless of grid dimensions.
+        let fc_common = nn::linear(vs / "fc_common", 16, 64, Default::default());
+        let fc_policy = nn::linear(vs / "policy", 64, 4, Default::default());
+        let fc_value = nn::linear(vs / "value", 64, 1, Default::default());
 
         Self { conv1, conv2, conv3, fc_common, fc_policy, fc_value }
     }
@@ -85,7 +79,6 @@ impl SnakeCNN {
     /// # Returns
     /// * `(action_logits, values)` - Policy logits and value estimates
     pub fn forward(&self, grid: &Tensor) -> (Tensor, Tensor) {
-        // Convolutional feature extraction
         let x = grid
             .apply(&self.conv1)
             .relu()
@@ -94,14 +87,10 @@ impl SnakeCNN {
             .apply(&self.conv3)
             .relu();
 
-        // Flatten
-        let batch_size = x.size()[0];
-        let x = x.view([batch_size, -1]);
+        // Global average pooling: [B, 16, H, W] → [B, 16]
+        let x = x.adaptive_avg_pool2d([1, 1]).flatten(1, -1);
 
-        // Common features
         let features = x.apply(&self.fc_common).relu();
-
-        // Policy and value heads
         let action_logits = features.apply(&self.fc_policy);
         let values = features.apply(&self.fc_value);
 

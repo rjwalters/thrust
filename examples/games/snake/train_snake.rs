@@ -70,29 +70,41 @@ impl RolloutBuffer {
     }
 }
 
-/// Compute advantages using GAE
+/// Compute advantages using GAE, correctly handling interleaved multi-env rollouts.
+///
+/// The rollout buffer stores transitions in the order they were collected:
+/// [env0_step0, env1_step0, ..., envN_step0, env0_step1, ...].
+/// GAE must be computed per-environment along each env's own time axis.
 fn compute_advantages(
     rewards: &[f32],
     values: &[f32],
     dones: &[bool],
+    num_envs: usize,
     gamma: f64,
     lambda: f64,
 ) -> (Vec<f32>, Vec<f32>) {
-    let mut advantages = vec![0.0; rewards.len()];
-    let mut returns = vec![0.0; rewards.len()];
+    let total = rewards.len();
+    let num_steps = total / num_envs;
+    let mut advantages = vec![0.0f32; total];
+    let mut returns = vec![0.0f32; total];
 
-    let mut gae = 0.0;
-    for t in (0..rewards.len()).rev() {
-        let next_value = if t + 1 < values.len() && !dones[t] {
-            values[t + 1]
-        } else {
-            0.0
-        };
+    for env_id in 0..num_envs {
+        let mut gae = 0.0f32;
+        for step in (0..num_steps).rev() {
+            let t = step * num_envs + env_id;
 
-        let delta = rewards[t] + (gamma as f32) * next_value - values[t];
-        gae = delta + (gamma * lambda) as f32 * gae * if dones[t] { 0.0 } else { 1.0 };
-        advantages[t] = gae;
-        returns[t] = advantages[t] + values[t];
+            let next_value = if step + 1 < num_steps && !dones[t] {
+                let next_t = (step + 1) * num_envs + env_id;
+                values[next_t]
+            } else {
+                0.0
+            };
+
+            let delta = rewards[t] + (gamma as f32) * next_value - values[t];
+            gae = delta + (gamma * lambda) as f32 * gae * if dones[t] { 0.0 } else { 1.0 };
+            advantages[t] = gae;
+            returns[t] = advantages[t] + values[t];
+        }
     }
 
     (advantages, returns)
@@ -107,7 +119,7 @@ fn main() -> Result<()> {
     // Hyperparameters
     const NUM_ENVS: usize = 16; // Parallel environments
     const NUM_STEPS: usize = 512; // Steps per rollout
-    const TOTAL_TIMESTEPS: usize = 2_000_000; // 2M timesteps
+    const TOTAL_TIMESTEPS: usize = 5_000_000; // 5M timesteps
     const LEARNING_RATE: f64 = 0.0003;
     const GRID_WIDTH: i32 = 20;
     const GRID_HEIGHT: i32 = 20;
@@ -115,9 +127,10 @@ fn main() -> Result<()> {
     const GAE_LAMBDA: f64 = 0.95;
     const CLIP_PARAM: f64 = 0.2;
     const VALUE_COEF: f64 = 0.5;
-    const ENTROPY_COEF: f64 = 0.01;
+    const ENTROPY_COEF: f64 = 0.02; // Higher entropy encourages exploration (was 0.01)
     const PPO_EPOCHS: usize = 4;
     const MINIBATCH_SIZE: usize = 64;
+    const MAX_GRAD_NORM: f64 = 0.5;
 
     // Create single-agent snake environment (1 snake)
     let env = SnakeEnv::new(GRID_WIDTH, GRID_HEIGHT);
@@ -172,6 +185,10 @@ fn main() -> Result<()> {
     let mut buffer = RolloutBuffer::new();
     let mut total_episodes = 0;
     let mut total_steps = 0;
+    // Per-env cumulative rewards for this episode; cleared on episode end
+    let mut env_episode_rewards = vec![0.0f32; NUM_ENVS];
+    // Rewards of episodes completed since last log
+    let mut recent_episode_rewards: Vec<f32> = Vec::new();
 
     for update in 0..num_updates {
         buffer.clear();
@@ -195,6 +212,8 @@ fn main() -> Result<()> {
             for env_id in 0..NUM_ENVS {
                 let step_result = envs[env_id].step(actions_vec[env_id]);
 
+                env_episode_rewards[env_id] += step_result.reward;
+
                 buffer.add(
                     observations[env_id].clone(),
                     actions_vec[env_id],
@@ -207,20 +226,26 @@ fn main() -> Result<()> {
                 // Reset if episode ended
                 if step_result.terminated || step_result.truncated {
                     total_episodes += 1;
+                    recent_episode_rewards.push(env_episode_rewards[env_id]);
+                    env_episode_rewards[env_id] = 0.0;
                     envs[env_id].reset();
                 }
 
-                // Always get grid observation (step() returns simple features, but we need
-                // grid)
                 observations[env_id] = envs[env_id].get_grid_observation(0);
             }
 
             total_steps += NUM_ENVS;
         }
 
-        // Compute advantages
-        let (advantages, returns) =
-            compute_advantages(&buffer.rewards, &buffer.values, &buffer.dones, GAMMA, GAE_LAMBDA);
+        // Compute advantages (per-env to avoid mixing trajectories across envs)
+        let (advantages, returns) = compute_advantages(
+            &buffer.rewards,
+            &buffer.values,
+            &buffer.dones,
+            NUM_ENVS,
+            GAMMA,
+            GAE_LAMBDA,
+        );
 
         // Normalize advantages
         let adv_mean = advantages.iter().sum::<f32>() / advantages.len() as f32;
@@ -295,9 +320,10 @@ fn main() -> Result<()> {
                 // Total loss
                 let loss = &policy_loss + &value_loss * VALUE_COEF - &entropy * ENTROPY_COEF;
 
-                // Backward pass
+                // Backward pass with gradient clipping
                 optimizer.zero_grad();
                 loss.backward();
+                optimizer.clip_grad_norm(MAX_GRAD_NORM);
                 optimizer.step();
 
                 // Track losses
@@ -314,19 +340,20 @@ fn main() -> Result<()> {
             let mean_value_loss = total_value_loss / num_opt_steps;
             let mean_entropy = total_entropy / num_opt_steps;
 
-            let mean_reward = if total_episodes > 0 {
-                total_steps as f32 / total_episodes as f32
+            let mean_ep_reward = if !recent_episode_rewards.is_empty() {
+                recent_episode_rewards.iter().sum::<f32>() / recent_episode_rewards.len() as f32
             } else {
                 0.0
             };
+            recent_episode_rewards.clear();
 
             tracing::info!(
-                "Update {}/{} | Steps: {} | Episodes: {} | Mean Steps/Episode: {:.1} | PL: {:.3} | VL: {:.3} | Ent: {:.3}",
+                "Update {}/{} | Steps: {} | Episodes: {} | MeanEpReward: {:.2} | PL: {:.3} | VL: {:.3} | Ent: {:.3}",
                 update + 1,
                 num_updates,
                 total_steps,
                 total_episodes,
-                mean_reward,
+                mean_ep_reward,
                 mean_policy_loss,
                 mean_value_loss,
                 mean_entropy,
