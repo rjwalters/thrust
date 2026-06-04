@@ -274,6 +274,8 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
     let mut rollout_buffer = RolloutBuffer::new();
     let mut total_episodes = 0;
     let mut total_steps = 0;
+    // Cumulative reward per active env (for correct episode return logging)
+    let mut env_episode_rewards = vec![0.0f32; args.num_envs];
 
     // Initial reset only — episodes continue across rollout boundaries
     for env in &mut envs {
@@ -325,6 +327,9 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
             for (env_idx, (agent_rewards, terminated, truncated)) in
                 step_results.into_iter().enumerate()
             {
+                let step_total: f32 = agent_rewards.iter().sum();
+                env_episode_rewards[env_idx] += step_total;
+
                 for agent_id in 0..args.num_agents {
                     let flat_idx = env_idx * args.num_agents + agent_id;
                     let agent_done = terminated
@@ -342,8 +347,8 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                 }
 
                 if terminated || truncated {
-                    let total_reward: f32 = agent_rewards.iter().sum();
-                    episode_rewards.push(total_reward);
+                    episode_rewards.push(env_episode_rewards[env_idx]);
+                    env_episode_rewards[env_idx] = 0.0;
                     total_episodes += 1;
                     envs[env_idx].reset();
                 }
