@@ -284,6 +284,7 @@ mod tests {
 
     impl Environment for MockEnv {
         type Action = i64;
+        type State = ();
 
         fn reset(&mut self) {}
 
@@ -314,6 +315,10 @@ mod tests {
         }
 
         fn close(&mut self) {}
+
+        fn clone_state(&self) {}
+
+        fn restore_state(&mut self, _state: &()) {}
     }
 
     impl MultiAgentEnvironment for MockEnv {

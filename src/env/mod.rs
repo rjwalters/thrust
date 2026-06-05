@@ -46,6 +46,19 @@
 //! continuous actions polymorphically must either be parametric on
 //! `E::Action` or use a sum-type wrapper. Until SAC lands, no such
 //! call site exists in Thrust.
+//!
+//! # Env state snapshots (`type State` / `clone_state` / `restore_state`)
+//!
+//! The `Environment` trait also exposes a `type State` associated type
+//! plus `clone_state` / `restore_state` methods so callers (MCTS-style
+//! search, replay tooling) can snapshot env state and roll out
+//! hypothetical trajectories without restarting from `reset()`. The
+//! determinism contract is per-env: fully deterministic envs (e.g.
+//! CartPole, ContinuousLqr) reproduce every subsequent step bit-for-bit
+//! after restore; envs that consume internal RNG (Snake food respawn,
+//! Pong ball serve) snapshot the simulation step but not the RNG, so
+//! reproduction is deterministic only across steps that do not draw
+//! from the RNG. Per-env docs spell out the exact guarantee.
 
 use anyhow::Result;
 
@@ -63,6 +76,19 @@ pub trait Environment {
     /// constrain `E: Environment<Action = i64>` to keep the
     /// type signature compatible.
     type Action;
+
+    /// Snapshot type for this env. For fully deterministic envs without
+    /// internal RNG, this is the complete env state and `restore_state`
+    /// reproduces every subsequent step exactly. For envs that consume an
+    /// internal RNG (e.g. ball serve direction, food placement), the snapshot
+    /// captures the simulation step but not the RNG; see the env-level
+    /// documentation for which fields are preserved.
+    ///
+    /// This associated type lets callers (MCTS-style search, replay tooling)
+    /// snapshot and later restore env state without re-running from
+    /// [`Environment::reset`]. The exact determinism guarantee is documented
+    /// per env.
+    type State;
 
     /// Reset the environment and return initial observation
     fn reset(&mut self);
@@ -84,6 +110,25 @@ pub trait Environment {
 
     /// Close the environment
     fn close(&mut self);
+
+    /// Snapshot the current env state for later restoration.
+    ///
+    /// The returned value can be passed back to
+    /// [`Environment::restore_state`] to rewind the env. For envs with
+    /// internal RNG this captures the simulation step only — the determinism
+    /// guarantee is documented per env.
+    fn clone_state(&self) -> Self::State;
+
+    /// Restore the env to a previously-snapshotted state.
+    ///
+    /// After this call, the env's observable state (the value returned by
+    /// [`Environment::get_observation`]) matches the state at the time of the
+    /// snapshot. For purely deterministic envs, the next call to
+    /// [`Environment::step`] with a given action produces the same
+    /// [`StepResult`] as it would have at the time the snapshot was taken.
+    /// For envs with internal RNG, see per-env docs for the exact
+    /// reproducibility contract.
+    fn restore_state(&mut self, state: &Self::State);
 }
 
 /// Result of an environment step

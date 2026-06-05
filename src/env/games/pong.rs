@@ -18,8 +18,46 @@ const OPPONENT_SPEED: f32 = 0.015;
 const MAX_SCORE: u32 = 7;
 const MAX_STEPS: usize = 2000;
 
+/// Snapshot of a [`Pong`] instance's simulation state.
+///
+/// Captures ball position/velocity, paddle positions, scores, and step
+/// counter. Does **not** capture the thread-local RNG used by `serve` (which
+/// fires on every scoring event). After `restore_state`, a step that does
+/// not trigger a serve is fully reproducible; a step that scores will
+/// produce a serve toward a freshly sampled direction.
+#[derive(Debug, Clone)]
+pub struct PongState {
+    /// Ball x position
+    pub ball_x: f32,
+    /// Ball y position
+    pub ball_y: f32,
+    /// Ball x velocity
+    pub ball_dx: f32,
+    /// Ball y velocity
+    pub ball_dy: f32,
+    /// Left paddle y position
+    pub left_y: f32,
+    /// Right paddle y position
+    pub right_y: f32,
+    /// Left score
+    pub left_score: u32,
+    /// Right score
+    pub right_score: u32,
+    /// Step counter
+    pub steps: usize,
+}
+
 /// Single-player Pong: agent controls left paddle, rule-based opponent on
 /// right.
+///
+/// # Snapshot semantics
+///
+/// `clone_state` / `restore_state` capture ball state, paddles, scores and
+/// step counter, but **not** the thread-local RNG used by `serve` (the
+/// random ball direction/height sampled after every score). Trajectories
+/// that do not score (no ball exiting through either edge) are fully
+/// reproducible after `restore_state`; scoring steps will redraw a new
+/// random serve and so are *not* reproduced bit-for-bit.
 pub struct Pong {
     ball_x: f32,
     ball_y: f32,
@@ -193,6 +231,7 @@ impl Default for Pong {
 
 impl Environment for Pong {
     type Action = i64;
+    type State = PongState;
 
     fn reset(&mut self) {
         self.left_y = 0.5;
@@ -305,6 +344,32 @@ impl Environment for Pong {
     }
 
     fn close(&mut self) {}
+
+    fn clone_state(&self) -> PongState {
+        PongState {
+            ball_x: self.ball_x,
+            ball_y: self.ball_y,
+            ball_dx: self.ball_dx,
+            ball_dy: self.ball_dy,
+            left_y: self.left_y,
+            right_y: self.right_y,
+            left_score: self.left_score,
+            right_score: self.right_score,
+            steps: self.steps,
+        }
+    }
+
+    fn restore_state(&mut self, state: &PongState) {
+        self.ball_x = state.ball_x;
+        self.ball_y = state.ball_y;
+        self.ball_dx = state.ball_dx;
+        self.ball_dy = state.ball_dy;
+        self.left_y = state.left_y;
+        self.right_y = state.right_y;
+        self.left_score = state.left_score;
+        self.right_score = state.right_score;
+        self.steps = state.steps;
+    }
 }
 
 #[cfg(test)]
@@ -364,6 +429,49 @@ mod tests {
         for (a, b) in obs.iter().zip(unmirrored.iter()) {
             assert!((a - b).abs() < 1e-7, "round-trip mismatch: {a} vs {b}");
         }
+    }
+
+    /// Snapshotting Pong on a step that does not score must round-trip
+    /// exactly: replaying `step(action)` after `restore_state` gives the same
+    /// StepResult.
+    #[test]
+    fn clone_restore_round_trips() {
+        let mut env = Pong::new();
+        env.reset();
+
+        // Set ball state explicitly to a configuration that won't score in
+        // one step: the ball is centered with a small velocity, so scoring
+        // cannot happen in a few steps regardless of paddle action.
+        env.ball_x = 0.5;
+        env.ball_y = 0.5;
+        env.ball_dx = BALL_SPEED;
+        env.ball_dy = 0.0;
+        env.left_y = 0.5;
+        env.right_y = 0.5;
+        env.left_score = 0;
+        env.right_score = 0;
+        env.steps = 0;
+
+        // Step a few times to reach a non-initial state, still far from
+        // scoring.
+        for _ in 0..3 {
+            env.step(1);
+        }
+        let snap = env.clone_state();
+
+        // Take an experimental step.
+        let r1 = env.step(2);
+
+        // Restore and take the same step again.
+        env.restore_state(&snap);
+        let r2 = env.step(2);
+
+        // No scoring event => fully deterministic: observation, reward,
+        // termination must all match.
+        assert_eq!(r1.observation, r2.observation);
+        assert_eq!(r1.reward, r2.reward);
+        assert_eq!(r1.terminated, r2.terminated);
+        assert_eq!(r1.truncated, r2.truncated);
     }
 
     /// The mirror transformation must negate x components and swap paddle
