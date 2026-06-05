@@ -526,6 +526,8 @@ impl SnakeEnv {
 }
 
 impl Environment for SnakeEnv {
+    type Action = i64;
+
     fn reset(&mut self) {
         self.reset();
     }

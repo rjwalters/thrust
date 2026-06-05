@@ -182,6 +182,8 @@ impl Default for CartPole {
 }
 
 impl Environment for CartPole {
+    type Action = i64;
+
     fn reset(&mut self) {
         self.reset_state();
         self.steps = 0;

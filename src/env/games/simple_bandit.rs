@@ -38,6 +38,8 @@ impl Default for SimpleBandit {
 }
 
 impl Environment for SimpleBandit {
+    type Action = i64;
+
     fn reset(&mut self) {
         // Random start state (0 or 1)
         self.state = self.rng.gen_range(0..2) as f32;

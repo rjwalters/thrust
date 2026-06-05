@@ -38,6 +38,15 @@ use crate::env::{Environment, StepResult};
 ///
 /// This can provide 10-100x speedups depending on environment complexity
 /// and number of CPU cores available.
+///
+/// # Action type
+///
+/// `EnvPool` is currently restricted to discrete-action envs
+/// (`E::Action = i64`). The pool's `step` signature passes
+/// `&[i64]` because every existing trainer and example expects a
+/// dense vector of integer action indices. Adding pool support for
+/// continuous-action envs (e.g. SAC) is a separate follow-up; see
+/// issue #61 for the rationale behind the associated-type design.
 pub struct EnvPool<E: Environment> {
     /// Vector of environment instances
     envs: Vec<E>,
@@ -46,7 +55,7 @@ pub struct EnvPool<E: Environment> {
     num_envs: usize,
 }
 
-impl<E: Environment + Send> EnvPool<E> {
+impl<E: Environment<Action = i64> + Send> EnvPool<E> {
     /// Create a new environment pool
     ///
     /// # Arguments
@@ -184,7 +193,7 @@ pub struct PoolStepResult<O> {
     pub truncated: Vec<bool>,
 }
 
-impl<E: Environment + Send> EnvPool<E> {
+impl<E: Environment<Action = i64> + Send> EnvPool<E> {
     /// Step all environments and return structured result
     ///
     /// This is a convenience method that unpacks individual StepResults

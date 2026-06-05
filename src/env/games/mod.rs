@@ -5,8 +5,11 @@
 //! - Snake: Snake game with configurable grid size
 //! - SimpleBandit: Simple multi-armed bandit for testing
 //! - Pong: Single-player Pong vs rule-based opponent
+//! - ContinuousLqr: 1D LQR placeholder env that exercises the continuous
+//!   (`Vec<f32>`) action surface added in issue #61
 
 pub mod cartpole;
+pub mod continuous_lqr;
 pub mod pong;
 pub mod simple_bandit;
 pub mod snake;
@@ -18,6 +21,7 @@ pub mod bucket_brigade;
 #[cfg(feature = "env-bucket-brigade")]
 pub use bucket_brigade::BucketBrigadeMaEnv;
 pub use cartpole::CartPole;
+pub use continuous_lqr::ContinuousLqr;
 pub use pong::Pong;
 pub use simple_bandit::SimpleBandit;
 pub use snake::SnakeEnv;

@@ -192,6 +192,8 @@ impl Default for Pong {
 }
 
 impl Environment for Pong {
+    type Action = i64;
+
     fn reset(&mut self) {
         self.left_y = 0.5;
         self.right_y = 0.5;
