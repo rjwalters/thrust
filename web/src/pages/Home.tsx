@@ -74,6 +74,25 @@ export default function Home() {
 					</Link>
 
 					<Link
+						to="/pong"
+						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
+					>
+						<h2 className="text-3xl font-bold text-white mb-4">Pong</h2>
+						<p className="text-white/80 mb-4">
+							Classic Pong with a PPO-trained agent vs a rule-based opponent.
+							First to 7 points wins. Canvas-rendered at 60 FPS in WebAssembly.
+						</p>
+						<div className="text-sm text-white/60">
+							<span className="bg-white/20 px-3 py-1 rounded-full">
+								Canvas 2D
+							</span>
+							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
+								MLP Policy
+							</span>
+						</div>
+					</Link>
+
+					<Link
 						to="/bucket-brigade"
 						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
 					>
