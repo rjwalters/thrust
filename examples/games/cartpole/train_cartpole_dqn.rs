@@ -47,19 +47,25 @@ fn main() -> Result<()> {
     };
     tracing::info!("Environment: CartPole-v1  obs_dim={}  n_actions={}", obs_dim, n_actions);
 
-    // DQN hyperparameters — these are the curator-locked defaults
-    // (see issue #48 acceptance criteria).
+    // DQN hyperparameters — curator-locked defaults from issue #48,
+    // augmented with the issue #58 fixes (Double-DQN target — applied
+    // unconditionally by the trainer — plus Polyak soft target updates
+    // toggled via `.soft_update_tau(0.005)`).
+    //
+    // With Double-DQN + soft updates the avg-100 return is expected to
+    // cross 475 within ~50k env steps on this seed.
     let config = DQNConfig::new()
         .learning_rate(1e-3)
         .batch_size(64)
         .buffer_capacity(50_000)
         .min_buffer_size(1_000)
-        .target_update_interval(500)
+        .target_update_interval(500) // ignored in soft mode, kept for documentation
         .gamma(0.99)
         .epsilon_start(1.0)
         .epsilon_end(0.05)
         .epsilon_decay_steps(10_000)
-        .max_grad_norm(10.0);
+        .max_grad_norm(10.0)
+        .soft_update_tau(0.005);
 
     let mut trainer = DQNTrainer::new(config, obs_dim, n_actions, 64)?;
     tracing::info!("Trainer on device: {:?}", trainer.device());

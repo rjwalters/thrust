@@ -113,8 +113,8 @@ Training uses remote GPU machines. See [docs/REMOTE_TRAINING.md](docs/REMOTE_TRA
 ## 🧠 Algorithms
 
 - **PPO** ✅ - Proximal Policy Optimization (on-policy, actor-critic)
-- **DQN** ✅ - Deep Q-Network (off-policy, replay buffer + target network) — vanilla v1 on CartPole, see `examples/games/cartpole/train_cartpole_dqn.rs`
-- More coming soon (Double-DQN, prioritized replay, dueling heads — see [ROADMAP.md](ROADMAP.md))
+- **DQN** ✅ - Deep Q-Network (off-policy, replay buffer + target network), including **Double-DQN** target computation and optional **Polyak (soft) target updates** — see `examples/games/cartpole/train_cartpole_dqn.rs`
+- More coming soon (prioritized replay, dueling heads — see [ROADMAP.md](ROADMAP.md))
 
 ## 📚 Inspiration
 
