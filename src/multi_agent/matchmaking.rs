@@ -36,8 +36,14 @@ pub enum MatchmakingStrategy {
     /// Round-robin (each plays each equally)
     RoundRobin,
 
-    /// Fitness-based (similar skill levels)
-    FitnessBased { window_size: usize },
+    /// Fitness-based (similar skill levels). `window_size` is the number
+    /// of adjacent ranks (after sorting the population by fitness) from
+    /// which each game's roster is sampled; smaller windows produce
+    /// tighter skill matches but reduce the diversity of opponents.
+    FitnessBased {
+        /// Width (in ranks) of the fitness window each match is drawn from.
+        window_size: usize,
+    },
 
     /// Self-play (agent plays copies of itself)
     SelfPlay,
@@ -63,6 +69,10 @@ pub struct RandomMatchmaker {
 }
 
 impl RandomMatchmaker {
+    /// Construct a fresh [`RandomMatchmaker`] seeded from system entropy.
+    /// Prefer [`MatchmakingStrategy::Random`] + `create_matchmaker()` over
+    /// constructing directly — the strategy enum is the documented
+    /// configuration surface.
     pub fn new() -> Self {
         Self { rng: StdRng::from_entropy() }
     }
@@ -97,6 +107,11 @@ pub struct RoundRobinMatchmaker {
 }
 
 impl RoundRobinMatchmaker {
+    /// Construct a fresh [`RoundRobinMatchmaker`] at round 0. Internal
+    /// state advances by one each call to
+    /// [`Matchmaker::create_matches`], rotating which agents fill which
+    /// seats. Prefer [`MatchmakingStrategy::RoundRobin`] +
+    /// `create_matchmaker()` over constructing directly.
     pub fn new() -> Self {
         Self { current_round: 0 }
     }
@@ -136,6 +151,11 @@ pub struct FitnessBasedMatchmaker {
 }
 
 impl FitnessBasedMatchmaker {
+    /// Construct a [`FitnessBasedMatchmaker`] with the given fitness-rank
+    /// window width. Each generated match is sampled (with replacement)
+    /// from a contiguous block of `window_size` adjacent fitness ranks.
+    /// Prefer [`MatchmakingStrategy::FitnessBased`] +
+    /// `create_matchmaker()` over constructing directly.
     pub fn new(window_size: usize) -> Self {
         Self { window_size, rng: StdRng::from_entropy() }
     }
@@ -186,6 +206,11 @@ pub struct SelfPlayMatchmaker {
 }
 
 impl SelfPlayMatchmaker {
+    /// Construct a fresh [`SelfPlayMatchmaker`] seeded from system
+    /// entropy. Each match is a single agent (chosen uniformly at
+    /// random) replicated across all seats. Prefer
+    /// [`MatchmakingStrategy::SelfPlay`] + `create_matchmaker()` over
+    /// constructing directly.
     pub fn new() -> Self {
         Self { rng: StdRng::from_entropy() }
     }

@@ -29,11 +29,6 @@
 //!  Actions   Value
 //! ```
 
-// Training-feature surface still owes public docs; tracked as the
-// `--features training` follow-up to #33. Re-enable as `#![warn(missing_docs)]`
-// once those items are documented.
-#![allow(missing_docs)]
-
 use anyhow::Result;
 use tch::{
     Device, Kind, Tensor,
@@ -43,15 +38,51 @@ use tch::{
 /// Configuration for MLP policy architecture
 #[derive(Debug, Clone)]
 pub struct MlpConfig {
+    /// Number of hidden layers in the shared trunk.
+    ///
+    /// Only `2` or `3` are supported. `3` adds a third
+    /// `hidden_dim -> hidden_dim` layer after the standard two; values
+    /// greater than `3` are accepted at construction but cause
+    /// [`MlpPolicy::export_for_inference`] to panic because the WASM
+    /// inference path only round-trips two layers. Stick to `2` unless
+    /// you have a specific reason to go deeper.
     pub num_layers: usize,
+    /// Width of every hidden layer in the shared trunk (in units / neurons).
+    ///
+    /// Same value is reused for fc1, fc2, and (if present) fc3. Typical
+    /// PPO baselines use 64 for low-dimensional control tasks; raise to
+    /// 128–256 for richer observation spaces.
     pub hidden_dim: i64,
+    /// If `true`, initialize hidden-layer weights with orthogonal
+    /// initialization (gain = sqrt(2)) and output heads with a small
+    /// orthogonal gain (0.01). This is the standard PPO recipe and
+    /// typically learns faster and more stably than the default Gaussian
+    /// initialization. Set `false` to fall back to N(0, 0.01).
     pub use_orthogonal_init: bool,
+    /// Activation function applied between every hidden layer.
+    ///
+    /// Picked once at construction; the choice is captured in
+    /// [`crate::policy::inference::InferenceModel`] so the WASM runtime
+    /// applies the same function (see [`Activation`]).
     pub activation: Activation,
 }
 
+/// Activation function used between hidden layers in [`MlpPolicy`] and
+/// [`crate::policy::multi_discrete_mlp::MultiDiscreteMlpPolicy`].
+///
+/// The variant is preserved into the exported
+/// [`crate::policy::inference::InferenceModel`] so the WASM runtime
+/// reproduces training-time behavior exactly.
 #[derive(Debug, Clone, Copy)]
 pub enum Activation {
+    /// Rectified linear unit (`max(0, x)`). Cheaper to compute and the
+    /// default for image / CNN policies, but slightly less stable than
+    /// `Tanh` for low-dimensional MLP control policies.
     ReLU,
+    /// Hyperbolic tangent (`tanh(x)`). The PPO baseline default for
+    /// continuous-control / low-dimensional discrete tasks because the
+    /// bounded `[-1, 1]` output keeps pre-activation magnitudes small
+    /// and improves stability.
     Tanh,
 }
 
