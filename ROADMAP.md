@@ -131,6 +131,7 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 - [ ] Multi-agent competitive games (Pong, Soccer)
 
 #### Milestone 6: Algorithm Expansion
+- See [`docs/RL_TOYBOX_SURVEY.md`](docs/RL_TOYBOX_SURVEY.md) for ranked port recommendations (replay buffer, DQN, SAC, centralized critic, MCTS) and prioritized follow-up issues.
 - [ ] A2C (Advantage Actor-Critic)
 - [ ] SAC (Soft Actor-Critic) for continuous control
 - [ ] DQN for discrete actions
