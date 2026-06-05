@@ -50,6 +50,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 - [x] EnvPool vectorization
 - [x] CartPole environment (301.6 avg reward achieved)
 - [x] PPO training loop with GPU support
+- [x] DQN training loop (replay buffer + target network, CartPole)
 - [x] Checkpoint saving/loading
 - [x] Snake environment (multi-agent support)
 - [x] SimpleBandit environment (contextual bandits)
@@ -108,6 +109,12 @@ Training uses remote GPU machines. See [docs/REMOTE_TRAINING.md](docs/REMOTE_TRA
 - **SimpleBandit** ✅ - Contextual multi-armed bandits
 - **Bucket Brigade** 🚧 - Cooperative multi-agent coordination
 - More coming soon!
+
+## 🧠 Algorithms
+
+- **PPO** ✅ - Proximal Policy Optimization (on-policy, actor-critic)
+- **DQN** ✅ - Deep Q-Network (off-policy, replay buffer + target network) — vanilla v1 on CartPole, see `examples/games/cartpole/train_cartpole_dqn.rs`
+- More coming soon (Double-DQN, prioritized replay, dueling heads — see [ROADMAP.md](ROADMAP.md))
 
 ## 📚 Inspiration
 

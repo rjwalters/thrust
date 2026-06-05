@@ -2,6 +2,7 @@
 //!
 //! This module handles storage and sampling of experience for training.
 
+pub mod replay;
 pub mod rollout;
 
 // Convenience re-export so multi-agent training scripts can pull the
