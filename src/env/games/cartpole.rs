@@ -23,10 +23,37 @@ use rand::Rng;
 
 use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 
+/// Snapshot of CartPole's simulation state.
+///
+/// CartPole is fully deterministic on a per-step basis (the only RNG use is
+/// inside `reset_state`, which is not called during stepping), so
+/// `restore_state` followed by `step(a)` reproduces the same [`StepResult`]
+/// as the original step at the time of snapshot.
+#[derive(Debug, Clone)]
+pub struct CartPoleState {
+    /// Cart position
+    pub x: f32,
+    /// Cart velocity
+    pub x_dot: f32,
+    /// Pole angle (radians)
+    pub theta: f32,
+    /// Pole angular velocity
+    pub theta_dot: f32,
+    /// Step counter
+    pub steps: usize,
+}
+
 /// CartPole-v1 environment
 ///
 /// A pole is attached to a cart moving along a frictionless track.
 /// The goal is to balance the pole by applying forces to the cart.
+///
+/// # Snapshot semantics
+///
+/// CartPole's [`Environment::clone_state`] / [`Environment::restore_state`]
+/// pair is **fully deterministic**: restoring a snapshot and calling
+/// `step(action)` produces the exact same [`StepResult`] as the original
+/// step. CartPole only consumes RNG during `reset()`, not during stepping.
 #[derive(Debug)]
 pub struct CartPole {
     // State variables
@@ -183,6 +210,7 @@ impl Default for CartPole {
 
 impl Environment for CartPole {
     type Action = i64;
+    type State = CartPoleState;
 
     fn reset(&mut self) {
         self.reset_state();
@@ -231,6 +259,24 @@ impl Environment for CartPole {
 
     fn close(&mut self) {
         // Nothing to clean up
+    }
+
+    fn clone_state(&self) -> CartPoleState {
+        CartPoleState {
+            x: self.x,
+            x_dot: self.x_dot,
+            theta: self.theta,
+            theta_dot: self.theta_dot,
+            steps: self.steps,
+        }
+    }
+
+    fn restore_state(&mut self, state: &CartPoleState) {
+        self.x = state.x;
+        self.x_dot = state.x_dot;
+        self.theta = state.theta;
+        self.theta_dot = state.theta_dot;
+        self.steps = state.steps;
     }
 }
 
@@ -364,6 +410,31 @@ mod tests {
         // spaces are not strictly defined.
         assert_eq!(action_space.shape, vec![2]);
         assert!(matches!(action_space.space_type, SpaceType::Discrete(2)));
+    }
+
+    #[test]
+    fn clone_restore_round_trips() {
+        let mut env = CartPole::new();
+        env.reset();
+
+        // Step a few times to a non-initial state.
+        for i in 0..5 {
+            env.step((i % 2) as i64);
+        }
+        let snap = env.clone_state();
+
+        // Take an experimental step.
+        let r1 = env.step(1);
+
+        // Restore and take the same step again.
+        env.restore_state(&snap);
+        let r2 = env.step(1);
+
+        // CartPole is fully deterministic — observation and reward must match.
+        assert_eq!(r1.observation, r2.observation);
+        assert_eq!(r1.reward, r2.reward);
+        assert_eq!(r1.terminated, r2.terminated);
+        assert_eq!(r1.truncated, r2.truncated);
     }
 
     #[test]

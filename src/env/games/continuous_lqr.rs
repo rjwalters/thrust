@@ -18,6 +18,21 @@
 
 use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 
+/// Snapshot of [`ContinuousLqr`]'s simulation state.
+///
+/// `ContinuousLqr` is fully deterministic (no internal RNG), so
+/// [`Environment::restore_state`] followed by [`Environment::step`] reproduces
+/// every subsequent [`StepResult`] bit-for-bit.
+#[derive(Debug, Clone)]
+pub struct ContinuousLqrState {
+    /// Position scalar.
+    pub position: f32,
+    /// Velocity scalar.
+    pub velocity: f32,
+    /// Step counter.
+    pub steps: usize,
+}
+
 /// Force clamp range applied to the 1D action input.
 const ACTION_CLAMP: f32 = 1.0;
 
@@ -79,6 +94,10 @@ impl Environment for ContinuousLqr {
     /// `[-ACTION_CLAMP, ACTION_CLAMP]` are clamped.
     type Action = Vec<f32>;
 
+    /// Snapshot type. `ContinuousLqr` is deterministic (no RNG), so
+    /// restore + step reproduces subsequent results exactly.
+    type State = ContinuousLqrState;
+
     fn reset(&mut self) {
         self.position = 0.5;
         self.velocity = 0.0;
@@ -130,6 +149,16 @@ impl Environment for ContinuousLqr {
     }
 
     fn close(&mut self) {}
+
+    fn clone_state(&self) -> ContinuousLqrState {
+        ContinuousLqrState { position: self.position, velocity: self.velocity, steps: self.steps }
+    }
+
+    fn restore_state(&mut self, state: &ContinuousLqrState) {
+        self.position = state.position;
+        self.velocity = state.velocity;
+        self.steps = state.steps;
+    }
 }
 
 #[cfg(test)]

@@ -12,7 +12,45 @@ use super::{
 };
 use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 
-/// Multi-agent Snake environment
+/// Snapshot of a [`SnakeEnv`]'s simulation state.
+///
+/// Captures every visible field of the env (grid, snake positions, food
+/// position, score, step count, done flag) but **not** the RNG used by
+/// `thread_rng()` inside `step` for food respawn. After `restore_state`, any
+/// step that triggers a food respawn will sample a different food location
+/// than the original trajectory.
+#[derive(Debug, Clone)]
+pub struct SnakeEnvState {
+    /// Grid width
+    pub width: i32,
+    /// Grid height
+    pub height: i32,
+    /// All snakes
+    pub snakes: Vec<super::snake::Snake>,
+    /// Number of agents
+    pub num_agents: usize,
+    /// Food position
+    pub food: Position,
+    /// Episode counter
+    pub episode: usize,
+    /// Step counter
+    pub steps: usize,
+    /// Maximum steps per episode
+    pub max_steps: usize,
+    /// Done flag
+    pub done: bool,
+}
+
+/// Multi-agent Snake environment.
+///
+/// # Snapshot semantics
+///
+/// `clone_state` / `restore_state` capture every visible env field (grid,
+/// snake bodies, food location, score, step count, done flag). They do
+/// **not** capture the thread-local RNG used by `step` to respawn food: if
+/// the restored trajectory triggers a food respawn, the new food spawns at a
+/// different location than in the original. Trajectories that do not eat
+/// food are fully reproducible.
 #[derive(Debug, Clone)]
 pub struct SnakeEnv {
     /// Grid width
@@ -527,6 +565,7 @@ impl SnakeEnv {
 
 impl Environment for SnakeEnv {
     type Action = i64;
+    type State = SnakeEnvState;
 
     fn reset(&mut self) {
         self.reset();
@@ -560,5 +599,75 @@ impl Environment for SnakeEnv {
 
     fn close(&mut self) {
         // Nothing to clean up
+    }
+
+    fn clone_state(&self) -> SnakeEnvState {
+        SnakeEnvState {
+            width: self.width,
+            height: self.height,
+            snakes: self.snakes.clone(),
+            num_agents: self.num_agents,
+            food: self.food,
+            episode: self.episode,
+            steps: self.steps,
+            max_steps: self.max_steps,
+            done: self.done,
+        }
+    }
+
+    fn restore_state(&mut self, state: &SnakeEnvState) {
+        self.width = state.width;
+        self.height = state.height;
+        self.snakes = state.snakes.clone();
+        self.num_agents = state.num_agents;
+        self.food = state.food;
+        self.episode = state.episode;
+        self.steps = state.steps;
+        self.max_steps = state.max_steps;
+        self.done = state.done;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clone_restore_round_trips() {
+        let mut env = SnakeEnv::new(10, 10);
+        env.reset();
+
+        // Step a few times to a non-initial state.
+        for i in 0..5 {
+            env.step((i % 4) as i64);
+        }
+        let snap = env.clone_state();
+
+        // Snapshot must capture every visible field.
+        assert_eq!(env.steps, snap.steps);
+        assert_eq!(env.food, snap.food);
+        assert_eq!(env.snakes.len(), snap.snakes.len());
+
+        // Take an experimental step.
+        let r1 = env.step(0);
+        let post_food_1 = env.food;
+        let post_steps_1 = env.steps;
+
+        // Restore and take the same step again.
+        env.restore_state(&snap);
+        assert_eq!(env.steps, snap.steps);
+        assert_eq!(env.food, snap.food);
+
+        let r2 = env.step(0);
+
+        // Snake's `step` is deterministic except for food respawn, which only
+        // fires when food is eaten. With identical action and snapshot the
+        // observation/reward must match.
+        assert_eq!(r1.observation, r2.observation);
+        assert_eq!(r1.reward, r2.reward);
+        assert_eq!(r1.terminated, r2.terminated);
+        assert_eq!(r1.truncated, r2.truncated);
+        assert_eq!(env.food, post_food_1);
+        assert_eq!(env.steps, post_steps_1);
     }
 }

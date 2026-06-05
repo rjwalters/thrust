@@ -146,6 +146,14 @@ impl BucketBrigadeMaEnv {
 impl Environment for BucketBrigadeMaEnv {
     type Action = i64;
 
+    /// Snapshot type for the single-agent `Environment` adapter.
+    ///
+    /// **Stub**: `bucket_brigade_core::BucketBrigade` does not expose a
+    /// snapshot/restore API, so this implementation is currently a no-op.
+    /// `clone_state` returns `()` and `restore_state` does nothing. Wiring up
+    /// real snapshots requires upstream support in `bucket_brigade_core`.
+    type State = ();
+
     fn reset(&mut self) {
         let _ = BucketBrigadeMaEnv::reset(self, None);
     }
@@ -186,6 +194,15 @@ impl Environment for BucketBrigadeMaEnv {
     }
 
     fn close(&mut self) {}
+
+    /// Stub: returns `()`. The underlying `bucket_brigade_core::BucketBrigade`
+    /// engine does not currently expose snapshot/restore; calling this is a
+    /// no-op for now and the returned snapshot cannot meaningfully be used
+    /// with `restore_state`.
+    fn clone_state(&self) {}
+
+    /// Stub: does nothing. See [`Self::clone_state`] for the limitation.
+    fn restore_state(&mut self, _state: &()) {}
 }
 
 // -------- Multi-agent factored action surface --------

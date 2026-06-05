@@ -15,7 +15,33 @@ use rand::{Rng, SeedableRng};
 
 use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 
-/// Simple contextual bandit for testing PPO correctness
+/// Snapshot of SimpleBandit's simulation state.
+///
+/// Captures the visible state (current context and step counter) but **not**
+/// the internal RNG. After `restore_state`, the next `step` will compute the
+/// reward using the restored `state`, and `terminated` matches the original
+/// trajectory. However, the *next sampled state* (drawn from the bandit's
+/// internal RNG inside `step`) is **not** reproduced: see the per-env
+/// snapshot semantics in [`SimpleBandit`].
+#[derive(Debug, Clone)]
+pub struct SimpleBanditState {
+    /// Current context (0.0 or 1.0)
+    pub state: f32,
+    /// Step counter
+    pub steps: usize,
+}
+
+/// Simple contextual bandit for testing PPO correctness.
+///
+/// # Snapshot semantics
+///
+/// `clone_state` / `restore_state` capture the current context and step
+/// counter, so the next `step(action)` produces the same `reward` and
+/// `terminated` flag it would have at snapshot time. The bandit's internal
+/// `StdRng` is **not** captured: the *next* state sampled inside `step` will
+/// differ between the snapshotted run and the restored run, so the
+/// `observation` returned by `step` is not reproduced bit-for-bit. The reward
+/// for the action taken at the snapshot point is still deterministic.
 #[derive(Debug)]
 pub struct SimpleBandit {
     state: f32,
@@ -39,6 +65,7 @@ impl Default for SimpleBandit {
 
 impl Environment for SimpleBandit {
     type Action = i64;
+    type State = SimpleBanditState;
 
     fn reset(&mut self) {
         // Random start state (0 or 1)
@@ -94,6 +121,15 @@ impl Environment for SimpleBandit {
     fn close(&mut self) {
         // Nothing to clean up
     }
+
+    fn clone_state(&self) -> SimpleBanditState {
+        SimpleBanditState { state: self.state, steps: self.steps }
+    }
+
+    fn restore_state(&mut self, state: &SimpleBanditState) {
+        self.state = state.state;
+        self.steps = state.steps;
+    }
 }
 
 #[cfg(test)]
@@ -118,6 +154,36 @@ mod tests {
         env.state = 1.0;
         let result = env.step(0);
         assert_eq!(result.reward, 0.0);
+    }
+
+    #[test]
+    fn clone_restore_round_trips() {
+        let mut env = SimpleBandit::new();
+        env.reset();
+
+        // Step a few times to a non-initial state.
+        for _ in 0..5 {
+            env.step(0);
+        }
+        let snap = env.clone_state();
+        let pre_state = env.state;
+        let pre_steps = env.steps;
+
+        // Take an experimental step.
+        let r1 = env.step(pre_state as i64);
+
+        // Restore and take the same step again.
+        env.restore_state(&snap);
+        assert_eq!(env.state, pre_state, "state must round-trip");
+        assert_eq!(env.steps, pre_steps, "steps must round-trip");
+
+        let r2 = env.step(pre_state as i64);
+
+        // Reward depends only on (state, action) and is fully deterministic.
+        assert_eq!(r1.reward, r2.reward);
+        assert_eq!(r1.terminated, r2.terminated);
+        // observation reflects the *next* random state, which is not
+        // reproduced by restore_state (RNG is not snapshotted).
     }
 
     #[test]
