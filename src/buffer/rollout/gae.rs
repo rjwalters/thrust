@@ -126,7 +126,10 @@ pub fn compute_advantages_partial(
 ///
 /// This is an optimized implementation that processes one environment
 /// at a time to improve cache locality.
-fn compute_gae_single_env(
+///
+/// Visible to the parent `rollout` module so the sibling `tests` module
+/// can exercise it directly.
+pub(super) fn compute_gae_single_env(
     rewards: &[f32],
     values: &[f32],
     terminated: &[bool],
@@ -175,6 +178,138 @@ fn compute_gae_single_env(
         advantages[t] = gae;
         returns[t] = values[t] + gae;
     }
+}
+
+/// Compute Generalized Advantage Estimation (GAE) over a flat,
+/// interleaved multi-agent rollout buffer.
+///
+/// This variant is intended for ad-hoc multi-agent rollout structures
+/// that cannot use the `[num_steps, num_envs]`
+/// [`crate::buffer::rollout::RolloutBuffer`] layout because they also carry an
+/// agent dimension. Multi-agent Snake training uses this shape: each rollout
+/// step pushes one entry per (env, agent) pair, in `(env, agent)`-major order,
+/// giving a flat buffer of length `num_steps * num_envs * num_agents`.
+///
+/// # Buffer layout
+///
+/// All input slices use the same layout and indexing scheme:
+///
+/// ```text
+/// index = t * (num_envs * num_agents) + env * num_agents + agent
+/// ```
+///
+/// where `t` ranges over `[0, num_steps)`, `env` over `[0, num_envs)`,
+/// and `agent` over `[0, num_agents)`. The total length must be
+/// `num_steps * num_envs * num_agents`.
+///
+/// `last_values` is a per-(env, agent) bootstrap of length
+/// `num_envs * num_agents`, indexed as `env * num_agents + agent`. It
+/// supplies `V(s_{T+1})` for the state immediately after the final
+/// rollout step.
+///
+/// # Algorithm
+///
+/// Independently iterates GAE backwards in time for each (env, agent)
+/// trajectory:
+///
+/// ```text
+/// δ_t = r_t + γ * V_{t+1} * (1 - done_t) - V_t
+/// A_t = δ_t + γ * λ * (1 - done_t) * A_{t+1}
+/// ```
+///
+/// A `done` flag at step `t` zeroes both the bootstrap `V_{t+1}` and
+/// the GAE accumulator, so episode boundaries do not leak across
+/// trajectories. At the final step (`t == num_steps - 1`), the bootstrap
+/// is taken from `last_values` when the trajectory has not terminated
+/// and from `0.0` when it has.
+///
+/// # Arguments
+/// * `rewards` - Per-(t, env, agent) immediate rewards
+/// * `values` - Per-(t, env, agent) value estimates from the policy
+/// * `dones` - Per-(t, env, agent) episode termination flags
+/// * `last_values` - Per-(env, agent) bootstrap `V(s_{T+1})`
+/// * `num_envs` - Number of parallel environments in the rollout
+/// * `num_agents` - Number of agents per environment
+/// * `gamma` - Discount factor (0 < gamma <= 1)
+/// * `gae_lambda` - GAE lambda parameter (0 < lambda <= 1)
+///
+/// # Returns
+/// `(advantages, returns)` as flat `Vec<f32>` matching the input layout.
+///
+/// # Panics
+/// Panics if input slice lengths are inconsistent with
+/// `num_steps * num_envs * num_agents` (computed from
+/// `rewards.len()`), or if `last_values.len() != num_envs * num_agents`.
+pub fn compute_advantages_multi_agent(
+    rewards: &[f32],
+    values: &[f32],
+    dones: &[bool],
+    last_values: &[f32],
+    num_envs: usize,
+    num_agents: usize,
+    gamma: f32,
+    gae_lambda: f32,
+) -> (Vec<f32>, Vec<f32>) {
+    let stride = num_envs * num_agents;
+    assert!(stride > 0, "num_envs * num_agents must be > 0");
+    assert_eq!(
+        rewards.len() % stride,
+        0,
+        "rewards.len() ({}) must be divisible by num_envs * num_agents ({})",
+        rewards.len(),
+        stride
+    );
+    assert_eq!(values.len(), rewards.len(), "values length mismatch");
+    assert_eq!(dones.len(), rewards.len(), "dones length mismatch");
+    assert_eq!(
+        last_values.len(),
+        stride,
+        "last_values length must equal num_envs * num_agents ({})",
+        stride
+    );
+
+    let num_steps = rewards.len() / stride;
+    let total = rewards.len();
+    let mut advantages = vec![0.0_f32; total];
+    let mut returns = vec![0.0_f32; total];
+
+    // Independently roll up GAE backwards for each (env, agent)
+    // trajectory. This is the multi-agent analog of
+    // `compute_gae_single_env`.
+    for env in 0..num_envs {
+        for agent in 0..num_agents {
+            let slot = env * num_agents + agent;
+            let bootstrap = last_values[slot];
+            let mut gae = 0.0_f32;
+
+            for t in (0..num_steps).rev() {
+                let idx = t * stride + slot;
+                let done = dones[idx];
+                let next_value = if t == num_steps - 1 {
+                    // Final step: bootstrap from post-rollout estimate
+                    // unless the trajectory terminated here.
+                    if done { 0.0 } else { bootstrap }
+                } else if done {
+                    // Episode ended: no bootstrap into the next step.
+                    0.0
+                } else {
+                    values[idx + stride]
+                };
+
+                let mask = if done { 0.0_f32 } else { 1.0_f32 };
+                let delta = rewards[idx] + gamma * next_value * mask - values[idx];
+                // When the current step is terminal, drop the accumulated
+                // GAE from the next step — otherwise it would leak across
+                // an episode boundary.
+                gae = delta + gamma * gae_lambda * mask * gae;
+
+                advantages[idx] = gae;
+                returns[idx] = values[idx] + gae;
+            }
+        }
+    }
+
+    (advantages, returns)
 }
 
 /// Compute n-step returns (simpler alternative to GAE)
