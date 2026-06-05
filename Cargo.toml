@@ -163,6 +163,12 @@ name = "export_snake_init"
 path = "examples/games/snake/export_snake_init.rs"
 required-features = ["training"]
 
+# Pong examples
+[[example]]
+name = "train_pong"
+path = "examples/games/pong/train_pong.rs"
+required-features = ["training"]
+
 # Bandit examples
 [[example]]
 name = "train_simple_bandit"

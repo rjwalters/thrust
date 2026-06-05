@@ -28,8 +28,25 @@ ELSE IF arguments contain "stop":
     -> EXIT
 
 ELSE:
-    -> Proceed to Daemon Detection below
+    -> Proceed to Host Sleep Readiness, then Daemon Detection below
 ```
+
+## Host Sleep Readiness (#3350)
+
+`/loom` is intended for **long-running, often overnight** autonomous orchestration. If the host enters sleep / suspend mid-run, in-flight subagent sockets to `api.anthropic.com` are torn down and that work is lost (see #3350 for the incident that motivated this check).
+
+Before doing anything else (other than the help / status / stop early exits handled in Mode Selection above), run the host-sleep readiness check and surface its output to the user:
+
+```bash
+./.loom/scripts/check-host-sleep.sh
+```
+
+This is advisory-only. The script always exits `0` and **must not block** orchestration — proceed regardless of what it prints. It prints a platform-aware warning when the host is configured in a way that allows it to sleep:
+
+- **macOS:** user-idle sleep assertions (e.g. Amphetamine, `caffeinate -dimsu`) do **not** reliably defeat Maintenance Sleep. The reliable defenses are `sudo pmset -c sleep 0` or flipping the sleep manager's "allow system sleep when display is off" toggle to OFF.
+- **systemd Linux:** wrap the session in `systemd-inhibit --what=idle:sleep --who=loom --why=loom -- <cmd>`, which IS reliable.
+
+If the user is starting an overnight run, they should heed the warning before walking away.
 
 ## Daemon Detection
 
@@ -509,7 +526,6 @@ cd .loom/worktrees/issue-42           # Branch: feature/issue-42
 
 **Worktree locations:**
 - `.loom/worktrees/issue-N` - Per-issue work (Builder creates these)
-- `.loom/worktrees/terminal-N` - Per-terminal isolation (Tauri App only)
 
 **Rules:**
 - Always use `./.loom/scripts/worktree.sh` (never `git worktree` directly)
@@ -538,6 +554,7 @@ loom-clean --deep       # Also remove build artifacts
 | `loom:issue` | Approved and ready for work | Champion/Human |
 | `loom:building` | Builder is implementing | Builder |
 | `loom:blocked` | Work is blocked | Builder |
+| `loom:operator-only` | Requires human action; sweep/shepherd skip | Human |
 | `loom:urgent` | Critical priority | Guide/Human |
 
 **Workflow labels (PR lifecycle):**

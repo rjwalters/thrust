@@ -22,6 +22,7 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use rayon::prelude::*;
 use tch::{Device, Tensor, nn, nn::OptimizerConfig};
 use thrust_rl::{
     buffer::rollout::compute_advantages_multi_agent, env::snake::SnakeEnv,
@@ -60,20 +61,22 @@ impl Default for Args {
     fn default() -> Self {
         Self {
             mode: TrainingMode::Shared,
-            num_envs: 16,
+            num_envs: 32,
             num_agents: 4,
-            grid_width: 20,
-            grid_height: 20,
+            grid_width: 40, // Larger world — more room to grow, denser food events
+            grid_height: 40,
             steps_per_rollout: 512,
             epochs: 1000,
             learning_rate: 3e-4,
             gae_lambda: 0.95,
-            gamma: 0.99,
+            gamma: 0.97,
             clip_param: 0.2,
             value_coef: 0.5,
-            entropy_coef: 0.03, // Increased from 0.01 for better exploration (sparse rewards)
+            // entropy_coef 0.03 produced an entropy gradient ~40x larger than the
+            // policy gradient (master 5b9f0a2); 0.005 lets the policy specialize.
+            entropy_coef: 0.005,
             ppo_epochs: 4,
-            minibatch_size: 64,
+            minibatch_size: 512, // Larger minibatch to keep GPU busy during PPO update
             output: PathBuf::from("models/snake_policy.safetensors"),
             save_interval: 10,
             cuda: true,
@@ -223,79 +226,80 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
     let mut rollout_buffer = RolloutBuffer::new();
     let mut total_episodes = 0;
     let mut total_steps = 0;
+    // Cumulative reward per active env (for correct episode return logging)
+    let mut env_episode_rewards = vec![0.0f32; args.num_envs];
+
+    // Initial reset only — episodes continue across rollout boundaries
+    for env in &mut envs {
+        env.reset();
+    }
 
     // Training loop
     for epoch in 0..args.epochs {
         rollout_buffer.clear();
 
-        // Reset all environments
-        for env in &mut envs {
-            env.reset();
-        }
-
         let mut episode_rewards = Vec::new();
 
         // Collect rollout
         for _step in 0..args.steps_per_rollout {
-            // Collect observations from all environments and agents
-            let mut all_obs = Vec::new();
-            let mut agent_ids = Vec::new();
-            for env in &envs {
-                for agent_id in 0..args.num_agents {
-                    let obs = env.get_grid_observation(agent_id);
-                    all_obs.push(obs);
-                    agent_ids.push(agent_id);
-                }
-            }
+            // Parallel observation collection: envs are independent, &self only
+            let all_obs: Vec<Vec<f32>> = envs
+                .par_iter()
+                .flat_map_iter(|env| {
+                    (0..args.num_agents).map(|agent_id| env.get_grid_observation(agent_id))
+                })
+                .collect();
 
-            // Convert to tensor [batch, channels, height, width]
+            // Single GPU forward pass for all envs × agents (batch = num_envs * num_agents)
             let batch_size = all_obs.len();
             let obs_flat: Vec<f32> = all_obs.iter().flatten().copied().collect();
             let obs_tensor = Tensor::from_slice(&obs_flat)
                 .reshape([batch_size as i64, 5, args.grid_height as i64, args.grid_width as i64])
                 .to_device(device);
 
-            // Get actions and values
             let (actions, log_probs, values) = tch::no_grad(|| policy.sample_action(&obs_tensor));
 
             let actions_vec: Vec<i64> = actions.squeeze_dim(1).try_into().unwrap();
             let log_probs_vec: Vec<f32> = log_probs.squeeze_dim(1).try_into().unwrap();
             let values_vec: Vec<f32> = values.squeeze_dim(1).try_into().unwrap();
 
-            // Step environments with per-agent rewards
-            let mut obs_idx = 0;
-            for env_idx in 0..args.num_envs {
-                // Collect actions for all agents in this environment
-                let env_actions: Vec<i64> = (0..args.num_agents)
-                    .map(|_| {
-                        let a = actions_vec[obs_idx];
-                        obs_idx += 1;
-                        a
-                    })
-                    .collect();
+            // Parallel env stepping: each env is independent
+            let step_results: Vec<(Vec<f32>, bool, bool)> = envs
+                .par_iter_mut()
+                .enumerate()
+                .map(|(env_idx, env)| {
+                    let env_actions: Vec<i64> = (0..args.num_agents)
+                        .map(|a| actions_vec[env_idx * args.num_agents + a])
+                        .collect();
+                    env.step_multi_agents(&env_actions)
+                })
+                .collect();
 
-                // Step environment with per-agent rewards
-                let (agent_rewards, terminated, truncated) =
-                    envs[env_idx].step_multi_agents(&env_actions);
+            // Serial: write results to buffer and reset finished environments
+            for (env_idx, (agent_rewards, terminated, truncated)) in
+                step_results.into_iter().enumerate()
+            {
+                let step_total: f32 = agent_rewards.iter().sum();
+                env_episode_rewards[env_idx] += step_total;
 
-                // Store transitions for each agent with individualized rewards
                 for agent_id in 0..args.num_agents {
-                    let obs_idx_curr = env_idx * args.num_agents + agent_id;
+                    let flat_idx = env_idx * args.num_agents + agent_id;
+                    let agent_done =
+                        terminated || truncated || !envs[env_idx].snakes[agent_id].is_alive();
                     rollout_buffer.add(
-                        all_obs[obs_idx_curr].clone(),
-                        actions_vec[obs_idx_curr],
-                        log_probs_vec[obs_idx_curr],
-                        agent_rewards[agent_id], // Individual reward!
-                        values_vec[obs_idx_curr],
-                        terminated || truncated,
+                        all_obs[flat_idx].clone(),
+                        actions_vec[flat_idx],
+                        log_probs_vec[flat_idx],
+                        agent_rewards[agent_id],
+                        values_vec[flat_idx],
+                        agent_done,
                         agent_id,
                     );
                 }
 
-                // Track episode stats
                 if terminated || truncated {
-                    let total_reward: f32 = agent_rewards.iter().sum();
-                    episode_rewards.push(total_reward);
+                    episode_rewards.push(env_episode_rewards[env_idx]);
+                    env_episode_rewards[env_idx] = 0.0;
                     total_episodes += 1;
                     envs[env_idx].reset();
                 }
@@ -309,14 +313,24 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
         // Shared-mode rollout buffer layout: each step pushes
         // `num_envs * num_agents` transitions in (env, agent)-major
         // order, so the flat buffer matches the layout expected by
-        // `compute_advantages_multi_agent`. We pass a zero bootstrap
-        // for `V(s_{T+1})` to preserve the prior behavior (the local
-        // copy this replaced did the same implicitly).
+        // `compute_advantages_multi_agent`.
+        //
+        // Bootstrap with V(s_{T+1}) per (env, agent) for trajectories
+        // that hit the rollout boundary mid-episode (master a6092b0).
         //
         // TODO(loom): future issue could lift the env-stepping rayon
         // loop into a `MultiAgentEnvPool` (see issue #46 curator notes).
-        let stride = args.num_envs * args.num_agents;
-        let last_values = vec![0.0_f32; stride];
+        let last_obs: Vec<Vec<f32>> = envs
+            .par_iter()
+            .flat_map_iter(|env| (0..args.num_agents).map(|a| env.get_grid_observation(a)))
+            .collect();
+        let last_obs_flat: Vec<f32> = last_obs.iter().flatten().copied().collect();
+        let last_obs_tensor = Tensor::from_slice(&last_obs_flat)
+            .reshape([last_obs.len() as i64, 5, args.grid_height as i64, args.grid_width as i64])
+            .to_device(device);
+        let (_, _, last_vals) = tch::no_grad(|| policy.sample_action(&last_obs_tensor));
+        let last_values: Vec<f32> = last_vals.squeeze_dim(1).try_into().unwrap();
+
         let (advantages, returns) = compute_advantages_multi_agent(
             &rollout_buffer.rewards,
             &rollout_buffer.values,
@@ -362,6 +376,8 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                 let batch_advantages: Vec<f32> =
                     chunk.iter().map(|&i| norm_advantages[i]).collect();
                 let batch_returns: Vec<f32> = chunk.iter().map(|&i| returns[i]).collect();
+                let batch_old_values: Vec<f32> =
+                    chunk.iter().map(|&i| rollout_buffer.values[i]).collect();
 
                 // Convert to tensors
                 let obs_flat: Vec<f32> = batch_obs.iter().flatten().copied().collect();
@@ -393,10 +409,16 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                     ratio.clamp(1.0 - args.clip_param, 1.0 + args.clip_param) * &advantages_tensor;
                 let policy_loss = -surr1.min_other(&surr2).mean(tch::Kind::Float);
 
-                // Value loss
-                let value_loss = (&values.squeeze_dim(1) - &returns_tensor)
-                    .pow_tensor_scalar(2)
-                    .mean(tch::Kind::Float);
+                // Clipped value loss — prevents the value function from making
+                // large jumps in a single update (mirrors policy clipping)
+                let old_values_tensor = Tensor::from_slice(&batch_old_values).to_device(device);
+                let values_sq = values.squeeze_dim(1);
+                let v_clipped = &old_values_tensor
+                    + (&values_sq - &old_values_tensor)
+                        .clamp(-(args.clip_param as f64), args.clip_param as f64);
+                let vf_loss1 = (&values_sq - &returns_tensor).pow_tensor_scalar(2);
+                let vf_loss2 = (&v_clipped - &returns_tensor).pow_tensor_scalar(2);
+                let value_loss = vf_loss1.max_other(&vf_loss2).mean(tch::Kind::Float);
 
                 // Entropy bonus
                 let probs = logits.softmax(-1, tch::Kind::Float);
@@ -413,9 +435,10 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                 // Total loss
                 let loss = policy_loss + args.value_coef * value_loss - args.entropy_coef * entropy;
 
-                // Backward pass
+                // Backward pass with gradient clipping
                 opt.zero_grad();
                 loss.backward();
+                opt.clip_grad_norm(0.5);
                 opt.step();
             }
         }
@@ -519,66 +542,86 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
     let mut total_episodes = 0;
     let mut total_steps = 0;
 
+    // Initial reset only — episodes continue across rollout boundaries
+    for env in &mut envs {
+        env.reset();
+    }
+
     // Training loop
     for epoch in 0..args.epochs {
         for buffer in &mut rollout_buffers {
             buffer.clear();
         }
 
-        // Reset all environments
-        for env in &mut envs {
-            env.reset();
-        }
-
         let mut episode_rewards = Vec::new();
 
         // Collect rollout
         for _step in 0..args.steps_per_rollout {
-            // For each environment, get actions from each agent's policy
-            for env_idx in 0..args.num_envs {
-                let mut env_actions = Vec::new();
-                let mut env_log_probs = Vec::new();
-                let mut env_values = Vec::new();
-                let mut env_obs = Vec::new();
+            // Parallel obs collection: [agent_id][env_idx] → obs
+            // Structured as agent-major so we can batch by agent for GPU inference.
+            let all_obs_by_agent: Vec<Vec<Vec<f32>>> = (0..args.num_agents)
+                .map(|agent_id| {
+                    envs.par_iter().map(|env| env.get_grid_observation(agent_id)).collect()
+                })
+                .collect();
 
-                // Each agent selects action using its own policy
-                for agent_id in 0..args.num_agents {
-                    let obs = envs[env_idx].get_grid_observation(agent_id);
-                    let obs_tensor = Tensor::from_slice(&obs)
-                        .reshape([1, 5, args.grid_height as i64, args.grid_width as i64])
-                        .to_device(device);
+            // One GPU forward pass per agent, batch = num_envs (not batch=1 per env)
+            let mut actions_by_agent: Vec<Vec<i64>> = Vec::with_capacity(args.num_agents);
+            let mut log_probs_by_agent: Vec<Vec<f32>> = Vec::with_capacity(args.num_agents);
+            let mut values_by_agent: Vec<Vec<f32>> = Vec::with_capacity(args.num_agents);
 
-                    let (action, log_prob, value) =
-                        tch::no_grad(|| policies[agent_id].sample_action(&obs_tensor));
+            for agent_id in 0..args.num_agents {
+                let obs_flat: Vec<f32> =
+                    all_obs_by_agent[agent_id].iter().flatten().copied().collect();
+                let obs_tensor = Tensor::from_slice(&obs_flat)
+                    .reshape([
+                        args.num_envs as i64,
+                        5,
+                        args.grid_height as i64,
+                        args.grid_width as i64,
+                    ])
+                    .to_device(device);
 
-                    let action_val: i64 = action.int64_value(&[0, 0]);
-                    let log_prob_val: f32 = log_prob.double_value(&[0, 0]) as f32;
-                    let value_val: f32 = value.double_value(&[0, 0]) as f32;
+                let (actions, log_probs, values) =
+                    tch::no_grad(|| policies[agent_id].sample_action(&obs_tensor));
 
-                    env_actions.push(action_val);
-                    env_log_probs.push(log_prob_val);
-                    env_values.push(value_val);
-                    env_obs.push(obs);
-                }
+                actions_by_agent.push(actions.squeeze_dim(1).try_into().unwrap());
+                log_probs_by_agent.push(log_probs.squeeze_dim(1).try_into().unwrap());
+                values_by_agent.push(values.squeeze_dim(1).try_into().unwrap());
+            }
 
-                // Step environment with per-agent rewards
-                let (agent_rewards, terminated, truncated) =
-                    envs[env_idx].step_multi_agents(&env_actions);
+            // Build per-env action vecs for stepping
+            let env_action_vecs: Vec<Vec<i64>> = (0..args.num_envs)
+                .map(|env_idx| {
+                    (0..args.num_agents)
+                        .map(|agent_id| actions_by_agent[agent_id][env_idx])
+                        .collect()
+                })
+                .collect();
 
-                // Store transitions in each agent's buffer
+            // Parallel env stepping
+            let step_results: Vec<(Vec<f32>, bool, bool)> = envs
+                .par_iter_mut()
+                .enumerate()
+                .map(|(env_idx, env)| env.step_multi_agents(&env_action_vecs[env_idx]))
+                .collect();
+
+            // Serial: write to per-agent buffers, reset finished envs
+            for (env_idx, (agent_rewards, terminated, truncated)) in
+                step_results.into_iter().enumerate()
+            {
                 for agent_id in 0..args.num_agents {
                     rollout_buffers[agent_id].add(
-                        env_obs[agent_id].clone(),
-                        env_actions[agent_id],
-                        env_log_probs[agent_id],
-                        agent_rewards[agent_id], // Individual reward!
-                        env_values[agent_id],
+                        all_obs_by_agent[agent_id][env_idx].clone(),
+                        actions_by_agent[agent_id][env_idx],
+                        log_probs_by_agent[agent_id][env_idx],
+                        agent_rewards[agent_id],
+                        values_by_agent[agent_id][env_idx],
                         terminated || truncated,
                         agent_id,
                     );
                 }
 
-                // Track episode stats
                 if terminated || truncated {
                     let total_reward: f32 = agent_rewards.iter().sum();
                     episode_rewards.push(total_reward);
@@ -590,6 +633,28 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
             total_steps += args.num_envs * args.num_agents;
         }
 
+        // Bootstrap: V(s_{T+1}) per agent per env for rollout-boundary trajectories
+        // last_values_by_agent[agent_id][env_idx]
+        let last_values_by_agent: Vec<Vec<f32>> = (0..args.num_agents)
+            .map(|agent_id| {
+                let obs_flat: Vec<f32> = envs
+                    .par_iter()
+                    .flat_map_iter(|env| env.get_grid_observation(agent_id))
+                    .collect();
+                let obs_tensor = Tensor::from_slice(&obs_flat)
+                    .reshape([
+                        args.num_envs as i64,
+                        5,
+                        args.grid_height as i64,
+                        args.grid_width as i64,
+                    ])
+                    .to_device(device);
+                let (_, _, last_vals) =
+                    tch::no_grad(|| policies[agent_id].sample_action(&obs_tensor));
+                last_vals.squeeze_dim(1).try_into().unwrap()
+            })
+            .collect();
+
         // Train each agent's policy independently
         for agent_id in 0..args.num_agents {
             let buffer = &rollout_buffers[agent_id];
@@ -600,15 +665,13 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
             // across all envs; layout is `(step, env)`-major with
             // `num_envs` slots per step. We treat that as a
             // `num_envs` x `num_agents = 1` flat buffer to share the
-            // multi-agent GAE helper. Zero bootstrap preserves the
-            // prior behavior of the deleted local copy.
-            let stride = args.num_envs;
-            let last_values = vec![0.0_f32; stride];
+            // multi-agent GAE helper. Bootstrap V(s_{T+1}) per env
+            // from the per-agent forward pass above (master a6092b0).
             let (advantages, returns) = compute_advantages_multi_agent(
                 &buffer.rewards,
                 &buffer.values,
                 &buffer.dones,
-                &last_values,
+                &last_values_by_agent[agent_id],
                 args.num_envs,
                 // num_agents =
                 1,

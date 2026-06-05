@@ -115,10 +115,13 @@ ALWAYS_BLOCK_PATTERNS=(
     'gh repo delete'
     'gh repo archive'
 
-    # Force push to main (various flag forms)
+    # Force push to main/master (various flag forms)
     'git push --force origin main'
+    'git push --force origin master'
     'git push -f origin main'
+    'git push -f origin master'
     'git push --force-with-lease origin main'
+    'git push --force-with-lease origin master'
 
     # Filesystem destruction
     'rm -rf /'
