@@ -123,6 +123,11 @@ path = "examples/games/cartpole/train_cartpole_sb3.rs"
 required-features = ["training"]
 
 [[example]]
+name = "train_cartpole_dqn"
+path = "examples/games/cartpole/train_cartpole_dqn.rs"
+required-features = ["training"]
+
+[[example]]
 name = "optimize_cartpole"
 path = "examples/games/cartpole/optimize_cartpole.rs"
 required-features = ["training"]

@@ -13,4 +13,10 @@ pub mod mlp;
 pub mod multi_discrete_mlp;
 
 #[cfg(feature = "training")]
+pub mod q_network;
+
+#[cfg(feature = "training")]
 pub mod snake_cnn;
+
+#[cfg(feature = "training")]
+pub use q_network::QNetwork;
