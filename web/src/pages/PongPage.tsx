@@ -1,10 +1,46 @@
+import { useEffect, useState } from "react";
 import PongCanvas from "../components/Pong/PongCanvas";
 import PongControls from "../components/Pong/PongControls";
 import { usePong } from "../components/Pong/usePong";
 import GamePageLayout from "../components/GamePageLayout";
 
+interface ModelMetadata {
+	total_steps: number;
+	total_episodes: number;
+	final_performance: number;
+	training_time_secs: number;
+	device: string;
+	environment: string;
+	algorithm: string;
+	timestamp?: string;
+	notes?: string;
+	hyperparameters?: Record<string, string | number | boolean>;
+}
+
+interface ModelInfo {
+	obs_dim: number;
+	action_dim: number;
+	hidden_dim: number;
+	activation: string;
+	metadata?: ModelMetadata;
+}
+
 export default function PongPage() {
 	const pong = usePong();
+	const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+
+	useEffect(() => {
+		async function loadModelInfo() {
+			try {
+				const response = await fetch(`${import.meta.env.BASE_URL}pong_model.json`);
+				if (!response.ok) throw new Error(`HTTP ${response.status}`);
+				setModelInfo(await response.json());
+			} catch (e) {
+				console.warn("Failed to load Pong model info:", e);
+			}
+		}
+		loadModelInfo();
+	}, []);
 
 	const visualization = pong.state ? (
 		<div className="w-full h-[400px] flex items-center justify-center bg-gray-900">
@@ -112,18 +148,23 @@ export default function PongPage() {
 		</>
 	);
 
+	const hidden = modelInfo?.hidden_dim ?? 128;
+	const obsDim = modelInfo?.obs_dim ?? 6;
+	const actDim = modelInfo?.action_dim ?? 3;
+	const activation = modelInfo?.activation ?? "Tanh";
+
 	const neuralNetworkArchitecture = (
 		<>
 			<p className="text-gray-600 mb-4">
-				PPO (Proximal Policy Optimization) agent trained against a rule-based
-				opponent.
+				{modelInfo?.metadata?.algorithm ?? "PPO (Proximal Policy Optimization)"}{" "}
+				agent trained against a rule-based opponent.
 			</p>
 
 			<div className="grid md:grid-cols-2 gap-6">
 				<div>
 					<h3 className="font-semibold mb-2">Input Layer</h3>
 					<div className="bg-gray-50 p-3 rounded text-sm font-mono">
-						<div className="text-gray-700">6 continuous features</div>
+						<div className="text-gray-700">{obsDim} continuous features</div>
 						<ul className="mt-2 space-y-1 text-xs text-gray-600">
 							<li>• Ball position (x, y)</li>
 							<li>• Ball velocity (dx, dy)</li>
@@ -136,39 +177,81 @@ export default function PongPage() {
 				<div>
 					<h3 className="font-semibold mb-2">Hidden Layers</h3>
 					<div className="bg-gray-50 p-3 rounded text-sm font-mono space-y-2">
-						<div>Hidden 1: 6 → 128 neurons</div>
-						<div>Hidden 2: 128 → 128 neurons</div>
-						<div className="text-gray-500 text-xs">ReLU activation</div>
+						<div>Hidden 1: {obsDim} → {hidden} neurons</div>
+						<div>Hidden 2: {hidden} → {hidden} neurons</div>
+						<div className="text-gray-500 text-xs">{activation} activation</div>
 					</div>
 				</div>
 
 				<div>
 					<h3 className="font-semibold mb-2">Output Heads</h3>
 					<div className="bg-gray-50 p-3 rounded text-sm font-mono space-y-2">
-						<div>Policy: 128 → 3 actions</div>
+						<div>Policy: {hidden} → {actDim} actions</div>
 						<div className="text-xs text-gray-600">(Up, Stay, Down)</div>
-						<div className="mt-2">Value: 128 → 1 scalar</div>
+						<div className="mt-2">Value: {hidden} → 1 scalar</div>
 					</div>
 				</div>
 
 				<div>
-					<h3 className="font-semibold mb-2">Training Setup</h3>
-					<div className="bg-gray-50 p-3 rounded text-sm text-xs text-gray-600 space-y-1">
-						<div>• 32 parallel environments</div>
-						<div>• 128 steps per rollout</div>
-						<div>• γ = 0.99, λ = 0.95</div>
-						<div>• Opponent speed 60% of agent</div>
+					<h3 className="font-semibold mb-2">Training Details</h3>
+					<div className="bg-gray-50 p-3 rounded text-sm space-y-1">
+						{modelInfo?.metadata && (
+							<>
+								<div className="font-mono text-xs">
+									Steps: {modelInfo.metadata.total_steps.toLocaleString()}
+								</div>
+								<div className="font-mono text-xs">
+									Episodes: {modelInfo.metadata.total_episodes.toLocaleString()}
+								</div>
+								<div className="font-mono text-xs">
+									Avg episode: {modelInfo.metadata.final_performance.toFixed(1)} steps
+								</div>
+								<div className="font-mono text-xs">
+									Training time: {modelInfo.metadata.training_time_secs.toFixed(1)}s
+								</div>
+								<div className="font-mono text-xs">
+									Device: {modelInfo.metadata.device}
+								</div>
+							</>
+						)}
 					</div>
 				</div>
 			</div>
+
+			{modelInfo?.metadata?.hyperparameters && (
+				<div className="mt-4">
+					<h3 className="font-semibold mb-2">Hyperparameters</h3>
+					<div className="bg-gray-50 p-3 rounded text-xs font-mono">
+						<div className="grid grid-cols-2 gap-x-4 gap-y-1">
+							{Object.entries(modelInfo.metadata.hyperparameters)
+								.sort(([a], [b]) => a.localeCompare(b))
+								.map(([key, value]) => (
+									<div key={key} className="flex justify-between">
+										<span className="text-gray-600">{key}:</span>
+										<span className="font-semibold ml-2">
+											{typeof value === "number" && value < 1 && value > 0
+												? value.toFixed(6)
+												: String(value)}
+										</span>
+									</div>
+								))}
+						</div>
+					</div>
+				</div>
+			)}
 
 			<div className="mt-4 p-4 bg-blue-50 rounded-lg">
 				<p className="text-sm text-blue-900">
 					<strong>Status:</strong>{" "}
 					{pong.modelLoaded
 						? "Model loaded — PPO policy active"
-						: "No model file — using heuristic agent (train and deploy pong_model.json to activate)"}
+						: "No model file — using heuristic agent"}
 				</p>
+				{modelInfo?.metadata?.notes && (
+					<p className="text-xs text-blue-700 mt-2 italic">
+						{modelInfo.metadata.notes}
+					</p>
+				)}
 			</div>
 		</>
 	);
