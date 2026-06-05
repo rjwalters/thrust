@@ -4,7 +4,6 @@ import Home from "./pages/Home";
 import PongPage from "./pages/PongPage";
 import SimpleBanditPage from "./pages/SimpleBanditPage";
 import SnakePage from "./pages/SnakePage";
-import BucketBrigadePage from "./pages/BucketBrigadePage";
 
 function App() {
 	return (
@@ -15,7 +14,6 @@ function App() {
 				<Route path="/snake" element={<SnakePage />} />
 				<Route path="/pong" element={<PongPage />} />
 				<Route path="/bandit" element={<SimpleBanditPage />} />
-				<Route path="/bucket-brigade" element={<BucketBrigadePage />} />
 			</Routes>
 		</BrowserRouter>
 	);
