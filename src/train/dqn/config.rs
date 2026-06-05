@@ -73,6 +73,46 @@ pub struct DQNConfig {
     ///
     /// A typical value is `0.005` (the SB3/Spinning Up default).
     pub soft_update_tau: Option<f64>,
+
+    /// Use Prioritized Experience Replay (Schaul et al., 2015) in place
+    /// of the uniform [`crate::buffer::replay::ReplayBuffer`].
+    ///
+    /// When `true`, the trainer holds a
+    /// [`crate::buffer::replay::PrioritizedReplayBuffer`] and samples
+    /// transitions proportionally to `(|TD error| + ε)^α`. Per-sample
+    /// importance-sampling weights are applied to the Smooth-L1 loss
+    /// (so high-priority transitions get correspondingly down-weighted
+    /// updates), and the buffer's priorities are refreshed after each
+    /// gradient step with the new TD-error magnitudes.
+    ///
+    /// Defaults to `false` to preserve the vanilla uniform behavior.
+    pub prioritized_replay: bool,
+
+    /// PER priority exponent `α ∈ [0, 1]`. `0` recovers uniform sampling
+    /// (purely as a degenerate case — flip [`Self::prioritized_replay`]
+    /// off for the same effect without the sum-tree overhead). `1` is
+    /// fully proportional to priority. Typical value `0.6` (Schaul §3.2).
+    pub per_alpha: f64,
+
+    /// PER importance-sampling exponent at the start of training.
+    /// Typical value `0.4` (Schaul §3.4).
+    pub per_beta_start: f64,
+
+    /// PER importance-sampling exponent at the end of the annealing
+    /// schedule. Always `1.0` in the original paper — full bias
+    /// correction by the end of training.
+    pub per_beta_end: f64,
+
+    /// Number of environment steps over which β linearly anneals from
+    /// `per_beta_start` to `per_beta_end`. After this many steps β stays
+    /// at `per_beta_end`. Defaults to `epsilon_decay_steps` if set to
+    /// `0` (sentinel "follow the ε schedule").
+    pub per_beta_steps: usize,
+
+    /// Tiny constant added to `|TD error|` before raising to `α`, so
+    /// transitions with vanishing TD error still have a small chance of
+    /// being resampled. Typical value `1e-6`.
+    pub per_epsilon: f64,
 }
 
 impl Default for DQNConfig {
@@ -89,6 +129,12 @@ impl Default for DQNConfig {
             epsilon_decay_steps: 10_000,
             max_grad_norm: 10.0,
             soft_update_tau: None,
+            prioritized_replay: false,
+            per_alpha: 0.6,
+            per_beta_start: 0.4,
+            per_beta_end: 1.0,
+            per_beta_steps: 0,
+            per_epsilon: 1e-6,
         }
     }
 }
@@ -156,7 +202,52 @@ impl DQNConfig {
                 return Err(anyhow!("soft_update_tau must be in (0, 1], got {}", tau));
             }
         }
+        // Prioritized Experience Replay parameter ranges. We validate
+        // even when `prioritized_replay = false` so callers that flip
+        // the flag on later don't suddenly hit a runtime error from a
+        // stale, half-built config.
+        if !(0.0..=1.0).contains(&self.per_alpha) {
+            return Err(anyhow!("per_alpha must be in [0, 1], got {}", self.per_alpha));
+        }
+        if !(0.0..=1.0).contains(&self.per_beta_start) {
+            return Err(anyhow!("per_beta_start must be in [0, 1], got {}", self.per_beta_start));
+        }
+        if !(0.0..=1.0).contains(&self.per_beta_end) {
+            return Err(anyhow!("per_beta_end must be in [0, 1], got {}", self.per_beta_end));
+        }
+        if self.per_beta_start > self.per_beta_end {
+            return Err(anyhow!(
+                "per_beta_start ({}) must be <= per_beta_end ({})",
+                self.per_beta_start,
+                self.per_beta_end
+            ));
+        }
+        if self.per_epsilon < 0.0 || !self.per_epsilon.is_finite() {
+            return Err(anyhow!(
+                "per_epsilon must be finite and non-negative, got {}",
+                self.per_epsilon
+            ));
+        }
         Ok(())
+    }
+
+    /// Compute β at a given env-step count under the linear schedule:
+    ///
+    /// ```text
+    /// β(t) = β_start + (β_end − β_start) · min(t / β_steps, 1)
+    /// ```
+    ///
+    /// If `per_beta_steps == 0` the trainer falls back to
+    /// `epsilon_decay_steps` so callers can leave the field at its
+    /// default and have β anneal over the same window as ε.
+    pub fn beta_at(&self, env_steps: usize) -> f64 {
+        let steps = if self.per_beta_steps == 0 {
+            self.epsilon_decay_steps.max(1)
+        } else {
+            self.per_beta_steps
+        };
+        let fraction = ((env_steps as f64) / (steps as f64)).clamp(0.0, 1.0);
+        self.per_beta_start + (self.per_beta_end - self.per_beta_start) * fraction
     }
 
     /// Compute the ε used at a given env-step count under the linear
@@ -246,6 +337,43 @@ impl DQNConfig {
     /// A typical value is `0.005`.
     pub fn soft_update_tau(mut self, tau: f64) -> Self {
         self.soft_update_tau = Some(tau);
+        self
+    }
+
+    /// Enable or disable Prioritized Experience Replay.
+    pub fn prioritized_replay(mut self, enabled: bool) -> Self {
+        self.prioritized_replay = enabled;
+        self
+    }
+
+    /// Set the PER priority exponent `α`.
+    pub fn per_alpha(mut self, alpha: f64) -> Self {
+        self.per_alpha = alpha;
+        self
+    }
+
+    /// Set the PER importance-sampling exponent at the start of training.
+    pub fn per_beta_start(mut self, beta: f64) -> Self {
+        self.per_beta_start = beta;
+        self
+    }
+
+    /// Set the PER importance-sampling exponent at the end of training.
+    pub fn per_beta_end(mut self, beta: f64) -> Self {
+        self.per_beta_end = beta;
+        self
+    }
+
+    /// Set the number of env steps over which β linearly anneals.
+    /// Pass `0` to follow [`Self::epsilon_decay_steps`].
+    pub fn per_beta_steps(mut self, steps: usize) -> Self {
+        self.per_beta_steps = steps;
+        self
+    }
+
+    /// Set the PER priority floor `ε`.
+    pub fn per_epsilon(mut self, eps: f64) -> Self {
+        self.per_epsilon = eps;
         self
     }
 }
@@ -372,6 +500,83 @@ mod tests {
         assert!(DQNConfig::new().soft_update_tau(1.5).validate().is_err());
         assert!(DQNConfig::new().soft_update_tau(1.0).validate().is_ok());
         assert!(DQNConfig::new().soft_update_tau(0.005).validate().is_ok());
+    }
+
+    #[test]
+    fn test_default_per_fields() {
+        let cfg = DQNConfig::default();
+        assert!(!cfg.prioritized_replay);
+        assert!((cfg.per_alpha - 0.6).abs() < 1e-9);
+        assert!((cfg.per_beta_start - 0.4).abs() < 1e-9);
+        assert!((cfg.per_beta_end - 1.0).abs() < 1e-9);
+        assert_eq!(cfg.per_beta_steps, 0);
+        assert!((cfg.per_epsilon - 1e-6).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_per_builder_setters() {
+        let cfg = DQNConfig::new()
+            .prioritized_replay(true)
+            .per_alpha(0.7)
+            .per_beta_start(0.3)
+            .per_beta_end(1.0)
+            .per_beta_steps(20_000)
+            .per_epsilon(1e-5);
+        assert!(cfg.prioritized_replay);
+        assert!((cfg.per_alpha - 0.7).abs() < 1e-9);
+        assert!((cfg.per_beta_start - 0.3).abs() < 1e-9);
+        assert!((cfg.per_beta_end - 1.0).abs() < 1e-9);
+        assert_eq!(cfg.per_beta_steps, 20_000);
+        assert!((cfg.per_epsilon - 1e-5).abs() < 1e-12);
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_per_alpha_out_of_range() {
+        assert!(DQNConfig::new().per_alpha(-0.1).validate().is_err());
+        assert!(DQNConfig::new().per_alpha(1.5).validate().is_err());
+        assert!(DQNConfig::new().per_alpha(0.0).validate().is_ok());
+        assert!(DQNConfig::new().per_alpha(1.0).validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_per_beta_out_of_range() {
+        assert!(DQNConfig::new().per_beta_start(-0.1).validate().is_err());
+        assert!(DQNConfig::new().per_beta_end(1.5).validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_per_beta_start_above_end() {
+        let cfg = DQNConfig::new().per_beta_start(0.9).per_beta_end(0.5);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_rejects_negative_per_epsilon() {
+        let cfg = DQNConfig::new().per_epsilon(-1e-6);
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_beta_schedule_linear() {
+        let cfg = DQNConfig::new().per_beta_start(0.4).per_beta_end(1.0).per_beta_steps(1000);
+        assert!((cfg.beta_at(0) - 0.4).abs() < 1e-9);
+        assert!((cfg.beta_at(500) - 0.7).abs() < 1e-9);
+        assert!((cfg.beta_at(1000) - 1.0).abs() < 1e-9);
+        // Past the end of the schedule β floors at β_end.
+        assert!((cfg.beta_at(10_000) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_beta_schedule_falls_back_to_epsilon_decay() {
+        // If per_beta_steps == 0, β should anneal over epsilon_decay_steps.
+        let cfg = DQNConfig::new()
+            .per_beta_start(0.4)
+            .per_beta_end(1.0)
+            .per_beta_steps(0)
+            .epsilon_decay_steps(2_000);
+        assert!((cfg.beta_at(1_000) - 0.7).abs() < 1e-9);
+        assert!((cfg.beta_at(2_000) - 1.0).abs() < 1e-9);
     }
 
     #[test]

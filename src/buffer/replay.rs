@@ -1,11 +1,19 @@
 //! Replay buffer for off-policy training (DQN).
 //!
-//! This module implements a fixed-capacity FIFO experience replay buffer
-//! used by [`crate::train::dqn`]. Transitions are stored as flat
-//! CPU-side `Vec`s rather than `tch::Tensor`s so the buffer stays
-//! WASM-compatible if it ever needs to be exposed there.
+//! This module implements two flavors of experience replay used by
+//! [`crate::train::dqn`]:
 //!
-//! # Quick example
+//! 1. [`ReplayBuffer`] — a fixed-capacity FIFO buffer with uniform sampling.
+//!    The classic DQN recipe.
+//! 2. [`PrioritizedReplayBuffer`] — a sum-tree backed buffer with proportional
+//!    priority sampling and importance-sampling correction weights (Schaul et
+//!    al. 2015).
+//!
+//! Both store transitions as flat CPU-side `Vec`s rather than
+//! `tch::Tensor`s so the buffer stays WASM-compatible if it ever needs
+//! to be exposed there.
+//!
+//! # Quick example (uniform)
 //!
 //! ```ignore
 //! use thrust_rl::buffer::replay::{ReplayBuffer, sample};
@@ -21,9 +29,32 @@
 //!     // ... feed (obs, act, rew, next_obs, done) into the DQN trainer ...
 //! }
 //! ```
+//!
+//! # Quick example (prioritized)
+//!
+//! ```ignore
+//! use thrust_rl::buffer::replay::PrioritizedReplayBuffer;
+//! use rand::SeedableRng;
+//!
+//! let mut buf = PrioritizedReplayBuffer::new(50_000, 4, /* α */ 0.6, /* ε */ 1e-6);
+//! buf.push(&[0.0; 4], 1, 1.0, &[0.1; 4], false);
+//!
+//! let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+//! if buf.is_ready(1) {
+//!     let batch = buf.sample(64, /* β */ 0.4, &mut rng);
+//!     let (obs, act, rew, next_obs, done, is_w) = batch.to_tensors(tch::Device::Cpu);
+//!     // ... compute weighted Smooth-L1 loss, backprop ...
+//!     // ... then write the new TD-error magnitudes back:
+//!     // buf.update_priorities(&batch.indices, &new_td_errors);
+//! }
+//! ```
 
+pub use prioritized::{PrioritizedBatch, PrioritizedReplayBuffer};
 pub use sampling::{ReplayBatch, sample};
 pub use storage::ReplayBuffer;
+pub use sum_tree::SumTree;
 
+mod prioritized;
 mod sampling;
 mod storage;
+mod sum_tree;
