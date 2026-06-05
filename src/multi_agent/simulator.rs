@@ -283,6 +283,8 @@ mod tests {
     }
 
     impl Environment for MockEnv {
+        type Action = i64;
+
         fn reset(&mut self) {}
 
         fn get_observation(&self) -> Vec<f32> {

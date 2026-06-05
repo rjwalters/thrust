@@ -144,6 +144,8 @@ impl BucketBrigadeMaEnv {
 // single scalar action as a Cartesian-product index over `[house, mode]`.
 // Real consumers should drive the env through `MultiAgentEnvironment`.
 impl Environment for BucketBrigadeMaEnv {
+    type Action = i64;
+
     fn reset(&mut self) {
         let _ = BucketBrigadeMaEnv::reset(self, None);
     }
