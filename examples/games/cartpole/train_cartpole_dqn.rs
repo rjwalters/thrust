@@ -1,7 +1,7 @@
 //! Train DQN on CartPole-v1.
 //!
-//! This example demonstrates Thrust's vanilla DQN scaffolding end-to-end:
-//! a replay-buffer + target-network + ε-greedy training loop on the
+//! This example demonstrates Thrust's DQN scaffolding end-to-end: a
+//! replay-buffer + target-network + ε-greedy training loop on the
 //! classic discrete-action control benchmark.
 //!
 //! # Usage
@@ -14,6 +14,13 @@
 //!
 //! ```bash
 //! TOTAL_TIMESTEPS=20000 cargo run --example train_cartpole_dqn --features training --release
+//! ```
+//!
+//! Enable Prioritized Experience Replay (Schaul et al., 2015) via
+//! `PER=1`:
+//!
+//! ```bash
+//! PER=1 cargo run --example train_cartpole_dqn --features training --release
 //! ```
 //!
 //! Expected behavior: average return over the last 100 episodes climbs
@@ -38,6 +45,14 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(60_000);
 
+    // Prioritized Experience Replay toggle. Set `PER=1` to flip on the
+    // sum-tree backed replay buffer with IS-weighted Smooth-L1 loss.
+    let use_per: bool = std::env::var("PER")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|n| n != 0)
+        .unwrap_or(false);
+
     // Inspect the environment for dims.
     let probe = CartPole::new();
     let obs_dim = probe.observation_space().shape[0] as i64;
@@ -54,7 +69,7 @@ fn main() -> Result<()> {
     //
     // With Double-DQN + soft updates the avg-100 return is expected to
     // cross 475 within ~50k env steps on this seed.
-    let config = DQNConfig::new()
+    let mut config = DQNConfig::new()
         .learning_rate(1e-3)
         .batch_size(64)
         .buffer_capacity(50_000)
@@ -66,6 +81,29 @@ fn main() -> Result<()> {
         .epsilon_decay_steps(10_000)
         .max_grad_norm(10.0)
         .soft_update_tau(0.005);
+
+    if use_per {
+        // Schaul's defaults: α = 0.6, β annealed 0.4 → 1.0 over the
+        // training budget (we let it follow ε_decay_steps unless the
+        // caller wants something else).
+        config = config
+            .prioritized_replay(true)
+            .per_alpha(0.6)
+            .per_beta_start(0.4)
+            .per_beta_end(1.0)
+            .per_beta_steps(total_timesteps)
+            .per_epsilon(1e-6);
+        tracing::info!(
+            "🎯 Prioritized Experience Replay ENABLED  α={:.2}  β: {:.2}→{:.2} over {} steps  ε={:.0e}",
+            config.per_alpha,
+            config.per_beta_start,
+            config.per_beta_end,
+            config.per_beta_steps,
+            config.per_epsilon,
+        );
+    } else {
+        tracing::info!("Uniform replay (set PER=1 to enable Prioritized Experience Replay)");
+    }
 
     let mut trainer = DQNTrainer::new(config, obs_dim, n_actions, 64)?;
     tracing::info!("Trainer on device: {:?}", trainer.device());
@@ -88,7 +126,7 @@ fn main() -> Result<()> {
         let result = env.step(action);
         let next_obs = result.observation.clone();
         let done = result.terminated || result.truncated;
-        trainer.buffer_mut().push(&obs, action, result.reward, &next_obs, done);
+        trainer.push_transition(&obs, action, result.reward, &next_obs, done);
 
         episode_return += result.reward;
         obs = next_obs;
@@ -120,14 +158,19 @@ fn main() -> Result<()> {
             };
             let last_stats = trainer.train_step(&mut rng)?;
             let td_loss = last_stats.map(|s| s.td_loss).unwrap_or(f64::NAN);
+            let beta_str = match last_stats.and_then(|s| s.beta) {
+                Some(b) => format!("  β={:.3}", b),
+                None => String::new(),
+            };
             tracing::info!(
-                "step={:>6}  episodes={:>4}  avg(last≤100)={:7.2}  ε={:.3}  buf={:>6}  loss={:.4}",
+                "step={:>6}  episodes={:>4}  avg(last≤100)={:7.2}  ε={:.3}  buf={:>6}  loss={:.4}{}",
                 step,
                 trainer.total_episodes(),
                 recent_avg,
                 trainer.last_epsilon(),
-                trainer.buffer().len(),
+                trainer.buffer_len(),
                 td_loss,
+                beta_str,
             );
         }
     }
