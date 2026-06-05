@@ -48,23 +48,44 @@ pub fn compute_policy_loss(
 
 /// Compute value function loss with optional clipping
 ///
+/// Implements the *pessimistic* clipped value loss used by SB3 and CleanRL:
+/// the per-sample loss is the **maximum** of the unclipped MSE and the
+/// MSE computed against a clipped value prediction. Taking the max
+/// mirrors the policy clip — it penalizes the worse of the two losses
+/// and prevents the value head from "outrunning" the trust region during
+/// the inner PPO update epochs.
+///
+/// When `clip_range_vf == f64::INFINITY` (or otherwise non-finite),
+/// clipping is a mathematical no-op so we short-circuit to the plain
+/// unclipped MSE. CartPole / Pong rely on this to opt out of value
+/// clipping without paying for a redundant `clamp` + `square` + `max`.
+///
 /// Returns (value_loss, explained_variance)
 ///
 /// # Arguments
 /// * `values` - Predicted values under current value function
 /// * `old_values` - Predicted values under old value function
 /// * `returns` - Computed returns (targets)
-/// * `clip_range_vf` - Value function clipping parameter
+/// * `clip_range_vf` - Value function clipping parameter (use `f64::INFINITY`
+///   to disable clipping)
 pub fn compute_value_loss(
     values: &Tensor,
     old_values: &Tensor,
     returns: &Tensor,
     clip_range_vf: f64,
 ) -> (Tensor, f64) {
-    let values_clipped = old_values + (values - old_values).clamp(-clip_range_vf, clip_range_vf);
-    let vf_loss_1 = (values - returns).square();
-    let vf_loss_2 = (values_clipped - returns).square();
-    let value_loss = vf_loss_1.minimum(&vf_loss_2).mean(Kind::Float);
+    let value_loss = if clip_range_vf.is_finite() {
+        let values_clipped =
+            old_values + (values - old_values).clamp(-clip_range_vf, clip_range_vf);
+        let vf_loss_1 = (values - returns).square();
+        let vf_loss_2 = (values_clipped - returns).square();
+        // Pessimistic clip: take the worse (larger) of the two per-sample
+        // losses. Using `minimum` here would silently disable the clip,
+        // since the smaller loss is always available; that was a bug.
+        vf_loss_1.maximum(&vf_loss_2).mean(Kind::Float)
+    } else {
+        (values - returns).square().mean(Kind::Float)
+    };
 
     // Compute explained variance
     let var_returns = returns.var(false);
@@ -245,6 +266,64 @@ mod tests {
         assert_eq!(loss.size().len(), 0);
         // Explained variance should be between 0 and 1
         assert!(explained_var >= 0.0 && explained_var <= 1.0);
+    }
+
+    #[test]
+    fn test_compute_value_loss_pessimistic_clip() {
+        // Regression test for the `minimum` vs `maximum` bug.
+        //
+        // Construct a case where the clipped loss is *much smaller* than
+        // the unclipped MSE. With `values - old_values = 5.0` and
+        // `clip_range_vf = 0.2`, the clipped prediction is `old_values + 0.2`.
+        // Setting `returns = old_values` gives:
+        //   * unclipped MSE = (5.0)^2                = 25.0
+        //   * clipped   MSE = (0.2)^2                = 0.04
+        //
+        // The buggy `min(...)` implementation returns 0.04 (effectively
+        // disabling the clip). The correct pessimistic `max(...)`
+        // implementation returns 25.0. We assert >= unclipped MSE so we
+        // pin down the post-fix invariant without being brittle to
+        // numerical drift.
+        let old_values = Tensor::from_slice(&[0.0_f32, 0.0, 0.0]);
+        let values = Tensor::from_slice(&[5.0_f32, 5.0, 5.0]);
+        let returns = Tensor::from_slice(&[0.0_f32, 0.0, 0.0]);
+        let clip_range_vf = 0.2;
+
+        let (loss, _) = compute_value_loss(&values, &old_values, &returns, clip_range_vf);
+        let loss_val = f64::try_from(&loss).unwrap();
+
+        let unclipped_mse = 25.0_f64;
+        let eps = 1e-4_f64;
+        assert!(
+            loss_val >= unclipped_mse - eps,
+            "expected pessimistic (max) clipped value loss >= unclipped MSE ({}), got {}. \
+             A value near 0.04 indicates the `minimum` bug has resurfaced.",
+            unclipped_mse,
+            loss_val
+        );
+    }
+
+    #[test]
+    fn test_compute_value_loss_infinite_clip_is_plain_mse() {
+        // Passing `f64::INFINITY` for `clip_range_vf` must short-circuit
+        // to the unclipped MSE. CartPole and Pong rely on this to disable
+        // value clipping without paying for the clamp/square/max path.
+        let old_values = Tensor::from_slice(&[1.0_f32, 1.5, 0.8]);
+        let values = Tensor::from_slice(&[1.0_f32, 2.0, 0.5]);
+        let returns = Tensor::from_slice(&[1.2_f32, 2.1, 0.6]);
+
+        let (loss_inf, _) = compute_value_loss(&values, &old_values, &returns, f64::INFINITY);
+        let loss_inf_val = f64::try_from(&loss_inf).unwrap();
+
+        // Expected = mean( (values - returns)^2 )
+        //          = mean( 0.04, 0.01, 0.01 ) = 0.02
+        let expected = 0.02_f64;
+        assert!(
+            (loss_inf_val - expected).abs() < 1e-5,
+            "infinite clip should yield plain MSE {}, got {}",
+            expected,
+            loss_inf_val
+        );
     }
 
     #[test]

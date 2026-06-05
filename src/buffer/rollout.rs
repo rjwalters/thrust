@@ -16,8 +16,8 @@
 
 // Re-export main components
 pub use gae::{
-    compute_advantages, compute_advantages_partial, compute_mc_returns, compute_nstep_returns,
-    normalize_advantages,
+    compute_advantages, compute_advantages_multi_agent, compute_advantages_partial,
+    compute_mc_returns, compute_nstep_returns, normalize_advantages,
 };
 pub use sampling::{
     Minibatch, MinibatchIterator, generate_minibatch_indices, sample_minibatch, shuffle_indices,
@@ -29,6 +29,9 @@ pub use storage::{RolloutBatch, RolloutBuffer};
 mod gae;
 mod sampling;
 mod storage;
+
+#[cfg(test)]
+mod tests;
 
 // Legacy interface - re-export compute_advantages as a method on RolloutBuffer
 impl RolloutBuffer {

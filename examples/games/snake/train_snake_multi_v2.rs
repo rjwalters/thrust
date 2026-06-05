@@ -23,7 +23,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use tch::{Device, Tensor, nn, nn::OptimizerConfig};
-use thrust_rl::{env::snake::SnakeEnv, policy::snake_cnn::SnakeCNN};
+use thrust_rl::{
+    buffer::rollout::compute_advantages_multi_agent, env::snake::SnakeEnv,
+    policy::snake_cnn::SnakeCNN,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TrainingMode {
@@ -143,34 +146,6 @@ impl RolloutBuffer {
             .filter_map(|(idx, &id)| if id == agent_id { Some(idx) } else { None })
             .collect()
     }
-}
-
-/// Compute advantages using GAE
-fn compute_advantages(
-    rewards: &[f32],
-    values: &[f32],
-    dones: &[bool],
-    gamma: f64,
-    lambda: f64,
-) -> (Vec<f32>, Vec<f32>) {
-    let mut advantages = vec![0.0; rewards.len()];
-    let mut returns = vec![0.0; rewards.len()];
-    let mut gae = 0.0;
-
-    for t in (0..rewards.len()).rev() {
-        let next_value = if t + 1 < values.len() {
-            values[t + 1]
-        } else {
-            0.0
-        };
-
-        let delta = rewards[t] + gamma as f32 * next_value * (!dones[t] as i32 as f32) - values[t];
-        gae = delta + gamma as f32 * lambda as f32 * (!dones[t] as i32 as f32) * gae;
-        advantages[t] = gae;
-        returns[t] = advantages[t] + values[t];
-    }
-
-    (advantages, returns)
 }
 
 fn main() -> Result<()> {
@@ -329,13 +304,28 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
             total_steps += args.num_envs * args.num_agents;
         }
 
-        // Compute advantages
-        let (advantages, returns) = compute_advantages(
+        // Compute advantages.
+        //
+        // Shared-mode rollout buffer layout: each step pushes
+        // `num_envs * num_agents` transitions in (env, agent)-major
+        // order, so the flat buffer matches the layout expected by
+        // `compute_advantages_multi_agent`. We pass a zero bootstrap
+        // for `V(s_{T+1})` to preserve the prior behavior (the local
+        // copy this replaced did the same implicitly).
+        //
+        // TODO(loom): future issue could lift the env-stepping rayon
+        // loop into a `MultiAgentEnvPool` (see issue #46 curator notes).
+        let stride = args.num_envs * args.num_agents;
+        let last_values = vec![0.0_f32; stride];
+        let (advantages, returns) = compute_advantages_multi_agent(
             &rollout_buffer.rewards,
             &rollout_buffer.values,
             &rollout_buffer.dones,
-            args.gamma,
-            args.gae_lambda,
+            &last_values,
+            args.num_envs,
+            args.num_agents,
+            args.gamma as f32,
+            args.gae_lambda as f32,
         );
 
         // Normalize advantages
@@ -604,13 +594,26 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
         for agent_id in 0..args.num_agents {
             let buffer = &rollout_buffers[agent_id];
 
-            // Compute advantages for this agent
-            let (advantages, returns) = compute_advantages(
+            // Compute advantages for this agent.
+            //
+            // Independent-mode buffers hold one agent's transitions
+            // across all envs; layout is `(step, env)`-major with
+            // `num_envs` slots per step. We treat that as a
+            // `num_envs` x `num_agents = 1` flat buffer to share the
+            // multi-agent GAE helper. Zero bootstrap preserves the
+            // prior behavior of the deleted local copy.
+            let stride = args.num_envs;
+            let last_values = vec![0.0_f32; stride];
+            let (advantages, returns) = compute_advantages_multi_agent(
                 &buffer.rewards,
                 &buffer.values,
                 &buffer.dones,
-                args.gamma,
-                args.gae_lambda,
+                &last_values,
+                args.num_envs,
+                // num_agents =
+                1,
+                args.gamma as f32,
+                args.gae_lambda as f32,
             );
 
             // Normalize advantages
