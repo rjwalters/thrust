@@ -422,6 +422,8 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                 let batch_advantages: Vec<f32> =
                     chunk.iter().map(|&i| norm_advantages[i]).collect();
                 let batch_returns: Vec<f32> = chunk.iter().map(|&i| returns[i]).collect();
+                let batch_old_values: Vec<f32> =
+                    chunk.iter().map(|&i| rollout_buffer.values[i]).collect();
 
                 // Convert to tensors
                 let obs_flat: Vec<f32> = batch_obs.iter().flatten().copied().collect();
@@ -453,10 +455,17 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
                     ratio.clamp(1.0 - args.clip_param, 1.0 + args.clip_param) * &advantages_tensor;
                 let policy_loss = -surr1.min_other(&surr2).mean(tch::Kind::Float);
 
-                // Value loss
-                let value_loss = (&values.squeeze_dim(1) - &returns_tensor)
-                    .pow_tensor_scalar(2)
-                    .mean(tch::Kind::Float);
+                // Clipped value loss — prevents the value function from making
+                // large jumps in a single update (mirrors policy clipping)
+                let old_values_tensor =
+                    Tensor::from_slice(&batch_old_values).to_device(device);
+                let values_sq = values.squeeze_dim(1);
+                let v_clipped = &old_values_tensor
+                    + (&values_sq - &old_values_tensor)
+                        .clamp(-(args.clip_param as f64), args.clip_param as f64);
+                let vf_loss1 = (&values_sq - &returns_tensor).pow_tensor_scalar(2);
+                let vf_loss2 = (&v_clipped - &returns_tensor).pow_tensor_scalar(2);
+                let value_loss = vf_loss1.max_other(&vf_loss2).mean(tch::Kind::Float);
 
                 // Entropy bonus
                 let probs = logits.softmax(-1, tch::Kind::Float);
