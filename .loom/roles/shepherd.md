@@ -1,5 +1,21 @@
 # Shepherd
 
+## ⚠️ Deprecated
+
+**Before doing anything else, emit this notice to the user verbatim as the first line of your response:**
+
+> ⚠️  DEPRECATED: `/shepherd` is scheduled for removal in the next major release.
+>     Use `/loom:sweep <issue>` for the same lifecycle, or enable
+>     `LOOM_USE_SPAWN_LOOP=1` + `./.loom/scripts/spawn-loop.sh` for
+>     multi-account batches. See #3372.
+>     (Suppress this notice in shell entry points with `LOOM_SUPPRESS_DEPRECATION=1`;
+>     the markdown skill warning always renders — explicit operator awareness is
+>     the goal of the soft-deprecation window.)
+
+After printing the notice, continue with the lifecycle below. **No behavior change** — the skill still works during the deprecation window. This warning exists so operators have time to migrate to `/loom:sweep` and the spawn loop before Phase 3 deletes the shepherd brain (see epic #3372, this notice tracked in #3376).
+
+---
+
 Orchestrate a single issue through its full lifecycle as a **signal-writer and observer** — you coordinate the shepherd process through JSON signals and state observation. You NEVER spawn shepherd or worker processes directly via Bash.
 
 ## Arguments
@@ -32,6 +48,23 @@ Parse the issue number and any flags from the arguments.
 ```
 
 ## Execution
+
+### Step 0: Host Sleep Readiness (#3350)
+
+A shepherd lifecycle (curator → builder → judge → optional doctor → merge) can take 30–60 minutes or more, especially in `--merge` mode with conflict resolution. If the host enters sleep / suspend mid-run, in-flight subagent sockets to `api.anthropic.com` are torn down and that work is lost (see #3350 for the incident that motivated this check).
+
+Before spawning the shepherd, run the host-sleep readiness check and surface its output to the user:
+
+```bash
+./.loom/scripts/check-host-sleep.sh
+```
+
+This is advisory-only. The script always exits `0` and **must not block** the shepherd — proceed regardless of what it prints. It prints a platform-aware warning when the host is configured in a way that allows it to sleep:
+
+- **macOS:** user-idle sleep assertions (e.g. Amphetamine, `caffeinate -dimsu`) do **not** reliably defeat Maintenance Sleep. The reliable defenses are `sudo pmset -c sleep 0` or flipping the sleep manager's "allow system sleep when display is off" toggle to OFF.
+- **systemd Linux:** wrap the session in `systemd-inhibit --what=idle:sleep --who=loom --why=shepherd -- <cmd>`, which IS reliable.
+
+If you are about to walk away from a `--merge` run, heed the warning before doing so.
 
 ### Step 1: Daemon Detection
 
@@ -70,10 +103,10 @@ If found, skip to Step 5 (monitor the existing shepherd using its `task_id`).
 
 ### Step 3: Verify Issue is Open
 
-Before writing the spawn signal, check that the issue is still open:
+Before writing the spawn signal, check that the issue is still open and not flagged operator-only:
 
 ```bash
-gh issue view <N> --json state --jq '.state'
+gh issue view <N> --json state,labels --jq '{state: .state, labels: [.labels[].name]}'
 ```
 
 **If the issue is CLOSED**, display this message and EXIT:
@@ -89,7 +122,22 @@ To proceed, reopen the issue first:
 Then run /shepherd <N> again.
 ```
 
-**If the issue is OPEN**, proceed to Step 4.
+**If the issue has `loom:operator-only`**, display this message and EXIT (regardless of `--merge`):
+
+```
+Issue #<N> is labeled loom:operator-only.
+
+This issue requires human action outside the automation (credentials,
+infrastructure rotations, manual deploys, hardware access). A shepherd
+cannot make progress on it. If you believe the label is incorrect,
+remove it first:
+
+  gh issue edit <N> --remove-label "loom:operator-only"
+
+Then run /shepherd <N> again.
+```
+
+**If the issue is OPEN and not operator-only**, proceed to Step 4.
 
 ### Step 4: Write Spawn Signal
 
@@ -171,6 +219,16 @@ When the progress file shows `status: completed` or `status: error`, summarize t
 - **Completed**: PR number, merge status, total duration
 - **Error**: Phase where it failed, error message, suggested recovery steps
 - **Blocked**: Label state, reason, what human action is needed
+
+## Known Limitations
+
+### Do NOT invoke `/shepherd` as parallel tool calls
+
+When a parent agent dispatches multiple `/shepherd` invocations as **parallel `tool_use` blocks in a single message**, at least one child shepherd can stall silently before producing any external output — no signal file, no worktree, no labels advance — and the parent's stream watchdog kills it at 600s with `stream watchdog did not recover`. This is the "subagents-launching-subagents" failure mode described in #3289.
+
+**Mitigation**: spawn shepherds **sequentially** from the parent (one `/shepherd` tool call per turn, awaiting completion before the next), or let the **daemon** auto-spawn them by enqueueing `loom:issue` labels — the daemon spawns each shepherd as its own subprocess and is not subject to this race.
+
+This is a known limitation tracked in #3289. A full architectural fix (batch spawn signal) is deferred pending architect review.
 
 ## Reference Documentation
 

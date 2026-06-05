@@ -74,25 +74,47 @@ export default function Home() {
 					</Link>
 
 					<Link
-						to="/bucket-brigade"
+						to="/pong"
+						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
+					>
+						<h2 className="text-3xl font-bold text-white mb-4">Pong</h2>
+						<p className="text-white/80 mb-4">
+							Classic Pong with a PPO-trained agent vs a rule-based opponent.
+							First to 7 points wins. Canvas-rendered at 60 FPS in WebAssembly.
+						</p>
+						<div className="text-sm text-white/60">
+							<span className="bg-white/20 px-3 py-1 rounded-full">
+								Canvas 2D
+							</span>
+							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
+								MLP Policy
+							</span>
+						</div>
+					</Link>
+
+					<a
+						href="https://rjwalters.info/bucket-brigade/"
+						target="_blank"
+						rel="noopener noreferrer"
 						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
 					>
 						<h2 className="text-3xl font-bold text-white mb-4">
-							Bucket Brigade
+							Bucket Brigade ↗
 						</h2>
 						<p className="text-white/80 mb-4">
-							Multi-agent cooperative environment where agents work together to
-							fight fires. Features a dedicated visualizer.
+							A separate research project on cooperation, deception, and
+							collective intelligence in multi-agent systems. Lives in its own
+							repo and demo site.
 						</p>
 						<div className="text-sm text-white/60">
 							<span className="bg-white/20 px-3 py-1 rounded-full">
 								Multi-Agent
 							</span>
 							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
-								Cooperation
+								External
 							</span>
 						</div>
-					</Link>
+					</a>
 				</div>
 
 				<div className="mt-16 flex justify-center gap-4">

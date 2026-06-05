@@ -8,9 +8,9 @@ Cargo.lock
 /.envrc.libtorch
 
 # Large model files (use Git LFS if needed)
-models/policies/**/*.pt
-models/policies/**/*.safetensors
-!models/policies/**/README.md
+models/**/*.pt
+models/**/*.safetensors
+*.safetensors
 
 # Temporary training outputs
 *.log
@@ -20,6 +20,7 @@ checkpoint_*.pt
 node_modules/
 .loom-in-use
 .loom-checkpoint
+.loom-managed
 .loom/.daemon.pid
 .loom/.daemon.log
 .loom/daemon.sock
@@ -32,6 +33,7 @@ node_modules/
 .loom/alerts.json
 .loom/issue-failures.json
 .loom/health-metrics.json
+.loom/spawn-loop-state.json
 .loom/interventions/
 .loom/worktrees/
 .loom/state.json

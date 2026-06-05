@@ -7,7 +7,9 @@
 use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "wasm")]
-use crate::env::{Environment, cartpole::CartPole, simple_bandit::SimpleBandit, snake::SnakeEnv};
+use crate::env::{
+    Environment, cartpole::CartPole, pong::Pong, simple_bandit::SimpleBandit, snake::SnakeEnv,
+};
 
 /// WASM bindings for CartPole environment
 #[cfg(feature = "wasm")]
@@ -289,6 +291,99 @@ impl WasmSnake {
     }
 
     /// Check if policy is loaded
+    #[wasm_bindgen]
+    pub fn has_policy(&self) -> bool {
+        self.policy.is_some()
+    }
+}
+
+/// WASM bindings for Pong environment
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+pub struct WasmPong {
+    env: Pong,
+    episode: u32,
+    episode_steps: u32,
+    policy: Option<crate::policy::inference::InferenceModel>,
+}
+
+#[cfg(feature = "wasm")]
+#[wasm_bindgen]
+impl WasmPong {
+    /// Construct a new WASM Pong wrapper with a freshly reset environment.
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        console_error_panic_hook::set_once();
+        let mut env = Pong::new();
+        env.reset();
+        Self { env, episode: 0, episode_steps: 0, policy: None }
+    }
+
+    /// Reset environment, returns initial state [ball_x, ball_y, left_y,
+    /// right_y, left_score, right_score]
+    #[wasm_bindgen]
+    pub fn reset(&mut self) -> Vec<f32> {
+        self.env.reset();
+        self.episode += 1;
+        self.episode_steps = 0;
+        self.env.get_state().to_vec()
+    }
+
+    /// Step with action (0=up, 1=stay, 2=down).
+    /// Returns [ball_x, ball_y, left_y, right_y, left_score, right_score,
+    /// reward, terminated, truncated]
+    #[wasm_bindgen]
+    pub fn step(&mut self, action: i32) -> Vec<f32> {
+        let result = self.env.step(action as i64);
+        self.episode_steps += 1;
+
+        let mut output = self.env.get_state().to_vec();
+        output.push(result.reward);
+        output.push(if result.terminated { 1.0 } else { 0.0 });
+        output.push(if result.truncated { 1.0 } else { 0.0 });
+        output
+    }
+
+    /// Current rendering state [ball_x, ball_y, left_y, right_y, left_score,
+    /// right_score]
+    #[wasm_bindgen]
+    pub fn get_state(&self) -> Vec<f32> {
+        self.env.get_state().to_vec()
+    }
+
+    /// Episode counter (incremented by `reset`).
+    #[wasm_bindgen]
+    pub fn get_episode(&self) -> u32 {
+        self.episode
+    }
+
+    /// Step count within the current episode.
+    #[wasm_bindgen]
+    pub fn get_steps(&self) -> u32 {
+        self.episode_steps
+    }
+
+    /// Load policy from JSON string (InferenceModel)
+    #[wasm_bindgen]
+    pub fn load_policy_json(&mut self, json: &str) -> Result<(), JsValue> {
+        let policy: crate::policy::inference::InferenceModel = serde_json::from_str(json)
+            .map_err(|e| JsValue::from_str(&format!("Failed to parse policy JSON: {}", e)))?;
+        self.policy = Some(policy);
+        Ok(())
+    }
+
+    /// Get policy action (0/1/2) or -1 if no policy loaded
+    #[wasm_bindgen]
+    pub fn get_policy_action(&self) -> i32 {
+        if let Some(ref policy) = self.policy {
+            let obs = self.env.get_observation();
+            policy.get_action(&obs) as i32
+        } else {
+            -1
+        }
+    }
+
+    /// Whether a policy has been loaded via `load_policy_json`.
     #[wasm_bindgen]
     pub fn has_policy(&self) -> bool {
         self.policy.is_some()
