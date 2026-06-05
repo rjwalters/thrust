@@ -27,8 +27,6 @@ pub struct DQNStepStats {
     pub epsilon: f64,
     /// Replay buffer fill level at the time of this update.
     pub buffer_len: usize,
-    /// Whether the target network was synced this step.
-    pub target_synced: bool,
 }
 
 /// DQN Trainer.
@@ -247,7 +245,6 @@ impl DQNTrainer {
             mean_q: mean_q_val,
             epsilon: self.last_epsilon,
             buffer_len: self.buffer.len(),
-            target_synced: false, // set by caller via maybe_sync_target
         }))
     }
 }
