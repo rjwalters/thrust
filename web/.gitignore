@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Build artifacts
+public/pkg/
+
+# Wrong package manager — this repo uses pnpm
+package-lock.json
+
 # Playwright
 /test-results/
 /playwright-report/
