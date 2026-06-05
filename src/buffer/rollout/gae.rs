@@ -184,11 +184,11 @@ pub(super) fn compute_gae_single_env(
 /// interleaved multi-agent rollout buffer.
 ///
 /// This variant is intended for ad-hoc multi-agent rollout structures
-/// that cannot use the `[num_steps, num_envs]` [`RolloutBuffer`] layout
-/// because they also carry an agent dimension. Multi-agent Snake training
-/// uses this shape: each rollout step pushes one entry per (env, agent)
-/// pair, in `(env, agent)`-major order, giving a flat buffer of length
-/// `num_steps * num_envs * num_agents`.
+/// that cannot use the `[num_steps, num_envs]`
+/// [`crate::buffer::rollout::RolloutBuffer`] layout because they also carry an
+/// agent dimension. Multi-agent Snake training uses this shape: each rollout
+/// step pushes one entry per (env, agent) pair, in `(env, agent)`-major order,
+/// giving a flat buffer of length `num_steps * num_envs * num_agents`.
 ///
 /// # Buffer layout
 ///
