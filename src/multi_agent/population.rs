@@ -78,8 +78,21 @@ pub struct Agent {
     pub policy: Arc<RwLock<MlpPolicy>>,
 
     /// Agent-specific metrics
+    ///
+    /// Aggregate fitness signal driving matchmaking and selection.
+    /// Updated by [`Population::update_fitness`]; semantics depend on
+    /// the configured update rule (running mean of episode return is
+    /// the default). Higher = better; read by
+    /// [`super::matchmaking::FitnessBasedMatchmaker`] to sort ranks.
     pub fitness: f64,
+    /// Number of games this agent has participated in. Monotonically
+    /// increasing over the agent's lifetime; reset only when the agent
+    /// is rebuilt.
     pub games_played: usize,
+    /// Sum of all rewards this agent has received across all games.
+    /// Monotonically increasing for non-negative reward functions; not
+    /// reset between games (use `total_reward / games_played` for the
+    /// per-game running mean).
     pub total_reward: f64,
 
     /// Policy version (for staleness tracking)
@@ -146,25 +159,41 @@ pub enum LearningMode {
     OnPolicy,
 
     /// Agents can sample from shared buffer
-    OffPolicy { buffer_size: usize },
+    OffPolicy {
+        /// Replay-buffer capacity (in transitions) shared across the
+        /// population; older transitions are evicted FIFO.
+        buffer_size: usize,
+    },
 
     /// Mix of both
-    Hybrid { on_policy_ratio: f64 },
+    Hybrid {
+        /// Fraction of each minibatch drawn from the agent's own
+        /// on-policy rollout; the remainder is sampled from the
+        /// shared off-policy buffer. Must lie in `[0.0, 1.0]`.
+        on_policy_ratio: f64,
+    },
 }
 
 /// Shared metrics across population
 #[derive(Debug, Default)]
 pub struct PopulationMetrics {
+    /// Cumulative environment steps taken by all agents combined.
+    /// Used for global progress reporting and learning-rate schedules.
     pub total_steps: usize,
+    /// Cumulative completed episodes summed across all agents.
     pub total_episodes: usize,
 }
 
 /// Population statistics
 #[derive(Debug)]
 pub struct PopulationStats {
+    /// Population-wide arithmetic mean of [`Agent::fitness`].
     pub mean_fitness: f64,
+    /// Highest [`Agent::fitness`] in the current population.
     pub max_fitness: f64,
+    /// Lowest [`Agent::fitness`] in the current population.
     pub min_fitness: f64,
+    /// Sum of [`Agent::games_played`] across the population.
     pub total_games: usize,
 }
 

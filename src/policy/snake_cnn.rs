@@ -3,11 +3,6 @@
 //! A compact convolutional network designed for multi-agent Snake gameplay.
 //! Uses spatial convolutions to process the grid and make decisions.
 
-// Training-feature surface still owes public docs; tracked as the
-// `--features training` follow-up to #33. Re-enable as `#![warn(missing_docs)]`
-// once those items are documented.
-#![allow(missing_docs)]
-
 use tch::{Device, Tensor, nn, nn::Module};
 
 /// CNN policy network for Snake

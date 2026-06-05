@@ -221,17 +221,55 @@ pub trait JointEnv {
 /// `examples/games/bucket_brigade/train_p3.rs` reference values.
 #[derive(Debug, Clone)]
 pub struct JointTrainerConfig {
+    /// Number of agents trained jointly. Must match the length of
+    /// [`JointMultiAgentTrainer::policies`] and the per-agent vectors
+    /// in [`JointRollout`] / [`JointStats`].
     pub num_agents: usize,
+    /// Steps collected per rollout before each PPO update. Larger
+    /// values reduce gradient variance but delay policy refresh; the
+    /// PPO baseline default is 2048.
     pub rollout_steps: usize,
+    /// Discount factor `γ ∈ [0, 1]`. Controls how far the value
+    /// function looks ahead; `0.99` is the PPO baseline for episodic
+    /// control tasks.
     pub gamma: f64,
+    /// GAE smoothing parameter `λ ∈ [0, 1]`. Trades bias for variance
+    /// in the advantage estimate: `0.0` recovers TD(0), `1.0` recovers
+    /// Monte-Carlo returns. `0.95` is the PPO baseline.
     pub gae_lambda: f64,
+    /// PPO policy-ratio clip range `ε`. The surrogate objective is
+    /// clipped to `[1 - ε, 1 + ε]`; `0.2` is the canonical default and
+    /// implicitly bounds the per-update KL divergence.
     pub clip_range: f64,
+    /// PPO value-function clip range. Bounds the per-update change in
+    /// `V(s)` to the same `±clip_range_vf` window. `0.0` disables value
+    /// clipping (the loss falls back to plain MSE against the target).
     pub clip_range_vf: f64,
+    /// Weight on the value-function loss term inside the joint loss.
+    /// `0.5` is the PPO baseline; raise if value estimates lag the
+    /// policy improvement, lower if value-loss gradients dominate.
     pub vf_coef: f64,
+    /// Weight on the entropy bonus. Encourages exploration by
+    /// penalizing low-entropy (over-confident) policies. `0.01` is the
+    /// PPO baseline; raise for sparse-reward / hard-exploration tasks.
     pub ent_coef: f64,
+    /// Number of PPO epochs (full passes over the rollout) per update.
+    /// `4` is the PPO baseline; higher values squeeze more learning out
+    /// of each rollout but risk drifting too far from the behavior
+    /// policy.
     pub n_epochs: usize,
+    /// Minibatch size for SGD within each PPO epoch. Must evenly divide
+    /// `rollout_steps`; `256` is the PPO baseline. Smaller minibatches
+    /// = noisier gradients but more updates per epoch.
     pub minibatch_size: usize,
+    /// Global gradient-norm clip. Each per-agent backward pass has its
+    /// L2-norm clipped to this value before the optimizer step; `0.5`
+    /// is the PPO baseline and protects against rare large-gradient
+    /// spikes from outlier advantages.
     pub max_grad_norm: f64,
+    /// If `true`, standardize advantages to zero mean / unit variance
+    /// per minibatch before computing the surrogate objective. Strongly
+    /// recommended on heterogeneous reward scales; default `true`.
     pub normalize_advantages: bool,
 }
 
@@ -326,6 +364,9 @@ pub struct JointStats {
 }
 
 impl JointStats {
+    /// Construct a fully-zeroed [`JointStats`] sized for `num_agents`
+    /// agents. Use as the accumulator-init in the train loop before
+    /// summing per-epoch stats and dividing at the end.
     pub fn zeros(num_agents: usize) -> Self {
         Self {
             policy_loss: vec![0.0; num_agents],

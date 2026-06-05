@@ -160,39 +160,80 @@ impl RolloutBuffer {
         (self.num_steps * self.num_envs, self.obs_dim)
     }
 
-    // Getters for raw data access
+    // ---- Getters for raw data access ----
+    //
+    // All getters return a slice indexed as `[step][env]` (outer = time,
+    // inner = parallel env). GAE, log-prob masking, and minibatch sampling
+    // all rely on this layout; do not transpose at the call site without
+    // adjusting [`compute_advantages`](super::gae::compute_advantages) accordingly.
+
+    /// Borrow the per-step observations, indexed `[step][env]` and
+    /// then by observation dimension (final inner `Vec<f32>` is one
+    /// observation vector of length `obs_dim`).
     pub fn observations(&self) -> &[Vec<Vec<f32>>] {
         &self.observations
     }
+    /// Borrow the per-step discrete actions, indexed `[step][env]`.
     pub fn actions(&self) -> &[Vec<i64>] {
         &self.actions
     }
+    /// Borrow the per-step rewards (raw, un-discounted), indexed
+    /// `[step][env]`.
     pub fn rewards(&self) -> &[Vec<f32>] {
         &self.rewards
     }
+    /// Borrow the per-step bootstrap value estimates `V(s_t)` produced
+    /// by the policy at collection time, indexed `[step][env]`. Used by
+    /// [`compute_advantages`](super::gae::compute_advantages) as the value
+    /// baseline.
     pub fn values(&self) -> &[Vec<f32>] {
         &self.values
     }
+    /// Borrow the per-step action log-probabilities under the
+    /// behavior policy at collection time, indexed `[step][env]`. PPO
+    /// uses these as the denominator of the importance-sampling ratio.
     pub fn log_probs(&self) -> &[Vec<f32>] {
         &self.log_probs
     }
+    /// Borrow the per-step terminal-state flags (true on episode end),
+    /// indexed `[step][env]`. GAE zeroes the bootstrap across terminal
+    /// transitions but keeps the realized reward.
     pub fn terminated(&self) -> &[Vec<bool>] {
         &self.terminated
     }
+    /// Borrow the per-step truncation flags (true on time-limit / external
+    /// reset that is not a terminal state), indexed `[step][env]`. GAE
+    /// retains the bootstrap value across truncated transitions because the
+    /// trajectory is still "alive" in the value-function sense.
     pub fn truncated(&self) -> &[Vec<bool>] {
         &self.truncated
     }
+    /// Borrow the per-step GAE advantages computed by
+    /// [`compute_advantages`](super::gae::compute_advantages), indexed
+    /// `[step][env]`. Zero-initialized until GAE has run.
     pub fn advantages(&self) -> &[Vec<f32>] {
         &self.advantages
     }
+    /// Borrow the per-step value-function targets (advantages + values),
+    /// indexed `[step][env]`. Zero-initialized until GAE has run.
     pub fn returns(&self) -> &[Vec<f32>] {
         &self.returns
     }
 
-    // Mutable getters for advantage/return computation
+    // ---- Mutable getters for advantage/return computation ----
+
+    /// Mutable view of the advantages buffer, indexed `[step][env]`.
+    /// Used when in-place normalizing advantages or applying a custom
+    /// advantage estimator that does not touch `returns`; use
+    /// [`Self::advantages_and_returns_mut`] when both must be borrowed
+    /// at the same time (e.g. inside
+    /// [`compute_advantages`](super::gae::compute_advantages)).
     pub fn advantages_mut(&mut self) -> &mut [Vec<f32>] {
         &mut self.advantages
     }
+    /// Mutable view of the returns / value-target buffer, indexed
+    /// `[step][env]`. Use [`Self::advantages_and_returns_mut`] instead
+    /// when both must be borrowed at the same time.
     pub fn returns_mut(&mut self) -> &mut [Vec<f32>] {
         &mut self.returns
     }

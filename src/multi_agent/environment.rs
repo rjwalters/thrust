@@ -79,8 +79,15 @@ pub struct MultiAgentResult {
     /// Rewards for each agent
     pub rewards: Vec<f32>,
 
-    /// Terminal states for each agent
+    /// Terminal states for each agent (true = episode ended naturally,
+    /// e.g. agent died or goal reached). GAE zeroes the value-function
+    /// bootstrap across these transitions.
     pub terminated: Vec<bool>,
+    /// Truncation flags for each agent (true = episode ended due to a
+    /// time limit or external reset, not a terminal state). GAE keeps
+    /// the value-function bootstrap across these transitions because
+    /// the trajectory was still "alive" in the value sense. Follows the
+    /// gym/gymnasium convention.
     pub truncated: Vec<bool>,
 
     /// Additional information (shared across all agents)

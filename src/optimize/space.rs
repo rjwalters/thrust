@@ -35,9 +35,29 @@ impl ParameterValue {
 #[derive(Debug, Clone)]
 pub enum Parameter {
     /// Continuous parameter with min, max, and optional log scale
-    Continuous { name: String, min: f64, max: f64, log_scale: bool },
+    Continuous {
+        /// Display name; used as the key in the sampled
+        /// `HashMap<String, ParameterValue>` configuration.
+        name: String,
+        /// Inclusive lower bound of the sampling range.
+        min: f64,
+        /// Inclusive upper bound of the sampling range.
+        max: f64,
+        /// If `true`, sampling and GP-normalization are performed in
+        /// log space. Use for parameters that span many orders of
+        /// magnitude (learning rates, regularization strengths).
+        log_scale: bool,
+    },
     /// Discrete parameter with allowed values
-    Discrete { name: String, values: Vec<i64> },
+    Discrete {
+        /// Display name; used as the key in the sampled
+        /// `HashMap<String, ParameterValue>` configuration.
+        name: String,
+        /// Allowed integer values; uniformly sampled by index.
+        /// Order matters for [`Parameter::normalize`] — index/`(len-1)`
+        /// is the GP coordinate, so place values in semantic order.
+        values: Vec<i64>,
+    },
 }
 
 impl Parameter {

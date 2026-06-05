@@ -3,11 +3,6 @@
 //! This module provides JavaScript bindings for our Rust environments
 //! so they can be rendered in the browser.
 
-// Wasm-feature surface still owes public docs; tracked as the
-// `--features wasm` follow-up to #33. Re-enable as `#![warn(missing_docs)]`
-// once those items are documented.
-#![allow(missing_docs)]
-
 #[cfg(feature = "wasm")]
 use wasm_bindgen::prelude::*;
 
@@ -28,6 +23,12 @@ pub struct WasmCartPole {
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
 impl WasmCartPole {
+    /// Construct a fresh CartPole environment with no loaded policy.
+    ///
+    /// Exposed to JS as `new WasmCartPole()`. Calls
+    /// `console_error_panic_hook::set_once()` so any subsequent Rust
+    /// panic surfaces as a readable stack trace in the browser console
+    /// instead of an opaque WASM trap.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         console_error_panic_hook::set_once();
@@ -164,6 +165,13 @@ pub struct WasmSnake {
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
 impl WasmSnake {
+    /// Construct a fresh multi-agent Snake environment.
+    ///
+    /// Exposed to JS as `new WasmSnake(width, height, num_agents)`. Sets
+    /// up the panic hook for browser-readable stack traces; no policy is
+    /// loaded yet (call `load_policy_json` afterward to enable
+    /// inference). `width` / `height` are grid cells; `num_agents` is
+    /// the number of snakes that share the grid.
     #[wasm_bindgen(constructor)]
     pub fn new(width: i32, height: i32, num_agents: usize) -> Self {
         console_error_panic_hook::set_once();
@@ -209,12 +217,13 @@ impl WasmSnake {
         self.env.snakes.iter().map(|s| if s.is_alive() { 1 } else { 0 }).collect()
     }
 
-    /// Get grid dimensions
+    /// Get grid width in cells.
     #[wasm_bindgen]
     pub fn get_width(&self) -> i32 {
         self.env.width
     }
 
+    /// Get grid height in cells.
     #[wasm_bindgen]
     pub fn get_height(&self) -> i32 {
         self.env.height
@@ -300,6 +309,13 @@ pub struct WasmSimpleBandit {
 #[cfg(feature = "wasm")]
 #[wasm_bindgen]
 impl WasmSimpleBandit {
+    /// Construct a fresh SimpleBandit environment.
+    ///
+    /// Exposed to JS as `new WasmSimpleBandit()`. Sets up the panic
+    /// hook so Rust panics surface in the browser console. The bandit
+    /// is stateless across episodes (only the cumulative reward and
+    /// success counters update); see [`Self::reset`] to bump the
+    /// episode counter.
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
         console_error_panic_hook::set_once();

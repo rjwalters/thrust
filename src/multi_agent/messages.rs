@@ -134,13 +134,26 @@ pub enum ControlMessage {
     Shutdown,
 
     /// Save checkpoint
-    SaveCheckpoint { path: String },
+    SaveCheckpoint {
+        /// Destination path for the checkpoint blob. Format is determined
+        /// by the receiving learner; typically a `.safetensors` or
+        /// `tch`-native `.ot` file.
+        path: String,
+    },
 
     /// Load checkpoint
-    LoadCheckpoint { path: String },
+    LoadCheckpoint {
+        /// Source path of the checkpoint blob to restore into the
+        /// receiving learner's var-store.
+        path: String,
+    },
 
     /// Adjust learning rate
-    SetLearningRate { rate: f64 },
+    SetLearningRate {
+        /// New learning rate (replaces the optimizer's current rate; not
+        /// applied as a delta). Effective on the next optimizer step.
+        rate: f64,
+    },
 }
 
 #[cfg(test)]
