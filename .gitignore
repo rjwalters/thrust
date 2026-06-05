@@ -3,9 +3,9 @@
 Cargo.lock
 
 # Large model files (use Git LFS if needed)
-models/policies/**/*.pt
-models/policies/**/*.safetensors
-!models/policies/**/README.md
+models/**/*.pt
+models/**/*.safetensors
+*.safetensors
 
 # Temporary training outputs
 *.log

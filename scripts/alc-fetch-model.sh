@@ -28,7 +28,7 @@ export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
 export LIBTORCH_BYPASS_VERSION_CHECK=1
 
 # Find the latest checkpoint (multi_v2 shared policy, then single-agent fallback)
-MODEL=\$(ls -t models/snake_policy_shared.safetensors models/snake_single_update*.safetensors models/snake_single_final.safetensors 2>/dev/null | head -1 || echo "")
+MODEL=\$(ls -t models/snake_policy_shared.safetensors models/snake_policy.shared_epoch*.safetensors models/snake_single_update*.safetensors models/snake_single_final.safetensors 2>/dev/null | head -1 || echo "")
 if [ -z "\$MODEL" ]; then
     echo "❌ No trained model found in models/"
     ls -lh models/ 2>/dev/null || true
