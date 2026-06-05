@@ -189,19 +189,76 @@ impl DQNTrainer {
         })
     }
 
-    /// Hard target sync if `total_env_steps` is a positive multiple of
-    /// `target_update_interval`.
+    /// Sync the target network from the online network.
     ///
-    /// Returns `true` if a sync happened.
+    /// Two modes, selected by [`DQNConfig::soft_update_tau`]:
+    ///
+    /// 1. **Hard sync (default, `soft_update_tau = None`)**: copies `θ_target ←
+    ///    θ_online` once every `target_update_interval` env steps. Returns
+    ///    `true` exactly on those steps.
+    ///
+    /// 2. **Soft / Polyak update (`soft_update_tau = Some(τ)`)**: applies
+    ///    `θ_target ← τ · θ_online + (1 − τ) · θ_target` to every parameter,
+    ///    *every* call. The caller is still expected to invoke
+    ///    [`Self::maybe_sync_target`] once per env step;
+    ///    `target_update_interval` is ignored in this mode. Returns `true` on
+    ///    every call so existing callers that gate logging or stats on the
+    ///    return value still behave sensibly.
+    ///
+    /// In both modes the blend / copy runs inside `tch::no_grad` so the
+    /// target net never lands in the autograd graph.
     pub fn maybe_sync_target(&mut self) -> Result<bool> {
-        if self.total_env_steps > 0
-            && self.total_env_steps % self.config.target_update_interval == 0
-        {
-            self.target.copy_params_from(&self.online)?;
-            Ok(true)
-        } else {
-            Ok(false)
+        match self.config.soft_update_tau {
+            Some(tau) => {
+                self.soft_update_target(tau)?;
+                Ok(true)
+            }
+            None => {
+                if self.total_env_steps > 0
+                    && self.total_env_steps % self.config.target_update_interval == 0
+                {
+                    self.target.copy_params_from(&self.online)?;
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            }
         }
+    }
+
+    /// Apply a Polyak / soft update to every parameter of the target net.
+    ///
+    /// `θ_target ← τ · θ_online + (1 − τ) · θ_target`
+    ///
+    /// Pairs are matched by variable name across the two `VarStore`s.
+    /// Any mismatched name is a programmer error — both networks are
+    /// constructed by `QNetwork::new` with identical paths, so a missing
+    /// match indicates the trainer is wired up incorrectly.
+    ///
+    /// We snapshot the target's `variables()` HashMap, which gives us
+    /// owned `Tensor` shallow-clones pointing at the same C-side
+    /// storage. Calling `f_copy_` through these clones updates the live
+    /// VarStore in place — no reallocation, and the optimizer (which
+    /// only ever sees the online net's vars) is unaffected.
+    fn soft_update_target(&mut self, tau: f64) -> Result<()> {
+        let online_vars = self.online.var_store().variables();
+        let mut target_vars = self.target.var_store().variables();
+
+        tch::no_grad(|| -> Result<()> {
+            for (name, online_t) in &online_vars {
+                let target_t = target_vars.get_mut(name).ok_or_else(|| {
+                    anyhow!("soft_update_target: variable {} missing from target VarStore", name)
+                })?;
+                // target ← τ · online + (1 − τ) · target  (in-place on target)
+                // `f_copy_` writes the RHS into target_t's storage without
+                // breaking the optimizer's reference to it.
+                let blended = online_t * tau + &*target_t * (1.0 - tau);
+                target_t
+                    .f_copy_(&blended)
+                    .map_err(|e| anyhow!("soft_update_target: copy into {} failed: {}", name, e))?;
+            }
+            Ok(())
+        })
     }
 
     /// Sample a batch from the replay buffer and perform one gradient
@@ -222,10 +279,21 @@ impl DQNTrainer {
         let q_online_all = self.online.forward(&obs);
         let q_taken = loss::gather_action_q(&q_online_all, &actions);
 
-        // Target: max_a' Q_target(s', a'), no_grad inside compute_td_target.
+        // Double-DQN target:
+        //   a* = argmax_a' Q_online(s', a')         ← online net picks action
+        //   y  = r + γ · (1 - done) · Q_target(s', a*)  ← target net evaluates it
+        //
+        // Both bootstrap forwards run under `no_grad`: only `q_online_all`
+        // (Q(s, a)) participates in autograd.
+        let next_q_online_all = tch::no_grad(|| self.online.forward(&next_obs));
         let next_q_target_all = tch::no_grad(|| self.target.forward(&next_obs));
-        let td_target =
-            loss::compute_td_target(&rewards, &dones, &next_q_target_all, self.config.gamma);
+        let td_target = loss::compute_td_target_double(
+            &rewards,
+            &dones,
+            &next_q_online_all,
+            &next_q_target_all,
+            self.config.gamma,
+        );
 
         let td_loss = loss::compute_loss(&q_taken, &td_target);
         let td_loss_val: f64 = (&td_loss).try_into().unwrap_or(f64::NAN);
@@ -396,5 +464,147 @@ mod tests {
         let trainer = DQNTrainer::new(small_config(), 4, 5, 16).unwrap();
         let a = trainer.greedy_action(&[0.5, -0.5, 0.0, 1.0]);
         assert!(a >= 0 && a < 5);
+    }
+
+    /// Pull a flat parameter snapshot out of a network for comparison.
+    fn snapshot_params(net: &QNetwork) -> Vec<(String, Vec<f32>)> {
+        let vars = net.var_store().variables();
+        let mut out = Vec::with_capacity(vars.len());
+        for (name, t) in vars {
+            let cpu_t = t.to_device(tch::Device::Cpu).to_kind(Kind::Float).contiguous();
+            let flat: Vec<f32> = Vec::try_from(cpu_t.view([-1])).unwrap();
+            out.push((name, flat));
+        }
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    fn l1_distance(a: &[(String, Vec<f32>)], b: &[(String, Vec<f32>)]) -> f32 {
+        assert_eq!(a.len(), b.len());
+        let mut sum = 0.0f32;
+        for ((na, va), (nb, vb)) in a.iter().zip(b.iter()) {
+            assert_eq!(na, nb, "param name mismatch in snapshot comparison");
+            assert_eq!(va.len(), vb.len());
+            for (x, y) in va.iter().zip(vb.iter()) {
+                sum += (x - y).abs();
+            }
+        }
+        sum
+    }
+
+    #[test]
+    fn test_soft_update_moves_target_toward_online() {
+        // Configure soft updates with τ = 0.005.
+        let cfg = small_config().soft_update_tau(0.005);
+        let mut trainer = DQNTrainer::new(cfg, 4, 2, 16).unwrap();
+
+        // After construction the target is byte-equal to online (initial
+        // hard copy in `DQNTrainer::new`). Perturb the online net so the
+        // two diverge in a known direction, then verify Polyak pulls
+        // target toward the updated online.
+        //
+        // We do this by running a single optimizer step on a synthetic
+        // batch — this shifts online's weights without touching target.
+        let mut rng = StdRng::seed_from_u64(123);
+        for i in 0..32 {
+            let phase = (i as f32) * 0.1;
+            let obs = [phase.sin(), phase.cos(), phase * 0.5, phase * -0.3];
+            let next_obs = [(phase + 0.1).sin(), (phase + 0.1).cos(), phase * 0.5, phase * -0.3];
+            trainer.buffer_mut().push(&obs, (i % 2) as i64, 1.0, &next_obs, i % 8 == 7);
+        }
+        let _ = trainer.train_step(&mut rng).unwrap();
+
+        // Snapshot online and target *before* the soft sync.
+        let online_after_train = snapshot_params(trainer.online());
+        let target_before = snapshot_params(trainer.target());
+
+        // The training step should have changed online without touching
+        // target — confirm they now differ.
+        let pre_drift = l1_distance(&online_after_train, &target_before);
+        assert!(
+            pre_drift > 0.0,
+            "expected online to diverge from target after a gradient step (l1 = {})",
+            pre_drift,
+        );
+
+        // Run the Polyak update once. Caller does it every env step, but
+        // for the test a single call is enough.
+        let synced = trainer.maybe_sync_target().unwrap();
+        assert!(synced, "maybe_sync_target should return true in soft-update mode");
+
+        let target_after = snapshot_params(trainer.target());
+
+        // (a) target_after must differ from target_before for at least one
+        //     parameter (the update actually moved something).
+        let target_motion = l1_distance(&target_before, &target_after);
+        assert!(
+            target_motion > 0.0,
+            "soft update did not move target params (Δ = {})",
+            target_motion,
+        );
+
+        // (b) target_after must be strictly closer to online than
+        //     target_before was (Polyak moves toward, not away).
+        let dist_before = l1_distance(&target_before, &online_after_train);
+        let dist_after = l1_distance(&target_after, &online_after_train);
+        assert!(
+            dist_after < dist_before,
+            "Polyak update should reduce |target − online|; before={} after={}",
+            dist_before,
+            dist_after,
+        );
+
+        // (c) target_after must NOT equal online (tau = 0.005, so only a
+        //     small step toward online — not a hard copy).
+        assert!(
+            dist_after > 0.0,
+            "soft update with τ = 0.005 should NOT make target equal online; dist={}",
+            dist_after,
+        );
+
+        // (d) The expected fraction of the gap closed is exactly τ for a
+        //     linear blend. Check ratio is approximately (1 − τ) per
+        //     parameter, allowing slack for fp rounding across many vars.
+        let expected_ratio = 1.0 - 0.005f32;
+        let observed_ratio = dist_after / dist_before;
+        assert!(
+            (observed_ratio - expected_ratio).abs() < 1e-3,
+            "Polyak distance ratio off: expected ≈{:.4}, got {:.4}",
+            expected_ratio,
+            observed_ratio,
+        );
+    }
+
+    #[test]
+    fn test_soft_update_ignores_interval() {
+        // Soft mode is supposed to fire on every call, regardless of where
+        // total_env_steps sits relative to target_update_interval.
+        let cfg = small_config().target_update_interval(1000).soft_update_tau(0.1);
+        let mut trainer = DQNTrainer::new(cfg, 4, 2, 16).unwrap();
+
+        // total_env_steps = 0 → hard-mode would refuse, soft mode must fire.
+        assert!(trainer.maybe_sync_target().unwrap());
+
+        // After a few env-step bumps, well shy of the 1000-step interval,
+        // hard mode would still refuse — soft mode keeps firing.
+        for _ in 0..5 {
+            trainer.increment_env_step();
+            assert!(trainer.maybe_sync_target().unwrap());
+        }
+    }
+
+    #[test]
+    fn test_hard_mode_unchanged_when_tau_is_none() {
+        // soft_update_tau = None → behavior must match the original hard
+        // sync semantics tested in test_maybe_sync_target_triggers_on_interval.
+        let cfg = small_config().target_update_interval(3);
+        let mut trainer = DQNTrainer::new(cfg, 4, 2, 16).unwrap();
+        assert!(trainer.config().soft_update_tau.is_none());
+
+        assert!(!trainer.maybe_sync_target().unwrap());
+        trainer.increment_env_step();
+        trainer.increment_env_step();
+        trainer.increment_env_step();
+        assert!(trainer.maybe_sync_target().unwrap());
     }
 }

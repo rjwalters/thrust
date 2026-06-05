@@ -34,8 +34,9 @@ pub struct DQNConfig {
     /// (target ← online).
     pub target_update_interval: usize,
 
-    /// Discount factor used in the TD target
-    /// `y = r + γ · (1 - done) · max_a' Q_target(s', a')`.
+    /// Discount factor used in the TD target. With Double-DQN
+    /// (used unconditionally by [`crate::train::dqn::DQNTrainer`]):
+    /// `y = r + γ · (1 - done) · Q_target(s', argmax_a' Q_online(s', a'))`.
     pub gamma: f64,
 
     /// Initial value of the ε-greedy exploration parameter.
@@ -51,6 +52,27 @@ pub struct DQNConfig {
 
     /// Maximum gradient norm for clipping the Q-network update.
     pub max_grad_norm: f64,
+
+    /// Polyak (soft) target update coefficient `τ ∈ (0, 1]`.
+    ///
+    /// When `Some(τ)`, every call to
+    /// [`crate::train::dqn::DQNTrainer::maybe_sync_target`] performs the
+    /// blend
+    ///
+    /// ```text
+    /// θ_target ← τ · θ_online + (1 − τ) · θ_target
+    /// ```
+    ///
+    /// across every parameter of the target network. This replaces the
+    /// hard copy that fires every `target_update_interval` env steps; in
+    /// soft-update mode `target_update_interval` is ignored.
+    ///
+    /// When `None` (default), the trainer falls back to the original hard
+    /// copy on the interval, preserving byte-for-byte backward
+    /// compatibility with vanilla DQN.
+    ///
+    /// A typical value is `0.005` (the SB3/Spinning Up default).
+    pub soft_update_tau: Option<f64>,
 }
 
 impl Default for DQNConfig {
@@ -66,6 +88,7 @@ impl Default for DQNConfig {
             epsilon_end: 0.05,
             epsilon_decay_steps: 10_000,
             max_grad_norm: 10.0,
+            soft_update_tau: None,
         }
     }
 }
@@ -127,6 +150,11 @@ impl DQNConfig {
         }
         if self.max_grad_norm <= 0.0 {
             return Err(anyhow!("max_grad_norm must be positive"));
+        }
+        if let Some(tau) = self.soft_update_tau {
+            if !(tau > 0.0 && tau <= 1.0) {
+                return Err(anyhow!("soft_update_tau must be in (0, 1], got {}", tau));
+            }
         }
         Ok(())
     }
@@ -205,6 +233,19 @@ impl DQNConfig {
     /// Set maximum gradient norm.
     pub fn max_grad_norm(mut self, norm: f64) -> Self {
         self.max_grad_norm = norm;
+        self
+    }
+
+    /// Enable Polyak (soft) target updates with coefficient `τ`.
+    ///
+    /// When set, [`crate::train::dqn::DQNTrainer::maybe_sync_target`]
+    /// performs `θ_target ← τ · θ_online + (1 − τ) · θ_target` on every
+    /// call (i.e. every env step in the standard rollout loop) instead of
+    /// the hard copy gated by `target_update_interval`.
+    ///
+    /// A typical value is `0.005`.
+    pub fn soft_update_tau(mut self, tau: f64) -> Self {
+        self.soft_update_tau = Some(tau);
         self
     }
 }
@@ -309,6 +350,28 @@ mod tests {
     fn test_validate_rejects_zero_max_grad_norm() {
         let cfg = DQNConfig::new().max_grad_norm(0.0);
         assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn test_default_soft_update_tau_is_none() {
+        let cfg = DQNConfig::default();
+        assert!(cfg.soft_update_tau.is_none());
+    }
+
+    #[test]
+    fn test_soft_update_tau_builder() {
+        let cfg = DQNConfig::new().soft_update_tau(0.005);
+        assert_eq!(cfg.soft_update_tau, Some(0.005));
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_rejects_soft_update_tau_out_of_range() {
+        assert!(DQNConfig::new().soft_update_tau(0.0).validate().is_err());
+        assert!(DQNConfig::new().soft_update_tau(-0.1).validate().is_err());
+        assert!(DQNConfig::new().soft_update_tau(1.5).validate().is_err());
+        assert!(DQNConfig::new().soft_update_tau(1.0).validate().is_ok());
+        assert!(DQNConfig::new().soft_update_tau(0.005).validate().is_ok());
     }
 
     #[test]
