@@ -270,6 +270,11 @@ required-features = ["training"]
 # path = "examples/games/bucket_brigade/train_p3.rs"
 # required-features = ["training", "env-bucket-brigade"]
 
+[[example]]
+name = "train_p3_centralized"
+path = "examples/games/bucket_brigade/train_p3_centralized.rs"
+required-features = ["training", "env-bucket-brigade"]
+
 # Diagnostics --- verifies that the CUDA link fix from build.rs is working.
 # Run with `./scripts/gpu-train.sh test_cuda` or directly via cargo on a
 # CUDA-equipped Linux box. On macOS this still builds but will report `Cpu`.
