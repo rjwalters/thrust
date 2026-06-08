@@ -6,9 +6,9 @@
 //!    regularizer can be added as a single backward pass.
 //! 2. **Centralized critic** (`--centralized-critic`) — MAPPO-style CT-DE: a
 //!    shared value function `V_c(s_joint) -> R` is attached to the joint
-//!    trainer. Its loss is added to the joint update and reported alongside
-//!    the per-agent stats. See `src/multi_agent/centralized_critic.rs` for
-//!    the design rationale (CT-DE, MAPPO/COMA references). With
+//!    trainer. Its loss is added to the joint update and reported alongside the
+//!    per-agent stats. See `src/multi_agent/centralized_critic.rs` for the
+//!    design rationale (CT-DE, MAPPO/COMA references). With
 //!    `--centralized-critic --critic-vf-coef 0` the binary recovers the
 //!    no-critic baseline numerically (the critic's own VarStore is gradient-
 //!    isolated from per-agent params).
@@ -288,7 +288,11 @@ fn main() -> Result<()> {
         minibatch_size: cfg.minibatch_size,
         max_grad_norm: 0.5,
         normalize_advantages: true,
-        centralized_critic: if cfg.centralized_critic { Some(critic_cfg.clone()) } else { None },
+        centralized_critic: if cfg.centralized_critic {
+            Some(critic_cfg.clone())
+        } else {
+            None
+        },
     };
 
     let mut trainer = if cfg.centralized_critic {
@@ -310,7 +314,11 @@ fn main() -> Result<()> {
     let initial = env.reset_joint(Some(cfg.seed));
     let mut last_obs = initial[0].clone();
 
-    let mode_tag = if cfg.centralized_critic { " (centralized critic)" } else { "" };
+    let mode_tag = if cfg.centralized_critic {
+        " (centralized critic)"
+    } else {
+        ""
+    };
     println!(
         "== thrust P3{}: scenario={} lambda_red={} seed={} num_agents={} ==",
         mode_tag, cfg.scenario, cfg.lambda_red, cfg.seed, cfg.num_agents
