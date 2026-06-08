@@ -87,6 +87,11 @@ pub struct CentralizedCritic {
     fc1: nn::Linear,
     fc2: nn::Linear,
     head: nn::Linear,
+    /// Cached device the critic's parameters live on. Set from `vs.device()`
+    /// at construction and treated as an invariant for the critic's lifetime:
+    /// nothing in this module calls `vs.set_device(...)` after construction,
+    /// so `self.device == self.vs.device()` always holds. Stored here so that
+    /// `device()` does not need to round-trip through `vs`.
     device: Device,
 }
 
@@ -95,19 +100,10 @@ impl CentralizedCritic {
     ///
     /// The critic accepts `[batch, joint_obs_dim]` and returns `[batch]`
     /// scalar values. Parameters live on the caller-chosen device (CUDA if
-    /// available, else CPU).
+    /// available, else CPU). Use [`Self::new_on_device`] to pin to a specific
+    /// device (e.g. in tests that need CPU regardless of CUDA availability).
     pub fn new(joint_obs_dim: i64, hidden_dim: i64) -> Self {
-        let device = Device::cuda_if_available();
-        let vs = nn::VarStore::new(device);
-        let root = vs.root();
-
-        let lc = nn::LinearConfig::default();
-        let fc1 = nn::linear(&root / "fc1", joint_obs_dim, hidden_dim, lc);
-        let fc2 = nn::linear(&root / "fc2", hidden_dim, hidden_dim, lc);
-        let head = nn::linear(&root / "head", hidden_dim, 1, lc);
-        let device = vs.device();
-
-        Self { vs, fc1, fc2, head, device }
+        Self::new_on_device(joint_obs_dim, hidden_dim, Device::cuda_if_available())
     }
 
     /// Build a new centralized critic with explicit device (useful in tests

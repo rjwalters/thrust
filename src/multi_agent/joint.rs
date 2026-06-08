@@ -1205,50 +1205,92 @@ mod tests {
     // Centralized critic integration tests.
     // -------------------------------------------------------------------
 
-    /// Run the full collect_rollout + update path twice with identical seeds
-    /// and `centralized_critic = None`. Every stat must agree to 1e-5. This
-    /// is the curator's load-bearing regression guard against accidental
-    /// control-flow divergence introduced by the centralized-critic wiring.
+    /// Structural parity test: with `centralized_critic = None`, the new
+    /// critic-aware `update` codepath must produce identical per-agent stats
+    /// to itself across two back-to-back runs that share identical starting
+    /// weights and identical input rollouts. This is the load-bearing
+    /// regression guard against accidental control-flow divergence
+    /// introduced by the centralized-critic wiring.
     ///
-    /// Libtorch's RNG is a process-global singleton, so a strict bit-for-bit
-    /// comparison between two runs in the same process requires that no
-    /// other test consume RNG between them. To make this reliable under
-    /// `cargo test`'s default parallel scheduler, we serialize the two
-    /// inner runs against any other test in this module that also acquires
-    /// `joint_tests_rng_lock()`. New tests added to this module should
-    /// acquire the same lock if they call `tch::manual_seed` or rely on the
-    /// global RNG state.
+    /// # Why this test does NOT depend on libtorch's global RNG
+    ///
+    /// Libtorch's RNG is a process-global singleton, so any test that
+    /// asserts bit-for-bit reproducibility under the default parallel
+    /// `cargo test` scheduler is racy: another test can advance the RNG
+    /// between our seed and consume. An earlier revision used a
+    /// module-local mutex to try to serialize against that, but every
+    /// other test in the crate that touches libtorch (policy::mlp init,
+    /// train::dqn::*, train::ppo::loss::*, ...) ignores that lock, so it
+    /// did not actually save us.
+    ///
+    /// Instead, the test eliminates RNG dependence entirely:
+    ///
+    /// 1. Build *one* set of policies, then deep-copy their parameters into a
+    ///    second set via `VarStore::copy`. Both trainers start with
+    ///    bit-identical weights regardless of what the process-global RNG
+    ///    looked like during construction.
+    /// 2. Collect the rollout *once* and reuse it for both runs. This avoids
+    ///    re-invoking `policy.get_action`, which would consume RNG via
+    ///    `multinomial` and could diverge between A and B.
+    /// 3. Configure `minibatch_size == rollout_steps`, so the `randperm` inside
+    ///    `update` permutes a full minibatch. Every loss is a `mean` / `sum`
+    ///    reduction over the minibatch dim and is therefore
+    ///    permutation-invariant — the actual shuffle order does not matter, so
+    ///    even though the two `update` calls may draw *different* permutations,
+    ///    the resulting per-agent stats are identical.
     #[test]
     fn test_update_numerical_parity_no_critic() {
-        let _guard = joint_tests_rng_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let num_agents = 2;
+        let obs_dim: i64 = 4;
+        let action_dim: i64 = 3;
 
-        fn run_once() -> JointStats {
-            tch::manual_seed(0xC0FFEE);
-            let num_agents = 2;
-            let obs_dim: i64 = 4;
-            let mut policies = make_mlp_policies(num_agents, obs_dim, 3);
-            let optimizers = make_optimizers_for_mlp(&mut policies, 3e-4);
+        // -- Build trainer A. Initial weights come from whatever RNG state
+        // libtorch happens to be in; that's fine because we will mirror
+        // them into trainer B before either trainer runs `update`.
+        let mut policies_a = make_mlp_policies(num_agents, obs_dim, action_dim);
+        let optimizers_a = make_optimizers_for_mlp(&mut policies_a, 3e-4);
 
-            let config = JointTrainerConfig {
-                num_agents,
-                rollout_steps: 64,
-                n_epochs: 2,
-                minibatch_size: 32,
-                ..Default::default()
-            };
-            let mut trainer = JointMultiAgentTrainer::new(policies, optimizers, config).unwrap();
-
-            let mut env = MockEnv::new(num_agents, obs_dim as usize);
-            let initial = env.reset_joint(None);
-            let mut last_obs = initial[0].clone();
-            let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
-            trainer
-                .update(&rollout, |_features: &[&Tensor]| -> Option<Tensor> { None })
-                .expect("update should not error")
+        // Build trainer B (separate VarStores), then make B's parameters
+        // bit-identical to A's. `nn::VarStore::copy` is a shape-checked,
+        // tensor-by-tensor copy.
+        let mut policies_b = make_mlp_policies(num_agents, obs_dim, action_dim);
+        for (a, b) in policies_a.iter().zip(policies_b.iter_mut()) {
+            b.var_store_mut().copy(a.var_store()).expect("varstore copy must succeed");
         }
+        let optimizers_b = make_optimizers_for_mlp(&mut policies_b, 3e-4);
 
-        let a = run_once();
-        let b = run_once();
+        // Permutation-invariant config: minibatch_size == rollout_steps,
+        // so per-epoch `randperm` does not affect any reduction.
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: 64,
+            n_epochs: 2,
+            // Equal to rollout_steps so the per-epoch randperm slice covers
+            // every sample and the order is irrelevant to mean/sum losses.
+            minibatch_size: 64,
+            ..Default::default()
+        };
+
+        let mut trainer_a =
+            JointMultiAgentTrainer::new(policies_a, optimizers_a, config.clone()).unwrap();
+        let mut trainer_b = JointMultiAgentTrainer::new(policies_b, optimizers_b, config).unwrap();
+
+        // Collect rollout once on trainer A. Since A and B share weights,
+        // we can reuse the same rollout for B's update — that avoids a
+        // second `collect_rollout` call (which would consume RNG via
+        // `multinomial` and could draw a different action sequence under
+        // parallel test pressure).
+        let mut env = MockEnv::new(num_agents, obs_dim as usize);
+        let initial = env.reset_joint(None);
+        let mut last_obs = initial[0].clone();
+        let rollout = trainer_a.collect_rollout(&mut env, &mut last_obs);
+
+        let a = trainer_a
+            .update(&rollout, |_features: &[&Tensor]| -> Option<Tensor> { None })
+            .expect("update A should not error");
+        let b = trainer_b
+            .update(&rollout, |_features: &[&Tensor]| -> Option<Tensor> { None })
+            .expect("update B should not error");
 
         const TOL: f64 = 1e-5;
         assert!(
