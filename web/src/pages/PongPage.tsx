@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import PongCanvas from "../components/Pong/PongCanvas";
 import PongControls from "../components/Pong/PongControls";
+import { fetchPongModelJson } from "../components/Pong/loadPongModel";
 import { usePong } from "../components/Pong/usePong";
 import GamePageLayout from "../components/GamePageLayout";
 
@@ -32,9 +33,8 @@ export default function PongPage() {
 	useEffect(() => {
 		async function loadModelInfo() {
 			try {
-				const response = await fetch(`${import.meta.env.BASE_URL}pong_model.json`);
-				if (!response.ok) throw new Error(`HTTP ${response.status}`);
-				setModelInfo(await response.json());
+				const { json } = await fetchPongModelJson(import.meta.env.BASE_URL);
+				setModelInfo(JSON.parse(json));
 			} catch (e) {
 				console.warn("Failed to load Pong model info:", e);
 			}
@@ -54,12 +54,17 @@ export default function PongPage() {
 
 	const controls = <PongControls pong={pong} />;
 
+	const opponentDescription =
+		pong.modelSource === "self-play"
+			? "a copy of itself (red, right)"
+			: "the rule-based opponent (red, right)";
+
 	const gameDynamics = (
 		<>
 			<p className="text-gray-600 mb-4">
-				Classic Pong: the agent (blue, left) must return the ball past the
-				rule-based opponent (red, right). First to 7 points wins, or the episode
-				ends at 2000 steps.
+				Classic Pong: the agent (blue, left) must return the ball past{" "}
+				{opponentDescription}. First to 7 points wins, or the episode ends at
+				2000 steps.
 			</p>
 
 			<div className="grid md:grid-cols-2 gap-6">
@@ -157,7 +162,7 @@ export default function PongPage() {
 		<>
 			<p className="text-gray-600 mb-4">
 				{modelInfo?.metadata?.algorithm ?? "PPO (Proximal Policy Optimization)"}{" "}
-				agent trained against a rule-based opponent.
+				agent plays the left paddle.
 			</p>
 
 			<div className="grid md:grid-cols-2 gap-6">
@@ -244,7 +249,9 @@ export default function PongPage() {
 				<p className="text-sm text-blue-900">
 					<strong>Status:</strong>{" "}
 					{pong.modelLoaded
-						? "Model loaded — PPO policy active"
+						? pong.modelSource === "self-play"
+							? "PPO policy active (self-play trained)"
+							: "PPO policy active (rule-based opponent)"
 						: "No model file — using heuristic agent"}
 				</p>
 				{modelInfo?.metadata?.notes && (

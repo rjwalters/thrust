@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { WasmPong } from "../../lib/wasm";
 import { initWasm } from "../../lib/wasm";
+import { fetchPongModelJson, type PongModelSource } from "./loadPongModel";
 
 export interface PongState {
 	ballX: number;
@@ -21,6 +22,7 @@ export interface UsePongResult {
 	speed: number;
 	actualFps: number;
 	modelLoaded: boolean;
+	modelSource: PongModelSource | null;
 	start: () => void;
 	pause: () => void;
 	reset: () => void;
@@ -42,6 +44,7 @@ export function usePong(): UsePongResult {
 	const [speed, setSpeed] = useState(1);
 	const [actualFps, setActualFps] = useState(0);
 	const [modelLoaded, setModelLoaded] = useState(false);
+	const [modelSource, setModelSource] = useState<PongModelSource | null>(null);
 
 	const envRef = useRef<WasmPong | null>(null);
 	const frameIdRef = useRef<number | null>(null);
@@ -59,14 +62,13 @@ export function usePong(): UsePongResult {
 				envRef.current = new wasm.WasmPong();
 
 				try {
-					const response = await fetch(
-						`${import.meta.env.BASE_URL}pong_model.json`,
+					const { json, source } = await fetchPongModelJson(
+						import.meta.env.BASE_URL,
 					);
-					if (!response.ok) throw new Error(`HTTP ${response.status}`);
-					const modelJson = await response.text();
-					envRef.current.load_policy_json(modelJson);
+					envRef.current.load_policy_json(json);
 					setModelLoaded(true);
-					console.log("Pong policy loaded");
+					setModelSource(source);
+					console.log(`Pong policy loaded (${source})`);
 				} catch (e) {
 					console.warn("No Pong policy found, using heuristic:", e);
 				}
@@ -206,6 +208,7 @@ export function usePong(): UsePongResult {
 		speed,
 		actualFps,
 		modelLoaded,
+		modelSource,
 		start,
 		pause,
 		reset,
