@@ -8,13 +8,16 @@
 //! prevent `cargo test --lib` from compiling.
 //!
 //! Run with:
-//! `cargo test --test test_multi_discrete_env --features env-bucket-brigade`.
+//! `cargo test --test test_multi_discrete_env --features "env-bucket-brigade
+//! training"`. The `training` feature is required because the `multi_agent`
+//! trait surface itself lives behind that feature gate (see `src/lib.rs`).
 
-#![cfg(feature = "env-bucket-brigade")]
+#![cfg(all(feature = "env-bucket-brigade", feature = "training"))]
 
 use bucket_brigade_core::SCENARIOS;
 use thrust_rl::{
-    env::games::bucket_brigade::BucketBrigadeMaEnv, multi_agent::MultiAgentEnvironment,
+    env::games::bucket_brigade::{BucketBrigadeMaEnv, NUM_HOUSES},
+    multi_agent::MultiAgentEnvironment,
 };
 
 fn make_env(num_agents: usize, seed: u64) -> BucketBrigadeMaEnv {
@@ -25,13 +28,13 @@ fn make_env(num_agents: usize, seed: u64) -> BucketBrigadeMaEnv {
 }
 
 #[test]
-fn agent_action_space_is_house_mode_for_every_agent() {
+fn agent_action_space_is_house_mode_signal_for_every_agent() {
     let env = make_env(4, 42);
     for aid in 0..MultiAgentEnvironment::num_agents(&env) {
         assert_eq!(
             env.agent_action_space(aid),
-            vec![10, 2],
-            "agent {aid}: expected factored [house_index, mode] action space",
+            vec![NUM_HOUSES, 2, 2],
+            "agent {aid}: expected factored [house_index, mode, signal] action space",
         );
     }
 }
@@ -39,7 +42,8 @@ fn agent_action_space_is_house_mode_for_every_agent() {
 #[test]
 fn step_multi_returns_one_entry_per_agent() {
     let mut env = make_env(4, 42);
-    let actions: Vec<Vec<i64>> = vec![vec![3, 1], vec![5, 0], vec![7, 1], vec![0, 0]];
+    // [house, mode, signal] per agent
+    let actions: Vec<Vec<i64>> = vec![vec![3, 1, 1], vec![5, 0, 0], vec![7, 1, 0], vec![0, 0, 1]];
     let result = env.step_multi(&actions);
 
     let n = MultiAgentEnvironment::num_agents(&env);
@@ -61,8 +65,8 @@ fn step_multi_agrees_with_inherent_step() {
     let mut env_trait = make_env(3, 7);
     let mut env_inherent = make_env(3, 7);
 
-    let actions_trait: Vec<Vec<i64>> = vec![vec![2, 1], vec![4, 0], vec![9, 1]];
-    let actions_inherent: Vec<[u8; 2]> = vec![[2, 1], [4, 0], [9, 1]];
+    let actions_trait: Vec<Vec<i64>> = vec![vec![2, 1, 1], vec![4, 0, 0], vec![9, 1, 0]];
+    let actions_inherent: Vec<[u8; 3]> = vec![[2, 1, 1], [4, 0, 0], [9, 1, 0]];
 
     for _ in 0..3 {
         let r_trait = env_trait.step_multi(&actions_trait);
@@ -99,16 +103,16 @@ fn get_agent_observation_returns_per_agent_view() {
 #[should_panic(expected = "expected 4 actions")]
 fn step_multi_panics_on_wrong_agent_count() {
     let mut env = make_env(4, 42);
-    let actions: Vec<Vec<i64>> = vec![vec![0, 0], vec![1, 0]]; // only 2, not 4
+    let actions: Vec<Vec<i64>> = vec![vec![0, 0, 0], vec![1, 0, 0]]; // only 2, not 4
     let _ = env.step_multi(&actions);
 }
 
 #[test]
-#[should_panic(expected = "action must have 2 dims")]
+#[should_panic(expected = "action must have 3 dims")]
 fn step_multi_panics_on_wrong_action_dim_count() {
     let mut env = make_env(2, 42);
-    // Action vectors have length 3 instead of the required 2.
-    let actions: Vec<Vec<i64>> = vec![vec![0, 0, 0], vec![1, 1, 1]];
+    // Action vectors have length 2 instead of the required 3.
+    let actions: Vec<Vec<i64>> = vec![vec![0, 0], vec![1, 1]];
     let _ = env.step_multi(&actions);
 }
 
@@ -116,8 +120,8 @@ fn step_multi_panics_on_wrong_action_dim_count() {
 #[should_panic(expected = "house_index")]
 fn step_multi_panics_on_house_out_of_range() {
     let mut env = make_env(2, 42);
-    // house_index = 99 is out of range 0..10.
-    let actions: Vec<Vec<i64>> = vec![vec![99, 0], vec![0, 0]];
+    // house_index = 99 is out of range 0..num_houses.
+    let actions: Vec<Vec<i64>> = vec![vec![99, 0, 0], vec![0, 0, 0]];
     let _ = env.step_multi(&actions);
 }
 
@@ -125,22 +129,27 @@ fn step_multi_panics_on_house_out_of_range() {
 #[should_panic(expected = "mode")]
 fn step_multi_panics_on_invalid_mode() {
     let mut env = make_env(2, 42);
-    let actions: Vec<Vec<i64>> = vec![vec![0, 5], vec![1, 0]];
+    let actions: Vec<Vec<i64>> = vec![vec![0, 5, 0], vec![1, 0, 0]];
     let _ = env.step_multi(&actions);
 }
 
 #[test]
-fn step_multi_handles_single_dim_action_space_shape() {
-    // Sanity check: even though BB itself is 2-dim, this confirms the trait
-    // accepts arbitrary inner vec lengths -- the env's own dim-check is the
-    // only gatekeeper. A pure-discrete env (vec![n]) would round-trip here
-    // through the same trait surface.
+#[should_panic(expected = "signal")]
+fn step_multi_panics_on_invalid_signal() {
+    let mut env = make_env(2, 42);
+    let actions: Vec<Vec<i64>> = vec![vec![0, 0, 5], vec![1, 0, 0]];
+    let _ = env.step_multi(&actions);
+}
+
+#[test]
+fn step_multi_action_space_shape_matches_policy_contract() {
+    // Sanity check: the per-agent action space must equal the env's
+    // `action_dims()`. A pure-discrete env would return `vec![n]` here;
+    // BB returns `vec![num_houses, 2, 2]`. Both are valid trait shapes.
     let env = make_env(3, 42);
     for aid in 0..MultiAgentEnvironment::num_agents(&env) {
         let dims = env.agent_action_space(aid);
         assert!(!dims.is_empty(), "agent {aid} action space must be non-empty");
-        // For BB, this should be exactly [10, 2]; a pure-discrete env would
-        // return [n] here. Both are valid trait shapes.
-        assert_eq!(dims, vec![10, 2]);
+        assert_eq!(dims, vec![NUM_HOUSES, 2, 2]);
     }
 }

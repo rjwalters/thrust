@@ -110,7 +110,8 @@ fn parse_args() -> Config {
 // Env adapter: wrap BucketBrigadeMaEnv to satisfy the JointEnv trait.
 // =====================================================================
 //
-// BucketBrigadeMaEnv natively takes `&[[u8; 2]]` actions, whereas the joint
+// BucketBrigadeMaEnv natively takes `&[[u8; 3]]` actions
+// (`[house, mode, signal]` after upstream issue #235), whereas the joint
 // trainer hands the env a `&[Vec<i64>]` (one entry per agent, length =
 // num_action_dims). This shim translates between the two; once the
 // MultiAgentEnvironment trait grows multi-discrete action support (issue
@@ -125,16 +126,16 @@ impl JointEnv for BbJointEnv {
         self.inner.reset(seed)
     }
     fn step_joint(&mut self, actions: &[Vec<i64>]) -> JointStepResult {
-        let joint: Vec<[u8; 2]> = actions
+        let joint: Vec<[u8; 3]> = actions
             .iter()
             .map(|a| {
                 assert_eq!(
                     a.len(),
-                    2,
-                    "BbJointEnv expects 2 action dims (house, mode); got {}",
+                    3,
+                    "BbJointEnv expects 3 action dims (house, mode, signal); got {}",
                     a.len()
                 );
-                [a[0] as u8, a[1] as u8]
+                [a[0] as u8, a[1] as u8, a[2] as u8]
             })
             .collect();
         let result = self.inner.step(&joint);
@@ -199,14 +200,14 @@ fn main() -> Result<()> {
 
     let env_inner = BucketBrigadeMaEnv::new(scenario, cfg.num_agents, Some(cfg.seed));
     let obs_dim = env_inner.obs_dim();
-    let action_dims = env_inner.action_dims();
+    let action_dims: Vec<i64> = env_inner.action_dims();
 
     // Build N policies + N optimizers, all on the same device (CUDA if
     // available, else CPU).
     let mut policies: Vec<MultiDiscreteMlpPolicy> = Vec::with_capacity(cfg.num_agents);
     let mut optimizers: Vec<tch::nn::Optimizer> = Vec::with_capacity(cfg.num_agents);
     for _ in 0..cfg.num_agents {
-        let p = MultiDiscreteMlpPolicy::new(obs_dim as i64, action_dims.to_vec(), cfg.hidden_dim);
+        let p = MultiDiscreteMlpPolicy::new(obs_dim as i64, action_dims.clone(), cfg.hidden_dim);
         let opt = tch::nn::Adam::default().build(p.var_store(), cfg.lr)?;
         policies.push(p);
         optimizers.push(opt);
