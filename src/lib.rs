@@ -35,8 +35,14 @@ pub mod policy;
 #[cfg(any(feature = "training", feature = "training-burn"))]
 pub mod buffer;
 
-/// Training algorithms (PPO, etc.) (requires training feature)
-#[cfg(feature = "training")]
+/// Training algorithms (PPO, etc.).
+///
+/// The PPO and DQN trainers themselves still require the `training` feature
+/// (tch backend), but the backend-agnostic optimizer abstraction added in
+/// phase 2b of the Burn migration (#92) is exposed under either feature so
+/// that `--features training-burn` can re-use the trait scaffold without
+/// dragging in tch.
+#[cfg(any(feature = "training", feature = "training-burn"))]
 pub mod train;
 
 /// Utility functions and helpers
