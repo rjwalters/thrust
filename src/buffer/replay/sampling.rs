@@ -12,12 +12,11 @@
 //! `feature = "training-burn"` respectively; nothing in the storage
 //! layout itself depends on the choice of tensor backend.
 
+#[cfg(feature = "training-burn")]
+use burn::tensor::{Int, Tensor as BurnTensor, TensorData, backend::Backend};
 use rand::Rng;
 #[cfg(feature = "training")]
 use tch::{Device, Tensor};
-
-#[cfg(feature = "training-burn")]
-use burn::tensor::{Int, Tensor as BurnTensor, TensorData, backend::Backend};
 
 use super::storage::ReplayBuffer;
 
@@ -93,8 +92,8 @@ impl ReplayBatch {
     /// - `actions`: `[batch]`, `i64` (Burn `Int` kind)
     /// - `rewards`: `[batch]`, `f32`
     /// - `next_observations`: `[batch, obs_dim]`, `f32`
-    /// - `dones`: `[batch]`, `f32` (0.0 / 1.0 — same convention as the
-    ///   tch path so the `(1 - done)` TD-target formula carries over).
+    /// - `dones`: `[batch]`, `f32` (0.0 / 1.0 — same convention as the tch path
+    ///   so the `(1 - done)` TD-target formula carries over).
     #[cfg(feature = "training-burn")]
     pub fn to_burn_tensors<B: Backend>(&self, device: &B::Device) -> ReplayBurnTensors<B> {
         let batch = self.len();

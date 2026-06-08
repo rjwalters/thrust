@@ -54,12 +54,11 @@
 //!
 //! - Schaul et al., *Prioritized Experience Replay* ([ICLR 2016](https://arxiv.org/abs/1511.05952)).
 
+#[cfg(feature = "training-burn")]
+use burn::tensor::{Int, Tensor as BurnTensor, TensorData, backend::Backend};
 use rand::Rng;
 #[cfg(feature = "training")]
 use tch::{Device, Tensor};
-
-#[cfg(feature = "training-burn")]
-use burn::tensor::{Int, Tensor as BurnTensor, TensorData, backend::Backend};
 
 use super::sum_tree::SumTree;
 

@@ -135,7 +135,8 @@ mod tests {
 
         type B = NdArray<f32>;
         let device = super::default_burn_device::<B>();
-        let t: Tensor<B, 1> = Tensor::from_data(TensorData::new(vec![1.0_f32, 2.0, 3.0], [3]), &device);
+        let t: Tensor<B, 1> =
+            Tensor::from_data(TensorData::new(vec![1.0_f32, 2.0, 3.0], [3]), &device);
         assert_eq!(t.dims(), [3]);
         let data: Vec<f32> = t.into_data().to_vec().unwrap();
         assert_eq!(data, vec![1.0, 2.0, 3.0]);
