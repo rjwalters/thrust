@@ -2,18 +2,60 @@
 name = "thrust-rl"
 version = "0.1.0"
 edition = "2024"
-authors = ["Your Name <your.email@example.com>"]
+authors = ["Robb Walters <agent-4@spheresemi.com>"]
 license = "MIT OR Apache-2.0"
-description = "High-performance reinforcement learning in Rust + CUDA"
-repository = "https://github.com/yourusername/thrust"
-keywords = ["reinforcement-learning", "machine-learning", "rl", "deep-learning", "cuda"]
-categories = ["science", "algorithms"]
+description = "High-performance reinforcement learning in Rust with PyTorch (tch-rs), CUDA, and WASM inference"
+repository = "https://github.com/rjwalters/thrust"
+homepage = "https://rjwalters.github.io/thrust/"
+documentation = "https://docs.rs/thrust-rl"
+# Keywords: <=5 entries, each <=20 chars, alphanumeric + '-'/'_'.
+keywords = ["reinforcement", "machine-learning", "rl", "ppo", "dqn"]
+# Categories from the official crates.io list:
+# https://crates.io/category_slugs
+categories = ["science", "algorithms", "game-development", "simulation"]
 readme = "README.md"
 # Build script defeats GNU ld's --as-needed for libtorch_cuda on Linux.
 # See build.rs for the rationale (in short: without it, the binary silently
 # falls back to CPU even on a CUDA-equipped box). No-op on macOS/Windows
 # and on CPU-only feature builds.
 build = "build.rs"
+# Restrict the published tarball to the files actually needed to build the
+# crate. This keeps the tarball small (well under the 10 MB crates.io
+# limit) by excluding tracked model checkpoints, the web demo, the
+# bucket-brigade submodule, training scripts, optimization result JSON,
+# screenshots, and other non-library assets.
+exclude = [
+    # Trained model checkpoints (tens of MB) -- consumers build their own.
+    "*.pt",
+    "*.safetensors",
+    "*.onnx",
+    "models/**",
+    "cartpole_optimization_results.json",
+    "cartpole_model*.json",
+    # Web demo & legacy demo assets.
+    "web/**",
+    "web-old/**",
+    # Optional Bucket Brigade submodule (only built with the
+    # `env-bucket-brigade` feature; consumers can vendor it themselves).
+    "envs/**",
+    # Bucket Brigade example -- feature is disabled in v0.1.0 (see above).
+    "examples/games/bucket_brigade/**",
+    # Out-of-band tooling that is not needed to build the library.
+    "scripts/**",
+    "loom.sh",
+    "Makefile",
+    "rustfmt.toml",
+    "clippy.toml",
+    ".loom/**",
+    ".claude/**",
+    ".github/**",
+    "libtorch/**",
+    # Project planning docs that aren't consumed by `cargo doc`.
+    "WASM_ROADMAP.md",
+    "MULTI_AGENT_DESIGN.md",
+    "VERSIONS.md",
+    "package.json",
+]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -56,7 +98,18 @@ chrono = { version = "0.4", optional = true }
 
 # Bucket Brigade environment (Slepian-Wolf MARL experiments). Default = no
 # Python features; pure Rust core.
-bucket-brigade-core = { path = "envs/bucket-brigade/bucket-brigade-core", default-features = false, optional = true }
+#
+# NOTE for v0.1.0 release: `bucket-brigade-core` lives in the
+# `envs/bucket-brigade/` git submodule and has not been published to
+# crates.io. `cargo publish` refuses to publish any package with a
+# path-only dependency (even an optional one). Consequently this dep is
+# commented out below and the `env-bucket-brigade` feature is disabled
+# for the published crate. To use the Bucket Brigade env locally, depend
+# on `thrust-rl` from a git checkout that includes the submodule and
+# uncomment this block plus the `env-bucket-brigade` feature definition.
+# See `docs/RELEASING.md` for the full procedure and the follow-up plan
+# for restoring this feature in v0.2.x.
+# bucket-brigade-core = { path = "envs/bucket-brigade/bucket-brigade-core", default-features = false, optional = true }
 
 # WASM support
 wasm-bindgen = { version = "0.2", optional = true }
@@ -68,12 +121,24 @@ console_error_panic_hook = { version = "0.1", optional = true }
 default = ["training"]
 training = ["tch", "tokio", "rayon", "tracing", "tracing-subscriber", "crossbeam-channel", "chrono"]  # Include PyTorch and async deps for training
 wasm = ["wasm-bindgen", "web-sys", "js-sys", "console_error_panic_hook"]  # Pure Rust for WASM
-# Bucket Brigade env adapter for the Slepian-Wolf MARL experiments. Pulls in
-# the bucket-brigade-core crate as a pure-Rust dep --- does *not* require
-# the `training` feature on its own, so the env can be tested without
-# libtorch. The accompanying joint-trainer binary will declare
-# `required-features = ["env-bucket-brigade", "training"]`.
-env-bucket-brigade = ["bucket-brigade-core"]
+# Bucket Brigade env adapter for the Slepian-Wolf MARL experiments. Pulls
+# in the bucket-brigade-core crate as a pure-Rust dep --- does *not*
+# require the `training` feature on its own. Disabled for v0.1.0 because
+# bucket-brigade-core is path-only (see comment in [dependencies]); the
+# `bucket_brigade` module in src/ is `#[cfg(feature = "env-bucket-brigade")]`
+# gated and will simply be omitted from the published crate. Re-enable
+# locally by uncommenting both this line and the dependency above.
+# env-bucket-brigade = ["bucket-brigade-core"]
+
+# Tell rustc that `env-bucket-brigade` is a *known-but-disabled* feature
+# name, so the `#[cfg(feature = "env-bucket-brigade")]` gates in
+# src/env/games/{mod.rs,bucket_brigade/}, tests/test_bucket_brigade_*.rs,
+# and tests/test_multi_discrete_env.rs don't trigger
+# `unexpected_cfgs` (denied via `-D warnings` in CI's `cargo doc` job).
+# Once the feature is re-enabled in [features] above, this stanza can be
+# removed --- cargo will derive the cfg automatically from [features].
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("env-bucket-brigade"))'] }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -195,11 +260,15 @@ name = "test_json_inference"
 path = "examples/games/cartpole/test_json_inference.rs"
 required-features = ["training"]
 
-# Bucket Brigade examples (Slepian-Wolf MARL)
-[[example]]
-name = "train_p3"
-path = "examples/games/bucket_brigade/train_p3.rs"
-required-features = ["training", "env-bucket-brigade"]
+# Bucket Brigade examples (Slepian-Wolf MARL).
+# Disabled for v0.1.0 because the `env-bucket-brigade` feature is
+# disabled in the published manifest (the underlying path-only
+# bucket-brigade-core dep prevents `cargo publish`). Re-enable locally
+# alongside the feature definition above.
+# [[example]]
+# name = "train_p3"
+# path = "examples/games/bucket_brigade/train_p3.rs"
+# required-features = ["training", "env-bucket-brigade"]
 
 # Diagnostics --- verifies that the CUDA link fix from build.rs is working.
 # Run with `./scripts/gpu-train.sh test_cuda` or directly via cargo on a
