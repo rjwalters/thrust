@@ -331,9 +331,13 @@ impl PrioritizedReplayBuffer {
         for k in 0..batch_size {
             let lo = segment * k as f32;
             let hi = segment * (k + 1) as f32;
-            // `gen_range(lo..hi)` would panic if `lo == hi` (zero-width
+            // `random_range(lo..hi)` would panic if `lo == hi` (zero-width
             // segment) — in that case just take the boundary.
-            let p = if hi > lo { rng.gen_range(lo..hi) } else { lo };
+            let p = if hi > lo {
+                rng.random_range(lo..hi)
+            } else {
+                lo
+            };
             let (leaf_idx, leaf_priority) = self.tree.find(p);
 
             // Defensive: if we somehow landed on a leaf past `self.len`

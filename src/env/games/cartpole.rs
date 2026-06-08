@@ -130,13 +130,13 @@ impl CartPole {
     /// All state variables are initialized with small random perturbations
     /// around equilibrium (uniform distribution in [-0.05, 0.05])
     fn reset_state(&mut self) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Initialize with small random perturbations
-        self.x = rng.gen_range(-0.05..0.05);
-        self.x_dot = rng.gen_range(-0.05..0.05);
-        self.theta = rng.gen_range(-0.05..0.05);
-        self.theta_dot = rng.gen_range(-0.05..0.05);
+        self.x = rng.random_range(-0.05..0.05);
+        self.x_dot = rng.random_range(-0.05..0.05);
+        self.theta = rng.random_range(-0.05..0.05);
+        self.theta_dot = rng.random_range(-0.05..0.05);
     }
 
     /// Perform one physics simulation step using Euler integration

@@ -162,7 +162,7 @@ fn main() -> Result<()> {
 
     // Per-env snapshot assignment: which snapshot in the pool controls the
     // right paddle of env `i` for the current episode.
-    let mut rng = StdRng::from_entropy();
+    let mut rng = StdRng::from_os_rng();
     let mut env_snapshot_idx: Vec<usize> = (0..NUM_ENVS).map(|_| 0).collect();
 
     // Win/loss tracking: recent episode results from the left agent's
@@ -283,7 +283,7 @@ fn main() -> Result<()> {
                     env_right_score[env_id] = 0;
 
                     // Re-sample opponent snapshot for the next episode
-                    env_snapshot_idx[env_id] = rng.gen_range(0..snapshot_pool.len());
+                    env_snapshot_idx[env_id] = rng.random_range(0..snapshot_pool.len());
                 }
             }
 

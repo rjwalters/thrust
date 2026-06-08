@@ -33,7 +33,7 @@ pub struct MultiAgentSnakeEnv {
 impl MultiAgentSnakeEnv {
     /// Create new multi-agent snake environment
     pub fn new(width: i32, height: i32, num_agents: usize) -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut snakes = Vec::new();
 
         // Create snakes at different starting positions
@@ -66,7 +66,7 @@ impl MultiAgentSnakeEnv {
 
     /// Reset environment to initial state
     pub fn reset(&mut self) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Reset all snakes
         for (i, snake) in self.snakes.iter_mut().enumerate() {
@@ -134,7 +134,7 @@ impl MultiAgentSnakeEnv {
 
         // Generate new food if eaten
         if food_eaten {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             self.food = Food::generate_random(self.width, self.height, &self.snakes, &mut rng);
         }
 

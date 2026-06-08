@@ -293,7 +293,7 @@ fn main() -> Result<()> {
             // Shuffle indices
             let mut indices: Vec<usize> = (0..buffer_size).collect();
             use rand::seq::SliceRandom;
-            indices.shuffle(&mut rand::thread_rng());
+            indices.shuffle(&mut rand::rng());
 
             // Mini-batch updates
             for chunk in indices.chunks(args.minibatch_size) {

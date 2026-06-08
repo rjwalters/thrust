@@ -53,7 +53,7 @@ pub struct SimpleBandit {
 impl SimpleBandit {
     /// Create a new simple bandit environment
     pub fn new() -> Self {
-        Self { state: 0.0, steps: 0, max_steps: 100, rng: rand::rngs::StdRng::from_entropy() }
+        Self { state: 0.0, steps: 0, max_steps: 100, rng: rand::rngs::StdRng::from_os_rng() }
     }
 }
 
@@ -69,7 +69,7 @@ impl Environment for SimpleBandit {
 
     fn reset(&mut self) {
         // Random start state (0 or 1)
-        self.state = self.rng.gen_range(0..2) as f32;
+        self.state = self.rng.random_range(0..2) as f32;
         self.steps = 0;
     }
 
@@ -89,7 +89,7 @@ impl Environment for SimpleBandit {
         let terminated = self.steps >= self.max_steps;
 
         // Random next state
-        self.state = self.rng.gen_range(0..2) as f32;
+        self.state = self.rng.random_range(0..2) as f32;
 
         StepResult {
             observation: self.get_observation(),

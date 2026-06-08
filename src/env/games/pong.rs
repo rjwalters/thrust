@@ -89,15 +89,15 @@ impl Pong {
     }
 
     fn serve(&mut self, toward_agent: bool) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         self.ball_x = 0.5;
-        self.ball_y = 0.3 + rng.gen_range(0.0f32..0.4f32);
+        self.ball_y = 0.3 + rng.random_range(0.0f32..0.4f32);
         self.ball_dx = if toward_agent {
             -BALL_SPEED
         } else {
             BALL_SPEED
         };
-        self.ball_dy = rng.gen_range(-0.5f32..0.5f32) * BALL_SPEED;
+        self.ball_dy = rng.random_range(-0.5f32..0.5f32) * BALL_SPEED;
     }
 
     fn clamp_paddle(y: f32) -> f32 {
@@ -187,12 +187,12 @@ impl Pong {
         if self.ball_x - BALL_R < 0.0 {
             self.right_score += 1;
             reward = -1.0;
-            let toward = rand::thread_rng().gen_bool(0.5);
+            let toward = rand::rng().random_bool(0.5);
             self.serve(toward);
         } else if self.ball_x + BALL_R > 1.0 {
             self.left_score += 1;
             reward = 1.0;
-            let toward = rand::thread_rng().gen_bool(0.5);
+            let toward = rand::rng().random_bool(0.5);
             self.serve(toward);
         }
 
@@ -239,7 +239,7 @@ impl Environment for Pong {
         self.left_score = 0;
         self.right_score = 0;
         self.steps = 0;
-        let toward = rand::thread_rng().gen_bool(0.5);
+        let toward = rand::rng().random_bool(0.5);
         self.serve(toward);
     }
 
@@ -311,12 +311,12 @@ impl Environment for Pong {
         if self.ball_x - BALL_R < 0.0 {
             self.right_score += 1;
             reward = -1.0;
-            let toward = rand::thread_rng().gen_bool(0.5);
+            let toward = rand::rng().random_bool(0.5);
             self.serve(toward);
         } else if self.ball_x + BALL_R > 1.0 {
             self.left_score += 1;
             reward = 1.0;
-            let toward = rand::thread_rng().gen_bool(0.5);
+            let toward = rand::rng().random_bool(0.5);
             self.serve(toward);
         }
 
