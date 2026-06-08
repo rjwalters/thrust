@@ -282,19 +282,12 @@ name = "test_json_inference"
 path = "examples/games/cartpole/test_json_inference.rs"
 required-features = ["training"]
 
-# Bucket Brigade examples (Slepian-Wolf MARL).
-# Disabled for v0.1.0 because the `env-bucket-brigade` feature is
-# disabled in the published manifest (the underlying path-only
-# bucket-brigade-core dep prevents `cargo publish`). Re-enable locally
-# alongside the feature definition above.
-# [[example]]
-# name = "train_p3"
-# path = "examples/games/bucket_brigade/train_p3.rs"
-# required-features = ["training", "env-bucket-brigade"]
-
+# Bucket Brigade example (Slepian-Wolf MARL). Single binary that toggles
+# the centralized-critic path via a `--centralized-critic` CLI flag; see
+# the module docs in `examples/games/bucket_brigade/train_p3.rs`.
 [[example]]
-name = "train_p3_centralized"
-path = "examples/games/bucket_brigade/train_p3_centralized.rs"
+name = "train_p3"
+path = "examples/games/bucket_brigade/train_p3.rs"
 required-features = ["training", "env-bucket-brigade"]
 
 # Diagnostics --- verifies that the CUDA link fix from build.rs is working.
