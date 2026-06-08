@@ -143,7 +143,8 @@ impl SnakeEnv {
         }
 
         // Generate new food
-        self.food = Position::new(rng.random_range(0..self.width), rng.random_range(0..self.height));
+        self.food =
+            Position::new(rng.random_range(0..self.width), rng.random_range(0..self.height));
 
         self.episode += 1;
         self.steps = 0;

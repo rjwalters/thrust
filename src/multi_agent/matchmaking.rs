@@ -2,8 +2,8 @@
 //!
 //! Determines which agents play together in each game instance.
 
-use rand::{Rng, SeedableRng, rngs::StdRng};
 // NB: `SeedableRng` is required to bring `StdRng::from_os_rng` into scope.
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use super::population::{AgentId, Population};
 
