@@ -23,7 +23,7 @@ pub use sampling::{
     Minibatch, MinibatchIterator, generate_minibatch_indices, sample_minibatch, shuffle_indices,
     train_val_split,
 };
-pub use storage::{RolloutBatch, RolloutBuffer};
+pub use storage::{RolloutBatch, RolloutBuffer, RolloutTchTensors};
 
 // Submodules
 mod gae;
