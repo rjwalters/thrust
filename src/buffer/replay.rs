@@ -49,7 +49,11 @@
 //! }
 //! ```
 
+#[cfg(feature = "training-burn")]
+pub use prioritized::PrioritizedBurnTensors;
 pub use prioritized::{PrioritizedBatch, PrioritizedReplayBuffer};
+#[cfg(feature = "training-burn")]
+pub use sampling::ReplayBurnTensors;
 pub use sampling::{ReplayBatch, sample};
 pub use storage::ReplayBuffer;
 pub use sum_tree::SumTree;

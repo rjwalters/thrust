@@ -54,7 +54,10 @@
 //!
 //! - Schaul et al., *Prioritized Experience Replay* ([ICLR 2016](https://arxiv.org/abs/1511.05952)).
 
+#[cfg(feature = "training-burn")]
+use burn::tensor::{Int, Tensor as BurnTensor, TensorData, backend::Backend};
 use rand::Rng;
+#[cfg(feature = "training")]
 use tch::{Device, Tensor};
 
 use super::sum_tree::SumTree;
@@ -108,6 +111,7 @@ impl PrioritizedBatch {
     /// - `next_obs`: `[batch, obs_dim]`, `Kind::Float`
     /// - `dones`: `[batch]`, `Kind::Float` (0.0 or 1.0)
     /// - `is_weights`: `[batch]`, `Kind::Float`
+    #[cfg(feature = "training")]
     pub fn to_tensors(&self, device: Device) -> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor) {
         let batch = self.len() as i64;
         let obs_dim = self.obs_dim as i64;
@@ -126,6 +130,87 @@ impl PrioritizedBatch {
 
         (obs, actions, rewards, next_obs, dones, is_weights)
     }
+
+    /// Stack the batch into Burn tensors on `device`.
+    ///
+    /// Parallel to [`Self::to_tensors`] but emits a named
+    /// [`PrioritizedBurnTensors`] struct so the DQN trainer can grab
+    /// fields by name. Includes the importance-sampling weights that the
+    /// uniform [`super::ReplayBatch`] does not carry.
+    ///
+    /// Shapes (all on `device`):
+    /// - `observations`: `[batch, obs_dim]`, `f32`
+    /// - `actions`: `[batch]`, `i64`
+    /// - `rewards`: `[batch]`, `f32`
+    /// - `next_observations`: `[batch, obs_dim]`, `f32`
+    /// - `dones`: `[batch]`, `f32` (0.0 / 1.0)
+    /// - `is_weights`: `[batch]`, `f32`
+    ///
+    /// Note: `indices` is *not* a tensor — leaf-index round-trips back
+    /// into [`PrioritizedReplayBuffer::update_priorities`] as a host
+    /// `&[usize]`, so it stays on `self`.
+    #[cfg(feature = "training-burn")]
+    pub fn to_burn_tensors<B: Backend>(&self, device: &B::Device) -> PrioritizedBurnTensors<B> {
+        let batch = self.len();
+        let obs_dim = self.obs_dim;
+
+        // Direct rank-2 construction (vs. rank-1 + reshape) to keep the
+        // empty-batch case panic-free; the reshape path trips an internal
+        // shape assertion in cubecl-zspace when both dims are zero.
+        let observations = BurnTensor::<B, 2>::from_data(
+            TensorData::new(self.observations.clone(), [batch, obs_dim]),
+            device,
+        );
+        let next_observations = BurnTensor::<B, 2>::from_data(
+            TensorData::new(self.next_observations.clone(), [batch, obs_dim]),
+            device,
+        );
+        let actions = BurnTensor::<B, 1, Int>::from_data(
+            TensorData::new(self.actions.clone(), [batch]),
+            device,
+        );
+        let rewards =
+            BurnTensor::<B, 1>::from_data(TensorData::new(self.rewards.clone(), [batch]), device);
+        let dones_f: Vec<f32> = self.dones.iter().map(|&d| if d { 1.0 } else { 0.0 }).collect();
+        let dones = BurnTensor::<B, 1>::from_data(TensorData::new(dones_f, [batch]), device);
+        let is_weights = BurnTensor::<B, 1>::from_data(
+            TensorData::new(self.is_weights.clone(), [batch]),
+            device,
+        );
+
+        PrioritizedBurnTensors {
+            observations,
+            actions,
+            rewards,
+            next_observations,
+            dones,
+            is_weights,
+        }
+    }
+}
+
+/// Bundle of Burn tensors produced by [`PrioritizedBatch::to_burn_tensors`].
+///
+/// Adds the per-sample importance-sampling weights on top of the
+/// `ReplayBurnTensors` field set. The trainer multiplies the per-row
+/// TD-error magnitude by `is_weights` before reducing to a scalar loss
+/// — this is the bias correction described in Schaul et al. §3.4.
+#[cfg(feature = "training-burn")]
+#[derive(Debug)]
+pub struct PrioritizedBurnTensors<B: Backend> {
+    /// Observations, shape `[batch, obs_dim]`, dtype `f32`.
+    pub observations: BurnTensor<B, 2>,
+    /// Discrete actions, shape `[batch]`, dtype `i64`.
+    pub actions: BurnTensor<B, 1, Int>,
+    /// Rewards, shape `[batch]`, dtype `f32`.
+    pub rewards: BurnTensor<B, 1>,
+    /// Bootstrap-state observations, shape `[batch, obs_dim]`, dtype `f32`.
+    pub next_observations: BurnTensor<B, 2>,
+    /// Episode-terminal mask (0.0 or 1.0), shape `[batch]`, dtype `f32`.
+    pub dones: BurnTensor<B, 1>,
+    /// Importance-sampling weights, shape `[batch]`, dtype `f32`,
+    /// normalized so the max element is `1.0`.
+    pub is_weights: BurnTensor<B, 1>,
 }
 
 /// Fixed-capacity prioritized replay buffer.
@@ -620,6 +705,7 @@ mod tests {
         assert!((batch.is_weights[0] - 1.0).abs() < 1e-6);
     }
 
+    #[cfg(feature = "training")]
     #[test]
     fn test_to_tensors_shapes() {
         let mut buf = PrioritizedReplayBuffer::new(8, 4, 0.6, 1e-6);
@@ -635,6 +721,71 @@ mod tests {
         assert_eq!(rewards.size(), vec![3]);
         assert_eq!(dones.size(), vec![3]);
         assert_eq!(is_weights.size(), vec![3]);
+    }
+
+    #[cfg(feature = "training-burn")]
+    mod burn_tests {
+        use burn::backend::NdArray;
+
+        use super::*;
+
+        type B = NdArray<f32>;
+
+        #[test]
+        fn test_to_burn_tensors_shapes_and_roundtrip() {
+            let mut buf = PrioritizedReplayBuffer::new(8, 4, 0.6, 1e-6);
+            for i in 0..6 {
+                buf.push(&[i as f32; 4], (i % 2) as i64, i as f32, &[i as f32 + 1.0; 4], i == 5);
+            }
+            let mut rng = StdRng::seed_from_u64(1);
+            let batch = buf.sample(3, 0.4, &mut rng);
+            let device = crate::utils::cuda::default_burn_device::<B>();
+            let t = batch.to_burn_tensors::<B>(&device);
+
+            assert_eq!(t.observations.dims(), [3, 4]);
+            assert_eq!(t.next_observations.dims(), [3, 4]);
+            assert_eq!(t.actions.dims(), [3]);
+            assert_eq!(t.rewards.dims(), [3]);
+            assert_eq!(t.dones.dims(), [3]);
+            assert_eq!(t.is_weights.dims(), [3]);
+
+            let obs_flat: Vec<f32> = t.observations.into_data().to_vec().unwrap();
+            assert_eq!(obs_flat, batch.observations);
+            let next_flat: Vec<f32> = t.next_observations.into_data().to_vec().unwrap();
+            assert_eq!(next_flat, batch.next_observations);
+            let acts: Vec<i64> = t.actions.into_data().to_vec().unwrap();
+            assert_eq!(acts, batch.actions);
+            let rews: Vec<f32> = t.rewards.into_data().to_vec().unwrap();
+            assert_eq!(rews, batch.rewards);
+            let isw: Vec<f32> = t.is_weights.into_data().to_vec().unwrap();
+            assert_eq!(isw, batch.is_weights);
+            let dones_f: Vec<f32> = t.dones.into_data().to_vec().unwrap();
+            let expected_dones: Vec<f32> =
+                batch.dones.iter().map(|&d| if d { 1.0 } else { 0.0 }).collect();
+            assert_eq!(dones_f, expected_dones);
+        }
+
+        #[test]
+        fn test_to_burn_tensors_empty_batch_does_not_panic() {
+            let batch = PrioritizedBatch {
+                observations: vec![],
+                actions: vec![],
+                rewards: vec![],
+                next_observations: vec![],
+                dones: vec![],
+                is_weights: vec![],
+                indices: vec![],
+                obs_dim: 4,
+            };
+            let device = crate::utils::cuda::default_burn_device::<B>();
+            let t = batch.to_burn_tensors::<B>(&device);
+            assert_eq!(t.observations.dims(), [0, 4]);
+            assert_eq!(t.next_observations.dims(), [0, 4]);
+            assert_eq!(t.actions.dims(), [0]);
+            assert_eq!(t.rewards.dims(), [0]);
+            assert_eq!(t.dones.dims(), [0]);
+            assert_eq!(t.is_weights.dims(), [0]);
+        }
     }
 
     #[test]
