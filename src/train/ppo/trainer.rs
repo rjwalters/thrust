@@ -6,16 +6,30 @@ use anyhow::{Result, anyhow};
 use tch::Tensor;
 
 use super::{config::PPOConfig, loss::*, stats::TrainingStats};
+use crate::train::optimizer::{BackendOptimizer, TchOptimizer};
 
 /// PPO Trainer for policy optimization
 ///
 /// Manages the training process including optimizer setup,
 /// gradient computation, and parameter updates.
+///
+/// # Optimizer abstraction (phase 2b, #92)
+///
+/// The `optimizer` field is a [`TchOptimizer`] — a thin newtype around
+/// `tch::nn::Optimizer` that implements the backend-agnostic
+/// [`BackendOptimizer`] trait. Algorithm bodies call into the trait
+/// methods (`zero_grad`, `clip_grad_norm`, `step`); the tch tensor's
+/// `loss.backward()` stays as a tensor method because backward is not
+/// part of the optimizer's responsibility on the tch path. Phase 3 (#80)
+/// generalizes this to also support a `BurnOptimizer<B, M, O>` flow when
+/// the loss math becomes backend-agnostic. The `set_optimizer` entry
+/// point still accepts a `tch::nn::Optimizer` for source-compat with
+/// existing examples; it wraps internally.
 #[derive(Debug)]
 pub struct PPOTrainer<P> {
     config: PPOConfig,
     policy: P,
-    optimizer: Option<tch::nn::Optimizer>,
+    optimizer: Option<TchOptimizer>,
     total_steps: usize,
     total_episodes: usize,
     low_entropy_count: usize,
@@ -41,10 +55,25 @@ impl<P> PPOTrainer<P> {
         })
     }
 
-    /// Set the optimizer for training
+    /// Set the optimizer for training.
+    ///
+    /// Source-compat shim: accepts a raw `tch::nn::Optimizer` and wraps
+    /// it in a [`TchOptimizer`] internally so existing examples don't
+    /// need to import the new optimizer abstraction. Callers that want
+    /// to plug in a pre-built [`TchOptimizer`] (e.g. with a specific
+    /// recorded learning rate) can use [`Self::set_backend_optimizer`].
     ///
     /// This must be called before training starts.
     pub fn set_optimizer(&mut self, optimizer: tch::nn::Optimizer) {
+        // The tch optimizer doesn't expose its construction-time learning
+        // rate; record it as 0.0 to signal "unknown". Diagnostic-only.
+        self.optimizer = Some(TchOptimizer::new(optimizer, 0.0));
+    }
+
+    /// Set the optimizer for training, taking a pre-built
+    /// [`TchOptimizer`] (so the wrapper's diagnostic learning-rate field
+    /// is populated correctly).
+    pub fn set_backend_optimizer(&mut self, optimizer: TchOptimizer) {
         self.optimizer = Some(optimizer);
     }
 
@@ -539,5 +568,73 @@ impl<P> PPOTrainer<P> {
     /// Increment episode counter
     pub fn increment_episodes(&mut self, episodes: usize) {
         self.total_episodes += episodes;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::policy::mlp::MlpPolicy;
+
+    /// DoD smoke test (issue #92): `PPOTrainer` constructs with a tch
+    /// optimizer via the phase-2b [`TchOptimizer`] wrapper.
+    ///
+    /// Confirms the optimizer field type change is source-compatible
+    /// with the existing `set_optimizer` entry point (which wraps the
+    /// raw `tch::nn::Optimizer` internally) and that the new
+    /// `set_backend_optimizer` entry point accepts a pre-built
+    /// [`TchOptimizer`] for callers that want to record the learning
+    /// rate explicitly.
+    #[test]
+    fn ppo_trainer_constructs_with_tch_optimizer() {
+        let config = PPOConfig::default();
+        let mut policy = MlpPolicy::new(4, 2, 32);
+        let tch_opt = policy.optimizer(3e-4);
+
+        let mut trainer = PPOTrainer::new(config.clone(), policy).unwrap();
+        // Source-compat path: raw tch optimizer.
+        trainer.set_optimizer(tch_opt);
+        assert!(trainer.optimizer.is_some());
+
+        // Backend-aware path: pre-built TchOptimizer (records lr).
+        let mut policy2 = MlpPolicy::new(4, 2, 32);
+        let tch_opt2 = policy2.optimizer(1e-3);
+        let backend_opt = TchOptimizer::new(tch_opt2, 1e-3);
+        let mut trainer2 = PPOTrainer::new(config, policy2).unwrap();
+        trainer2.set_backend_optimizer(backend_opt);
+        assert!(trainer2.optimizer.is_some());
+        assert!(
+            (trainer2.optimizer.as_ref().unwrap().learning_rate() - 1e-3).abs() < 1e-12,
+            "TchOptimizer should preserve the recorded learning rate"
+        );
+    }
+
+    /// DoD smoke test (issue #92): the [`BurnOptimizer`] type can be
+    /// constructed and satisfies [`BackendOptimizer`].
+    ///
+    /// Pattern A keeps the PPOTrainer struct monomorphic in its
+    /// optimizer field (tch only) for phase 2b; phase 3 (#80) is where
+    /// the trainer body becomes generic and starts holding a
+    /// `BurnOptimizer`. The DoD's intent — verify the Burn-side
+    /// optimizer abstraction is constructible — is satisfied by this
+    /// test plus the more thorough `train::optimizer::tests::
+    /// burn_optimizer_satisfies_trait` test in the optimizer module
+    /// itself.
+    #[cfg(feature = "training-burn")]
+    #[test]
+    fn burn_optimizer_constructs_for_ppo_module_shape() {
+        use burn::{
+            backend::{Autodiff, NdArray},
+            optim::AdamConfig,
+        };
+
+        use crate::{policy::mlp_burn::MlpBurnPolicy, train::optimizer::BurnOptimizer};
+
+        type B = Autodiff<NdArray<f32>>;
+        let device = Default::default();
+        let _module = MlpBurnPolicy::<B>::new(4, 2, 32, &device);
+        let inner = AdamConfig::new().init();
+        let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner, 3e-4);
+        assert!((burn_opt.learning_rate() - 3e-4).abs() < 1e-12);
     }
 }

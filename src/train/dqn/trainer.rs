@@ -14,6 +14,7 @@ use super::{config::DQNConfig, loss};
 use crate::{
     buffer::replay::{PrioritizedReplayBuffer, ReplayBuffer, sample},
     policy::QNetwork,
+    train::optimizer::{BackendOptimizer, TchOptimizer},
 };
 
 /// Per-step training statistics returned by [`DQNTrainer::train_step`].
@@ -43,11 +44,21 @@ pub struct DQNStepStats {
 /// `copy_params_from`), an Adam optimizer, and either a uniform
 /// [`ReplayBuffer`] or a [`PrioritizedReplayBuffer`] (selected by
 /// `config.prioritized_replay`). Exactly one buffer is `Some` at a time.
+///
+/// # Optimizer abstraction (phase 2b, #92)
+///
+/// The `optimizer` field is a [`TchOptimizer`] — a newtype around
+/// `tch::nn::Optimizer` that implements the backend-agnostic
+/// [`BackendOptimizer`] trait. Algorithm bodies still call the same
+/// `zero_grad` / `clip_grad_norm` / `step` verbs they did before
+/// phase 2b; the only difference is that the calls resolve via the
+/// trait, so phase 3 (#80) can slot in a Burn-backed optimizer without
+/// touching the loss math here.
 pub struct DQNTrainer {
     config: DQNConfig,
     online: QNetwork,
     target: QNetwork,
-    optimizer: tch::nn::Optimizer,
+    optimizer: TchOptimizer,
     buffer: Option<ReplayBuffer>,
     prioritized_buffer: Option<PrioritizedReplayBuffer>,
     device: Device,
@@ -81,7 +92,8 @@ impl DQNTrainer {
         target.freeze();
 
         let device = online.device();
-        let optimizer = online.optimizer(config.learning_rate);
+        let optimizer =
+            TchOptimizer::new(online.optimizer(config.learning_rate), config.learning_rate);
         let (buffer, prioritized_buffer) = if config.prioritized_replay {
             let pb = PrioritizedReplayBuffer::new(
                 config.buffer_capacity,
@@ -883,5 +895,49 @@ mod tests {
         trainer.increment_env_step();
         trainer.increment_env_step();
         assert!(trainer.maybe_sync_target().unwrap());
+    }
+
+    /// DoD smoke test (issue #92): `DQNTrainer::new` constructs through
+    /// the phase-2b [`TchOptimizer`] wrapper. The pre-2b constructor
+    /// stored a raw `tch::nn::Optimizer`; this test pins the wrapper-
+    /// based behaviour so a future refactor that drops the wrapper
+    /// trips here.
+    #[test]
+    fn dqn_trainer_records_learning_rate_in_backend_optimizer() {
+        let cfg = small_config();
+        let lr = cfg.learning_rate;
+        let trainer = DQNTrainer::new(cfg, 4, 2, 16).unwrap();
+        assert!(
+            (trainer.optimizer.learning_rate() - lr).abs() < 1e-12,
+            "DQNTrainer should propagate the config learning rate into TchOptimizer; got {}",
+            trainer.optimizer.learning_rate()
+        );
+    }
+
+    /// DoD smoke test (issue #92): the Burn-side optimizer wrapper can
+    /// be constructed against a Burn module shape compatible with a
+    /// DQN-style Q-network (single backbone, action-dim logits head).
+    /// Pattern A keeps the DQNTrainer optimizer field on the tch path
+    /// for phase 2b; phase 3 (#80) will plug the Burn optimizer in.
+    #[cfg(feature = "training-burn")]
+    #[test]
+    fn burn_optimizer_constructs_for_dqn_module_shape() {
+        use burn::{
+            backend::{Autodiff, NdArray},
+            optim::AdamConfig,
+        };
+
+        use crate::{policy::mlp_burn::MlpBurnPolicy, train::optimizer::BurnOptimizer};
+
+        type B = Autodiff<NdArray<f32>>;
+        let device = Default::default();
+        // MlpBurnPolicy already has the (obs, action_dim) shape that a
+        // Burn-side Q-network would mirror; we reuse it as a stand-in
+        // here to keep the test self-contained (phase 4 of the migration
+        // ports the actual Burn QNetwork).
+        let _module = MlpBurnPolicy::<B>::new(4, 2, 16, &device);
+        let inner = AdamConfig::new().init();
+        let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner, 1e-3);
+        assert!((burn_opt.learning_rate() - 1e-3).abs() < 1e-12);
     }
 }
