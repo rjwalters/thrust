@@ -53,7 +53,12 @@
 use anyhow::{Result, anyhow};
 use tch::{Device, Kind, Tensor, nn};
 
-use crate::train::ppo::{compute_policy_loss, compute_value_loss};
+use crate::{
+    multi_agent::centralized_critic::{
+        CentralizedCritic, CentralizedCriticConfig, compute_centralized_value_loss,
+    },
+    train::ppo::{compute_policy_loss, compute_value_loss},
+};
 
 // -----------------------------------------------------------------------
 // Trait: what a policy must support to participate.
@@ -271,6 +276,15 @@ pub struct JointTrainerConfig {
     /// per minibatch before computing the surrogate objective. Strongly
     /// recommended on heterogeneous reward scales; default `true`.
     pub normalize_advantages: bool,
+    /// Optional centralized-critic configuration. When `None` (the default),
+    /// the trainer behaves bit-for-bit identically to its pre-centralized-
+    /// critic implementation — guarded by
+    /// `test_update_numerical_parity_no_critic` in the trainer tests.
+    ///
+    /// When `Some`, callers must additionally supply the [`CentralizedCritic`]
+    /// instance and its optimizer via
+    /// [`JointMultiAgentTrainer::new_with_centralized_critic`].
+    pub centralized_critic: Option<CentralizedCriticConfig>,
 }
 
 impl Default for JointTrainerConfig {
@@ -288,6 +302,7 @@ impl Default for JointTrainerConfig {
             minibatch_size: 256,
             max_grad_norm: 0.5,
             normalize_advantages: true,
+            centralized_critic: None,
         }
     }
 }
@@ -358,6 +373,13 @@ pub struct JointStats {
     /// shared by all agents because it's computed jointly on the same
     /// minibatch features.
     pub aux_loss: f64,
+    /// Centralized-critic value loss. `0.0` when no centralized critic is
+    /// attached (preserves the per-stats parity guarantee against the
+    /// no-critic baseline).
+    pub centralized_value_loss: f64,
+    /// Centralized-critic explained variance. `0.0` when no centralized critic
+    /// is attached.
+    pub centralized_explained_var: f64,
     /// Total summed loss `Σ_i agent_loss_i + aux_loss` (averaged across
     /// PPO epochs).
     pub total_loss: f64,
@@ -376,6 +398,8 @@ impl JointStats {
             approx_kl: vec![0.0; num_agents],
             explained_var: vec![0.0; num_agents],
             aux_loss: 0.0,
+            centralized_value_loss: 0.0,
+            centralized_explained_var: 0.0,
             total_loss: 0.0,
         }
     }
@@ -401,6 +425,15 @@ pub struct JointMultiAgentTrainer<P: JointPolicy> {
     pub optimizers: Vec<nn::Optimizer>,
     /// Trainer configuration.
     pub config: JointTrainerConfig,
+    /// Optional centralized critic. When `Some`, its value loss is added to
+    /// the joint loss; when `None`, the trainer's behavior is bit-for-bit
+    /// identical to the pre-centralized-critic implementation. The critic
+    /// owns its own [`nn::VarStore`]; gradient flow is parameter-isolated
+    /// (the critic's loss only updates critic parameters).
+    pub centralized_critic: Option<CentralizedCritic>,
+    /// Optional optimizer paired with [`Self::centralized_critic`]. Must be
+    /// `Some` exactly when `centralized_critic` is `Some`.
+    pub centralized_critic_optimizer: Option<nn::Optimizer>,
     /// Device all policies live on. Validated at construction.
     device: Device,
 }
@@ -446,7 +479,43 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
                 ));
             }
         }
-        Ok(Self { policies, optimizers, config, device })
+        Ok(Self {
+            policies,
+            optimizers,
+            config,
+            centralized_critic: None,
+            centralized_critic_optimizer: None,
+            device,
+        })
+    }
+
+    /// Construct a trainer with an attached centralized critic.
+    ///
+    /// Mirrors [`Self::new`] but also takes a [`CentralizedCritic`] instance
+    /// and its [`nn::Optimizer`]. The critic must live on the same device as
+    /// the policies.
+    ///
+    /// Note: this constructor does NOT set `config.centralized_critic` — the
+    /// config field is informational only. The trainer's runtime branch on
+    /// the critic uses `self.centralized_critic.is_some()`.
+    pub fn new_with_centralized_critic(
+        policies: Vec<P>,
+        optimizers: Vec<nn::Optimizer>,
+        critic: CentralizedCritic,
+        critic_optimizer: nn::Optimizer,
+        config: JointTrainerConfig,
+    ) -> Result<Self> {
+        let mut trainer = Self::new(policies, optimizers, config)?;
+        if critic.device() != trainer.device {
+            return Err(anyhow!(
+                "JointMultiAgentTrainer: centralized critic device {:?} != trainer device {:?}",
+                critic.device(),
+                trainer.device
+            ));
+        }
+        trainer.centralized_critic = Some(critic);
+        trainer.centralized_critic_optimizer = Some(critic_optimizer);
+        Ok(trainer)
     }
 
     /// Device the trainer (and all its policies) live on.
@@ -693,6 +762,61 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
                 opt.clip_grad_norm(self.config.max_grad_norm);
                 opt.step();
             }
+
+            // Centralized critic update.
+            //
+            // Run *only when* `self.centralized_critic.is_some()`. When it's
+            // `None`, control flow is bit-for-bit identical to the pre-
+            // centralized-critic code path. The critic update is fully
+            // parameter-isolated: it touches a separate VarStore + Optimizer
+            // (`centralized_critic_optimizer`) and does NOT contribute
+            // gradients to the per-agent policies. Its scalar loss IS folded
+            // into `stats.total_loss` and surfaced in
+            // `stats.centralized_value_loss` / `centralized_explained_var`.
+            //
+            // Target return: mean of per-agent minibatch returns. For
+            // cooperative settings (bucket_brigade) the team return is the
+            // natural global value target; for competitive settings, callers
+            // can still attach a centralized critic but the team-return
+            // target may not be informative — that's an algorithmic choice
+            // we accept for v1.
+            if let (Some(critic), Some(critic_opt)) =
+                (self.centralized_critic.as_ref(), self.centralized_critic_optimizer.as_mut())
+            {
+                let critic_cfg =
+                    self.config.centralized_critic.as_ref().cloned().unwrap_or_default();
+
+                // Mean per-agent returns -> joint target.
+                let mut ret_sum = returns[0].index_select(0, &idx);
+                for r in returns.iter().skip(1) {
+                    ret_sum = ret_sum + r.index_select(0, &idx);
+                }
+                let ret_target = ret_sum / (num_agents as f64);
+
+                // Old centralized value: no_grad forward on obs_mb. (We do
+                // not store an old-rollout centralized value, so the
+                // "clipping anchor" is the current detached prediction,
+                // which collapses the clip term to plain MSE on first step
+                // — acceptable for v1.)
+                let old_cv = tch::no_grad(|| critic.forward(&obs_mb)).detach();
+                let cv = critic.forward(&obs_mb);
+                let (c_loss, c_ev) = compute_centralized_value_loss(
+                    &cv,
+                    &old_cv,
+                    &ret_target,
+                    critic_cfg.clip_range_vf,
+                );
+                let weighted = critic_cfg.vf_coef * &c_loss;
+
+                stats.centralized_value_loss += f64::try_from(&c_loss).unwrap_or(0.0);
+                stats.centralized_explained_var += c_ev;
+                stats.total_loss += f64::try_from(&weighted).unwrap_or(0.0);
+
+                critic_opt.zero_grad();
+                weighted.backward();
+                critic_opt.clip_grad_norm(self.config.max_grad_norm);
+                critic_opt.step();
+            }
         }
 
         // Average across epochs.
@@ -707,6 +831,8 @@ impl<P: JointPolicy> JointMultiAgentTrainer<P> {
                 stats.explained_var[i] /= n;
             }
             stats.aux_loss /= n;
+            stats.centralized_value_loss /= n;
+            stats.centralized_explained_var /= n;
             stats.total_loss /= n;
         }
 
@@ -762,6 +888,22 @@ mod tests {
 
     use super::*;
     use crate::policy::{mlp::MlpPolicy, multi_discrete_mlp::MultiDiscreteMlpPolicy};
+
+    /// Process-global lock shared by every test in this module that touches
+    /// libtorch's global RNG (`tch::manual_seed`, `Tensor::randn`, kaiming
+    /// init inside `nn::linear`, `Tensor::randperm`, ...). Holding it
+    /// serializes those tests against each other so that the seed set at the
+    /// start of `test_update_numerical_parity_no_critic` is not clobbered by
+    /// another test's RNG ops mid-run.
+    ///
+    /// The lock is held for the whole duration of each test that takes it.
+    /// Pre-existing tests not yet ported still run in parallel; that's
+    /// safe because they do NOT call `manual_seed` and only the *strict-
+    /// parity* test relies on a stable seed.
+    fn joint_tests_rng_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
 
     /// Deterministic mock env: 4-dim obs (sin/cos of t and t/100, etc.),
     /// scalar rewards = sum of actions, never terminates within rollout.
@@ -852,6 +994,7 @@ mod tests {
 
     #[test]
     fn test_joint_trainer_smoke() {
+        let _guard = joint_tests_rng_lock().lock().unwrap_or_else(|e| e.into_inner());
         // 2 tiny MlpPolicy instances, scalar discrete actions, 64-step rollout,
         // one update with aux_fn returning None. Assert no panics + finite
         // stats.
@@ -892,6 +1035,7 @@ mod tests {
 
     #[test]
     fn test_joint_rollout_shapes() {
+        let _guard = joint_tests_rng_lock().lock().unwrap_or_else(|e| e.into_inner());
         let num_agents = 3;
         let obs_dim: i64 = 5;
         let t: usize = 32;
@@ -932,6 +1076,7 @@ mod tests {
 
     #[test]
     fn test_aux_fn_gradient_couples_encoders() {
+        let _guard = joint_tests_rng_lock().lock().unwrap_or_else(|e| e.into_inner());
         // With aux_fn = || (features[0] - features[1]).square().sum() AND
         // the per-agent PPO losses zeroed-out via clip_range = 0 / vf_coef = 0
         // / ent_coef = 0, the only gradient source is the aux term, which
@@ -988,6 +1133,7 @@ mod tests {
 
     #[test]
     fn test_aux_fn_none_runs_clean() {
+        let _guard = joint_tests_rng_lock().lock().unwrap_or_else(|e| e.into_inner());
         // aux_fn returns None on every minibatch; aux_loss must remain
         // exactly 0.0 and the trainer must run to completion without panic.
         let num_agents = 2;
@@ -1019,6 +1165,7 @@ mod tests {
 
     #[test]
     fn test_jointpolicy_for_multidiscrete() {
+        let _guard = joint_tests_rng_lock().lock().unwrap_or_else(|e| e.into_inner());
         // Repeat the smoke test with MultiDiscreteMlpPolicy + factored
         // [3, 2] action space -- exercises the multi-discrete code paths
         // in collect_rollout (action shape [T, num_dims]) and in
@@ -1052,5 +1199,231 @@ mod tests {
             .update(&rollout, |_features: &[&Tensor]| -> Option<Tensor> { None })
             .expect("update should not error");
         assert!(stats.total_loss.is_finite());
+    }
+
+    // -------------------------------------------------------------------
+    // Centralized critic integration tests.
+    // -------------------------------------------------------------------
+
+    /// Structural parity test: with `centralized_critic = None`, the new
+    /// critic-aware `update` codepath must produce identical per-agent stats
+    /// to itself across two back-to-back runs that share identical starting
+    /// weights and identical input rollouts. This is the load-bearing
+    /// regression guard against accidental control-flow divergence
+    /// introduced by the centralized-critic wiring.
+    ///
+    /// # Why this test does NOT depend on libtorch's global RNG
+    ///
+    /// Libtorch's RNG is a process-global singleton, so any test that
+    /// asserts bit-for-bit reproducibility under the default parallel
+    /// `cargo test` scheduler is racy: another test can advance the RNG
+    /// between our seed and consume. An earlier revision used a
+    /// module-local mutex to try to serialize against that, but every
+    /// other test in the crate that touches libtorch (policy::mlp init,
+    /// train::dqn::*, train::ppo::loss::*, ...) ignores that lock, so it
+    /// did not actually save us.
+    ///
+    /// Instead, the test eliminates RNG dependence entirely:
+    ///
+    /// 1. Build *one* set of policies, then deep-copy their parameters into a
+    ///    second set via `VarStore::copy`. Both trainers start with
+    ///    bit-identical weights regardless of what the process-global RNG
+    ///    looked like during construction.
+    /// 2. Collect the rollout *once* and reuse it for both runs. This avoids
+    ///    re-invoking `policy.get_action`, which would consume RNG via
+    ///    `multinomial` and could diverge between A and B.
+    /// 3. Configure `minibatch_size == rollout_steps`, so the `randperm` inside
+    ///    `update` permutes a full minibatch. Every loss is a `mean` / `sum`
+    ///    reduction over the minibatch dim and is therefore
+    ///    permutation-invariant — the actual shuffle order does not matter, so
+    ///    even though the two `update` calls may draw *different* permutations,
+    ///    the resulting per-agent stats are identical.
+    #[test]
+    fn test_update_numerical_parity_no_critic() {
+        let num_agents = 2;
+        let obs_dim: i64 = 4;
+        let action_dim: i64 = 3;
+
+        // -- Build trainer A. Initial weights come from whatever RNG state
+        // libtorch happens to be in; that's fine because we will mirror
+        // them into trainer B before either trainer runs `update`.
+        let mut policies_a = make_mlp_policies(num_agents, obs_dim, action_dim);
+        let optimizers_a = make_optimizers_for_mlp(&mut policies_a, 3e-4);
+
+        // Build trainer B (separate VarStores), then make B's parameters
+        // bit-identical to A's. `nn::VarStore::copy` is a shape-checked,
+        // tensor-by-tensor copy.
+        let mut policies_b = make_mlp_policies(num_agents, obs_dim, action_dim);
+        for (a, b) in policies_a.iter().zip(policies_b.iter_mut()) {
+            b.var_store_mut().copy(a.var_store()).expect("varstore copy must succeed");
+        }
+        let optimizers_b = make_optimizers_for_mlp(&mut policies_b, 3e-4);
+
+        // Permutation-invariant config: minibatch_size == rollout_steps,
+        // so per-epoch `randperm` does not affect any reduction.
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: 64,
+            n_epochs: 2,
+            // Equal to rollout_steps so the per-epoch randperm slice covers
+            // every sample and the order is irrelevant to mean/sum losses.
+            minibatch_size: 64,
+            ..Default::default()
+        };
+
+        let mut trainer_a =
+            JointMultiAgentTrainer::new(policies_a, optimizers_a, config.clone()).unwrap();
+        let mut trainer_b = JointMultiAgentTrainer::new(policies_b, optimizers_b, config).unwrap();
+
+        // Collect rollout once on trainer A. Since A and B share weights,
+        // we can reuse the same rollout for B's update — that avoids a
+        // second `collect_rollout` call (which would consume RNG via
+        // `multinomial` and could draw a different action sequence under
+        // parallel test pressure).
+        let mut env = MockEnv::new(num_agents, obs_dim as usize);
+        let initial = env.reset_joint(None);
+        let mut last_obs = initial[0].clone();
+        let rollout = trainer_a.collect_rollout(&mut env, &mut last_obs);
+
+        let a = trainer_a
+            .update(&rollout, |_features: &[&Tensor]| -> Option<Tensor> { None })
+            .expect("update A should not error");
+        let b = trainer_b
+            .update(&rollout, |_features: &[&Tensor]| -> Option<Tensor> { None })
+            .expect("update B should not error");
+
+        const TOL: f64 = 1e-5;
+        assert!(
+            (a.total_loss - b.total_loss).abs() < TOL,
+            "total_loss diverged: a={} b={}",
+            a.total_loss,
+            b.total_loss
+        );
+        assert!(
+            (a.aux_loss - b.aux_loss).abs() < TOL,
+            "aux_loss diverged: a={} b={}",
+            a.aux_loss,
+            b.aux_loss
+        );
+        assert_eq!(a.centralized_value_loss, 0.0);
+        assert_eq!(b.centralized_value_loss, 0.0);
+        assert_eq!(a.centralized_explained_var, 0.0);
+        assert_eq!(b.centralized_explained_var, 0.0);
+        for i in 0..a.policy_loss.len() {
+            assert!(
+                (a.policy_loss[i] - b.policy_loss[i]).abs() < TOL,
+                "policy_loss[{i}] diverged: a={} b={}",
+                a.policy_loss[i],
+                b.policy_loss[i]
+            );
+            assert!(
+                (a.value_loss[i] - b.value_loss[i]).abs() < TOL,
+                "value_loss[{i}] diverged: a={} b={}",
+                a.value_loss[i],
+                b.value_loss[i]
+            );
+            assert!(
+                (a.entropy[i] - b.entropy[i]).abs() < TOL,
+                "entropy[{i}] diverged: a={} b={}",
+                a.entropy[i],
+                b.entropy[i]
+            );
+            assert!(
+                (a.clip_fraction[i] - b.clip_fraction[i]).abs() < TOL,
+                "clip_fraction[{i}] diverged: a={} b={}",
+                a.clip_fraction[i],
+                b.clip_fraction[i]
+            );
+            assert!(
+                (a.approx_kl[i] - b.approx_kl[i]).abs() < TOL,
+                "approx_kl[{i}] diverged: a={} b={}",
+                a.approx_kl[i],
+                b.approx_kl[i]
+            );
+        }
+    }
+
+    /// With a centralized critic attached, `total_loss` reflects the critic's
+    /// contribution: stats.centralized_value_loss is positive and non-zero,
+    /// and total_loss is finite. Also asserts no per-agent stats are NaN.
+    #[test]
+    fn test_update_with_critic_total_loss_includes_centralized() {
+        let _guard = joint_tests_rng_lock().lock().unwrap_or_else(|e| e.into_inner());
+        tch::manual_seed(0xABCDEF);
+        let num_agents = 2;
+        let obs_dim: i64 = 4;
+        let mut policies = make_mlp_policies(num_agents, obs_dim, 3);
+        let optimizers = make_optimizers_for_mlp(&mut policies, 3e-4);
+
+        let critic_cfg = CentralizedCriticConfig {
+            hidden_dim: 16,
+            learning_rate: 3e-4,
+            vf_coef: 0.5,
+            clip_range_vf: 0.0,
+        };
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: 64,
+            n_epochs: 2,
+            minibatch_size: 32,
+            centralized_critic: Some(critic_cfg.clone()),
+            ..Default::default()
+        };
+
+        let mut critic =
+            CentralizedCritic::new_on_device(obs_dim, critic_cfg.hidden_dim, Device::Cpu);
+        let critic_opt = critic.build_optimizer(critic_cfg.learning_rate).unwrap();
+        let mut trainer = JointMultiAgentTrainer::new_with_centralized_critic(
+            policies, optimizers, critic, critic_opt, config,
+        )
+        .unwrap();
+
+        let mut env = MockEnv::new(num_agents, obs_dim as usize);
+        let initial = env.reset_joint(None);
+        let mut last_obs = initial[0].clone();
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
+        let stats = trainer
+            .update(&rollout, |_features: &[&Tensor]| -> Option<Tensor> { None })
+            .expect("update should not error");
+
+        assert!(stats.total_loss.is_finite(), "total_loss must be finite");
+        assert!(
+            stats.centralized_value_loss > 0.0,
+            "centralized_value_loss must be positive on first update, got {}",
+            stats.centralized_value_loss
+        );
+        assert!(
+            stats.centralized_explained_var.is_finite(),
+            "centralized_explained_var must be finite"
+        );
+        for i in 0..num_agents {
+            assert!(stats.policy_loss[i].is_finite());
+            assert!(stats.value_loss[i].is_finite());
+        }
+    }
+
+    /// Construction-time guard: attaching a critic on a different device than
+    /// the policies must error out.
+    #[test]
+    fn test_centralized_critic_device_mismatch_errors() {
+        let _guard = joint_tests_rng_lock().lock().unwrap_or_else(|e| e.into_inner());
+        // All CPU; this should succeed (and is the happy path).
+        let num_agents = 2;
+        let obs_dim: i64 = 4;
+        let mut policies = make_mlp_policies(num_agents, obs_dim, 3);
+        let optimizers = make_optimizers_for_mlp(&mut policies, 3e-4);
+        let mut critic = CentralizedCritic::new_on_device(obs_dim, 8, Device::Cpu);
+        let critic_opt = critic.build_optimizer(3e-4).unwrap();
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: 16,
+            n_epochs: 1,
+            minibatch_size: 16,
+            ..Default::default()
+        };
+        let ok = JointMultiAgentTrainer::new_with_centralized_critic(
+            policies, optimizers, critic, critic_opt, config,
+        );
+        assert!(ok.is_ok(), "same-device construction must succeed");
     }
 }

@@ -27,6 +27,7 @@
 //! See [`crate::multi_agent::joint`] for the detailed semantics and acceptance
 //! criteria.
 
+pub mod centralized_critic;
 pub mod environment;
 pub mod joint;
 pub mod learner;
@@ -35,6 +36,9 @@ pub mod messages;
 pub mod population;
 pub mod simulator;
 
+pub use centralized_critic::{
+    CentralizedCritic, CentralizedCriticConfig, compute_centralized_value_loss,
+};
 pub use environment::{MultiAgentEnvironment, MultiAgentResult};
 pub use joint::{
     JointEnv, JointMultiAgentTrainer, JointPolicy, JointRollout, JointStats, JointStepResult,
