@@ -5,8 +5,8 @@
 #   ./scripts/remote-train.sh <example_name> [--sync-first]
 #
 # Examples:
-#   ./scripts/remote-train.sh train_cartpole_long
-#   ./scripts/remote-train.sh train_cartpole_long --sync-first
+#   ./scripts/remote-train.sh train_cartpole_modern
+#   ./scripts/remote-train.sh train_cartpole_modern --sync-first
 
 set -euo pipefail
 
@@ -16,8 +16,8 @@ REMOTE_DIR="thrust"
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <example_name> [--sync-first]"
     echo "Examples:"
-    echo "  $0 train_cartpole_long"
-    echo "  $0 train_cartpole_long --sync-first"
+    echo "  $0 train_cartpole_modern"
+    echo "  $0 train_cartpole_modern --sync-first"
     exit 1
 fi
 

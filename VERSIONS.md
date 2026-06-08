@@ -30,13 +30,13 @@ source .envrc.libtorch
 
 # Build and run
 cargo +nightly build --release --features training
-cargo +nightly run --example train_cartpole --release
+cargo +nightly run --example train_cartpole_modern --release
 ```
 
 Or use the wrapper scripts, which auto-detect ./venv:
 
 ```bash
-./scripts/train-cpu.sh train_cartpole
+./scripts/train-cpu.sh train_cartpole_modern
 ./scripts/test.sh
 ./scripts/check.sh
 ```
@@ -88,7 +88,7 @@ cargo build --release
 Use the provided helper scripts on the GPU machine:
 ```bash
 # Run training (handles all environment setup)
-./scripts/gpu-train.sh train_cartpole_long
+./scripts/gpu-train.sh train_cartpole_modern
 
 # Check status
 ./scripts/gpu-status.sh

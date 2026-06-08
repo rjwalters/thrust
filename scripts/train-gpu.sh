@@ -3,7 +3,7 @@
 
 if [ -z "$1" ]; then
     echo "Usage: $0 <example_name> [args...]"
-    echo "Example: $0 train_cartpole_best"
+    echo "Example: $0 train_cartpole_modern"
     echo "         $0 export_snake_model models/snake.pt models/snake.json"
     exit 1
 fi

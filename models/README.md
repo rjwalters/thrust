@@ -19,11 +19,11 @@ models/
 Located in `policies/cartpole/`:
 
 - **cartpole_model_best.pt** - Best performing CartPole agent (467 steps/episode average)
-  - Training: examples/games/cartpole/train_cartpole_best.rs
+  - Training: examples/games/cartpole/train_cartpole_modern.rs
   - Performance: Consistently achieves 400+ steps
 
 - **cartpole_model_long.pt** - Long-training session CartPole agent
-  - Training: examples/games/cartpole/train_cartpole_long.rs
+  - Training: examples/games/cartpole/train_cartpole_modern.rs
 
 ### Snake
 
@@ -31,11 +31,11 @@ Located in `policies/snake/`:
 
 - **snake_policy_init.pt** - Initial Snake policy checkpoint
   - Grid size: 10x10
-  - Training: examples/games/snake/train_snake_multi.rs
+  - Training: examples/games/snake/train_snake_multi_v2.rs
 
 - **snake_policy.epoch200.pt** - Snake policy after 200 epochs
   - Grid size: 10x10
-  - Training: examples/games/snake/train_snake_multi.rs
+  - Training: examples/games/snake/train_snake_multi_v2.rs
 
 - **snake_single_final.safetensors** - Final single-agent Snake policy (SafeTensors format)
   - Grid size: 10x10
@@ -53,7 +53,7 @@ Each game has dedicated training examples in `examples/games/`:
 
 ```bash
 # CartPole
-cargo run --example train_cartpole_best --release --features training
+cargo run --example train_cartpole_modern --release --features training
 
 # Snake
 cargo run --example train_snake_multi_v2 --release --features training

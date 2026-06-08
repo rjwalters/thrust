@@ -133,7 +133,7 @@ Thrust is inspired by:
 source .envrc.libtorch
 
 # Build and run a CartPole training (CPU)
-./scripts/train-cpu.sh train_cartpole
+./scripts/train-cpu.sh train_cartpole_modern
 ```
 
 > **macOS users:** do NOT `brew install pytorch`. The Homebrew bottle is
@@ -148,7 +148,7 @@ Train agents with CUDA acceleration on a Linux GPU box:
 
 ```bash
 ./scripts/setup-libtorch.sh                  # auto-detects NVIDIA GPU
-./scripts/train-gpu.sh train_cartpole_best
+./scripts/train-gpu.sh train_cartpole_modern
 ```
 
 See [docs/GPU_SETUP.md](docs/GPU_SETUP.md) for detailed GPU setup instructions and troubleshooting.

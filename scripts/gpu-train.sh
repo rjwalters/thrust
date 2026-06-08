@@ -5,13 +5,13 @@
 #   ./scripts/gpu-train.sh <example_name>
 #
 # Example:
-#   ./scripts/gpu-train.sh train_cartpole_long
+#   ./scripts/gpu-train.sh train_cartpole_modern
 
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <example_name>"
-    echo "Example: $0 train_cartpole_long"
+    echo "Example: $0 train_cartpole_modern"
     exit 1
 fi
 

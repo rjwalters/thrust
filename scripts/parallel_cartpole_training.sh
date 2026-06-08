@@ -67,13 +67,13 @@ export LD_PRELOAD="\$TORCH_LIB/libtorch_cuda.so:\$TORCH_LIB/libtorch.so"
 export RUSTFLAGS="-C link-arg=-Wl,--no-as-needed"
 
 # Modify the source file with the desired vf_coef
-sed -i.bak 's/.vf_coef([0-9.]*) /.vf_coef($vf_coef) /' examples/train_cartpole_best.rs
+sed -i.bak 's/.vf_coef([0-9.]*) /.vf_coef($vf_coef) /' examples/games/cartpole/train_cartpole_modern.rs
 
 # Run training
-cargo +nightly run --example train_cartpole_best --release 2>&1
+cargo +nightly run --example train_cartpole_modern --release 2>&1
 
 # Restore original file
-mv examples/train_cartpole_best.rs.bak examples/train_cartpole_best.rs
+mv examples/games/cartpole/train_cartpole_modern.rs.bak examples/games/cartpole/train_cartpole_modern.rs
 EOF
 
     chmod +x "$temp_script"

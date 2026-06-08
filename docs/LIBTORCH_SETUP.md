@@ -38,8 +38,8 @@ re-source on each invocation:
 ```bash
 ./scripts/test.sh                    # cargo test, with libtorch env
 ./scripts/check.sh                   # fmt + clippy + test
-./scripts/train-cpu.sh train_cartpole
-./scripts/train-gpu.sh train_cartpole   # Linux + NVIDIA only
+./scripts/train-cpu.sh train_cartpole_modern
+./scripts/train-gpu.sh train_cartpole_modern   # Linux + NVIDIA only
 ```
 
 ### What the venv path sets under the hood
@@ -98,7 +98,7 @@ export DYLD_LIBRARY_PATH="$LIBTORCH/lib:${DYLD_LIBRARY_PATH:-}"   # macOS
 cargo check --features training
 
 # Full sanity check (runs a minimal training):
-./scripts/train-cpu.sh train_cartpole
+./scripts/train-cpu.sh train_cartpole_modern
 ```
 
 ## Troubleshooting

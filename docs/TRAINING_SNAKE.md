@@ -307,14 +307,14 @@ Training Steps    Mean Reward    Notes
 
 ```bash
 # CPU training (very slow for CNN)
-cargo run --example train_snake_multi --release
+cargo run --example train_snake_multi_v2 --release
 
 # GPU training (recommended)
 # See docs/GPU_SETUP.md for GPU configuration
 ssh your-gpu-server 'cd thrust && \
   source venv/bin/activate && \
   export LIBTORCH_USE_PYTORCH=1 && \
-  cargo +nightly run --example train_snake_multi --release'
+  cargo +nightly run --example train_snake_multi_v2 --release'
 ```
 
 Expected training time:
@@ -340,7 +340,7 @@ Look for:
 
 ```bash
 # Load checkpoint for continued training
-cargo run --example train_snake_multi --release -- --load models/snake_policy.epoch100.safetensors
+cargo run --example train_snake_multi_v2 --release -- --load models/snake_policy.epoch100.safetensors
 
 # Export for WASM deployment
 cargo run --example export_snake --release
@@ -359,7 +359,7 @@ Snake training is progressing well if:
 
 - **Environment**: `src/env/snake/environment.rs`
 - **CNN Policy**: `src/policy/snake_cnn.rs`
-- **Training script**: `examples/train_snake_multi.rs`
+- **Training script**: `examples/games/snake/train_snake_multi_v2.rs`
 - **PPO implementation**: `src/train/ppo/trainer.rs`
 - **GAE implementation**: `src/buffer/rollout/gae.rs`
 
