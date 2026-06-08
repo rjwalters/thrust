@@ -135,8 +135,8 @@ impl Food {
         rng: &mut impl rand::Rng,
     ) -> Self {
         loop {
-            let x = rng.gen_range(0..width);
-            let y = rng.gen_range(0..height);
+            let x = rng.random_range(0..width);
+            let y = rng.random_range(0..height);
             let pos = Position::new(x, y);
 
             // Check if position is occupied by any snake
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_food_generation() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let snakes = vec![
             Snake::new(0, Position::new(0, 0), Direction::Right),
             Snake::new(1, Position::new(2, 2), Direction::Right),

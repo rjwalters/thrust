@@ -362,7 +362,7 @@ fn train_shared_policy(args: Args, device: Device) -> Result<()> {
             // Shuffle indices
             let mut indices: Vec<usize> = (0..buffer_size).collect();
             use rand::seq::SliceRandom;
-            indices.shuffle(&mut rand::thread_rng());
+            indices.shuffle(&mut rand::rng());
 
             // Mini-batch updates
             for chunk in indices.chunks(args.minibatch_size) {
@@ -698,7 +698,7 @@ fn train_independent_policies(args: Args, device: Device) -> Result<()> {
             for _ in 0..args.ppo_epochs {
                 let mut indices: Vec<usize> = (0..buffer_size).collect();
                 use rand::seq::SliceRandom;
-                indices.shuffle(&mut rand::thread_rng());
+                indices.shuffle(&mut rand::rng());
 
                 for chunk in indices.chunks(args.minibatch_size.min(buffer_size)) {
                     // Prepare batch

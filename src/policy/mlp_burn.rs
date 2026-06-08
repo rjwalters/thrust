@@ -99,11 +99,11 @@ impl<B: Backend> MlpBurnPolicy<B> {
             log_probs_all.into_data().to_vec().expect("log_probs to_vec");
         let values_host: Vec<f32> = value.into_data().to_vec().expect("values to_vec");
 
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let mut actions = Vec::with_capacity(batch);
         let mut log_probs = Vec::with_capacity(batch);
         for row in 0..batch {
-            let u: f32 = rng.r#gen();
+            let u: f32 = rng.random();
             let mut cum = 0.0;
             let mut chosen = (n_actions - 1) as i64;
             for j in 0..n_actions {

@@ -94,7 +94,7 @@ pub fn sample<R: Rng>(buffer: &ReplayBuffer, batch_size: usize, rng: &mut R) -> 
     let mut dones = Vec::with_capacity(batch_size);
 
     for k in 0..batch_size {
-        let idx = rng.gen_range(0..len);
+        let idx = rng.random_range(0..len);
         let obs_slice = &mut observations[k * obs_dim..(k + 1) * obs_dim];
         let next_slice = &mut next_observations[k * obs_dim..(k + 1) * obs_dim];
         let (a, r, d) = buffer.read_into(idx, obs_slice, next_slice);

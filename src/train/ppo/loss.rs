@@ -122,10 +122,10 @@ pub fn compute_entropy_loss(entropy: &Tensor) -> Tensor {
 /// Vector of vectors, where each inner vector contains indices for one
 /// minibatch
 pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<Vec<usize>> {
-    use rand::{seq::SliceRandom, thread_rng};
+    use rand::seq::SliceRandom;
 
     let mut indices: Vec<usize> = (0..buffer_size).collect();
-    indices.shuffle(&mut thread_rng());
+    indices.shuffle(&mut rand::rng());
 
     indices.chunks(batch_size).map(|chunk| chunk.to_vec()).collect()
 }

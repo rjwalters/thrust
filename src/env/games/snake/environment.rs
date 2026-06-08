@@ -16,7 +16,7 @@ use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 ///
 /// Captures every visible field of the env (grid, snake positions, food
 /// position, score, step count, done flag) but **not** the RNG used by
-/// `thread_rng()` inside `step` for food respawn. After `restore_state`, any
+/// `rand::rng()` inside `step` for food respawn. After `restore_state`, any
 /// step that triggers a food respawn will sample a different food location
 /// than the original trajectory.
 #[derive(Debug, Clone)]
@@ -76,7 +76,7 @@ pub struct SnakeEnv {
 impl SnakeEnv {
     /// Create new snake environment with specified number of agents
     pub fn new_multi(width: i32, height: i32, num_agents: usize) -> Self {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Create snakes in different corners
         let mut snakes = Vec::new();
@@ -94,7 +94,7 @@ impl SnakeEnv {
         }
 
         // Generate initial food
-        let food_pos = Position::new(rng.gen_range(0..width), rng.gen_range(0..height));
+        let food_pos = Position::new(rng.random_range(0..width), rng.random_range(0..height));
 
         Self {
             width,
@@ -125,7 +125,7 @@ impl SnakeEnv {
 
     /// Reset environment to initial state
     pub fn reset(&mut self) {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         // Reset all snakes
         self.snakes.clear();
@@ -143,7 +143,7 @@ impl SnakeEnv {
         }
 
         // Generate new food
-        self.food = Position::new(rng.gen_range(0..self.width), rng.gen_range(0..self.height));
+        self.food = Position::new(rng.random_range(0..self.width), rng.random_range(0..self.height));
 
         self.episode += 1;
         self.steps = 0;
@@ -226,10 +226,10 @@ impl SnakeEnv {
                 self.snakes[i].grow();
 
                 // Generate new food
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 loop {
-                    let x = rng.gen_range(0..self.width);
-                    let y = rng.gen_range(0..self.height);
+                    let x = rng.random_range(0..self.width);
+                    let y = rng.random_range(0..self.height);
                     let new_food = Position::new(x, y);
 
                     // Make sure food doesn't spawn on any snake
@@ -362,10 +362,10 @@ impl SnakeEnv {
                 self.snakes[i].grow();
 
                 // Generate new food
-                let mut rng = rand::thread_rng();
+                let mut rng = rand::rng();
                 loop {
-                    let x = rng.gen_range(0..self.width);
-                    let y = rng.gen_range(0..self.height);
+                    let x = rng.random_range(0..self.width);
+                    let y = rng.random_range(0..self.height);
                     let new_food = Position::new(x, y);
 
                     // Make sure food doesn't spawn on any snake

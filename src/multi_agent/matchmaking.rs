@@ -3,6 +3,7 @@
 //! Determines which agents play together in each game instance.
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
+// NB: `SeedableRng` is required to bring `StdRng::from_os_rng` into scope.
 
 use super::population::{AgentId, Population};
 
@@ -74,7 +75,7 @@ impl RandomMatchmaker {
     /// constructing directly — the strategy enum is the documented
     /// configuration surface.
     pub fn new() -> Self {
-        Self { rng: StdRng::from_entropy() }
+        Self { rng: StdRng::from_os_rng() }
     }
 }
 
@@ -91,7 +92,7 @@ impl Matchmaker for RandomMatchmaker {
         for _ in 0..num_games {
             let mut game_agents = Vec::with_capacity(agents_per_game);
             for _ in 0..agents_per_game {
-                let agent_id = self.rng.gen_range(0..pop_size);
+                let agent_id = self.rng.random_range(0..pop_size);
                 game_agents.push(agent_id);
             }
             matches.push(game_agents);
@@ -157,7 +158,7 @@ impl FitnessBasedMatchmaker {
     /// Prefer [`MatchmakingStrategy::FitnessBased`] +
     /// `create_matchmaker()` over constructing directly.
     pub fn new(window_size: usize) -> Self {
-        Self { window_size, rng: StdRng::from_entropy() }
+        Self { window_size, rng: StdRng::from_os_rng() }
     }
 }
 
@@ -180,7 +181,7 @@ impl Matchmaker for FitnessBasedMatchmaker {
             // Pick a base rank within valid range
             let max_base = pop_size.saturating_sub(self.window_size);
             let base_rank = if max_base > 0 {
-                self.rng.gen_range(0..max_base)
+                self.rng.random_range(0..max_base)
             } else {
                 0
             };
@@ -190,7 +191,7 @@ impl Matchmaker for FitnessBasedMatchmaker {
             let window_end = (base_rank + self.window_size).min(pop_size);
 
             for _ in 0..agents_per_game {
-                let idx = self.rng.gen_range(base_rank..window_end);
+                let idx = self.rng.random_range(base_rank..window_end);
                 game_agents.push(ranked[idx].0);
             }
             matches.push(game_agents);
@@ -212,7 +213,7 @@ impl SelfPlayMatchmaker {
     /// [`MatchmakingStrategy::SelfPlay`] + `create_matchmaker()` over
     /// constructing directly.
     pub fn new() -> Self {
-        Self { rng: StdRng::from_entropy() }
+        Self { rng: StdRng::from_os_rng() }
     }
 }
 
@@ -228,7 +229,7 @@ impl Matchmaker for SelfPlayMatchmaker {
 
         for _ in 0..num_games {
             // Pick one agent for this game
-            let agent_id = self.rng.gen_range(0..pop_size);
+            let agent_id = self.rng.random_range(0..pop_size);
 
             // All players in this game are the same agent
             let game_agents = vec![agent_id; agents_per_game];

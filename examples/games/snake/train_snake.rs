@@ -268,7 +268,7 @@ fn main() -> Result<()> {
             // Shuffle indices for minibatch sampling
             let mut indices: Vec<usize> = (0..batch_size).collect();
             use rand::seq::SliceRandom;
-            indices.shuffle(&mut rand::thread_rng());
+            indices.shuffle(&mut rand::rng());
 
             for mb in 0..num_minibatches {
                 let mb_indices = &indices[mb * MINIBATCH_SIZE..(mb + 1) * MINIBATCH_SIZE];

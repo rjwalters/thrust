@@ -261,8 +261,8 @@ impl DQNTrainer {
         let eps = self.config.epsilon_at(self.total_env_steps);
         self.last_epsilon = eps;
         let n_actions = self.online.n_actions();
-        if rng.r#gen::<f64>() < eps {
-            rng.gen_range(0..n_actions)
+        if rng.random::<f64>() < eps {
+            rng.random_range(0..n_actions)
         } else {
             self.greedy_action(obs)
         }

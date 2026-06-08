@@ -72,7 +72,7 @@ impl Parameter {
     /// Sample a random value from this parameter's range
     pub fn sample(&self) -> ParameterValue {
         use rand::Rng;
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         match self {
             Parameter::Continuous { min, max, log_scale, .. } => {
@@ -80,14 +80,14 @@ impl Parameter {
                     // Sample in log space
                     let log_min = min.ln();
                     let log_max = max.ln();
-                    (rng.r#gen::<f64>() * (log_max - log_min) + log_min).exp()
+                    (rng.random::<f64>() * (log_max - log_min) + log_min).exp()
                 } else {
-                    rng.r#gen::<f64>() * (max - min) + min
+                    rng.random::<f64>() * (max - min) + min
                 };
                 ParameterValue::Continuous(value)
             }
             Parameter::Discrete { values, .. } => {
-                let idx = rng.gen_range(0..values.len());
+                let idx = rng.random_range(0..values.len());
                 ParameterValue::Discrete(values[idx])
             }
         }
