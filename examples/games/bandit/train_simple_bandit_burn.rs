@@ -19,14 +19,16 @@
 //! `docs/BURN_MIGRATION_PHASE1_REPORT.md`.
 
 use anyhow::Result;
-
-use burn::backend::{Autodiff, NdArray};
-use burn::module::AutodiffModule;
-use burn::optim::{AdamConfig, GradientsParams, Optimizer};
-use burn::tensor::{Int, Tensor, TensorData};
-
-use thrust_rl::env::{Environment, pool::EnvPool, simple_bandit::SimpleBandit};
-use thrust_rl::policy::mlp_burn::MlpBurnPolicy;
+use burn::{
+    backend::{Autodiff, NdArray},
+    module::AutodiffModule,
+    optim::{AdamConfig, GradientsParams, Optimizer},
+    tensor::{Int, Tensor, TensorData},
+};
+use thrust_rl::{
+    env::{Environment, pool::EnvPool, simple_bandit::SimpleBandit},
+    policy::mlp_burn::MlpBurnPolicy,
+};
 
 // Pick the concrete backend stack up-front so the rest of the file is
 // monomorphic — keeps the scout simple. CPU only; GPU backends (wgpu, cuda)
@@ -97,13 +99,10 @@ fn main() -> Result<()> {
         // ---- rollout (no gradients needed) --------------------------------
         for _step in 0..NUM_STEPS {
             let obs_flat: Vec<f32> = observations.iter().flatten().copied().collect();
-            let obs_t: Tensor<Backend, 2> = Tensor::from_data(
-                TensorData::new(obs_flat.clone(), [NUM_ENVS, obs_dim]),
-                &device,
-            );
+            let obs_t: Tensor<Backend, 2> =
+                Tensor::from_data(TensorData::new(obs_flat.clone(), [NUM_ENVS, obs_dim]), &device);
 
-            let (actions, log_probs, values) =
-                policy.as_ref().unwrap().get_action_host(obs_t);
+            let (actions, log_probs, values) = policy.as_ref().unwrap().get_action_host(obs_t);
 
             let results = env_pool.step(&actions);
 
@@ -127,20 +126,16 @@ fn main() -> Result<()> {
         // ---- advantages (gamma=0, gae_lambda=0 → A = r - V) ---------------
         // SimpleBandit is a contextual bandit; no temporal credit
         // assignment needed.
-        let advantages: Vec<f32> = buf_rewards
-            .iter()
-            .zip(buf_values.iter())
-            .map(|(r, v)| r - v)
-            .collect();
+        let advantages: Vec<f32> =
+            buf_rewards.iter().zip(buf_values.iter()).map(|(r, v)| r - v).collect();
         let returns: Vec<f32> = buf_rewards.clone();
 
         // Normalize advantages (standard PPO trick).
         let mean = advantages.iter().sum::<f32>() / advantages.len() as f32;
-        let var = advantages.iter().map(|a| (a - mean).powi(2)).sum::<f32>()
-            / advantages.len() as f32;
+        let var =
+            advantages.iter().map(|a| (a - mean).powi(2)).sum::<f32>() / advantages.len() as f32;
         let std = (var + 1e-8).sqrt();
-        let advantages: Vec<f32> =
-            advantages.iter().map(|a| (a - mean) / std).collect();
+        let advantages: Vec<f32> = advantages.iter().map(|a| (a - mean) / std).collect();
 
         // ---- one PPO update (N_EPOCHS full-batch) -------------------------
         // FRICTION: no minibatching here — the bandit dataset is so small
@@ -149,10 +144,8 @@ fn main() -> Result<()> {
         let batch = advantages.len();
         let obs_b: Tensor<Backend, 2> =
             Tensor::from_data(TensorData::new(buf_obs.clone(), [batch, obs_dim]), &device);
-        let actions_b: Tensor<Backend, 1, Int> = Tensor::from_data(
-            TensorData::new(buf_actions.clone(), [batch]),
-            &device,
-        );
+        let actions_b: Tensor<Backend, 1, Int> =
+            Tensor::from_data(TensorData::new(buf_actions.clone(), [batch]), &device);
         let old_log_probs_b: Tensor<Backend, 1> =
             Tensor::from_data(TensorData::new(buf_log_probs.clone(), [batch]), &device);
         let adv_b: Tensor<Backend, 1> =
@@ -170,8 +163,7 @@ fn main() -> Result<()> {
             // Surrogate clipped PPO loss.
             let ratio = (new_log_probs - old_log_probs_b.clone()).exp();
             let unclipped = ratio.clone() * adv_b.clone();
-            let clipped =
-                ratio.clamp(1.0 - CLIP_RANGE, 1.0 + CLIP_RANGE) * adv_b.clone();
+            let clipped = ratio.clamp(1.0 - CLIP_RANGE, 1.0 + CLIP_RANGE) * adv_b.clone();
             let policy_loss = -unclipped.min_pair(clipped).mean();
 
             // Value MSE.
@@ -181,8 +173,7 @@ fn main() -> Result<()> {
             // Entropy bonus (encourages exploration).
             let entropy_mean = entropy.mean();
 
-            let loss = policy_loss
-                + value_loss.mul_scalar(VF_COEF)
+            let loss = policy_loss + value_loss.mul_scalar(VF_COEF)
                 - entropy_mean.clone().mul_scalar(ENT_COEF);
 
             last_loss = loss.clone().into_scalar();
@@ -190,10 +181,9 @@ fn main() -> Result<()> {
 
             // FRICTION: gradient extraction is two-step:
             //   1. loss.backward() -> B::Gradients (one tensor per param)
-            //   2. GradientsParams::from_grads(grads, &module) ties each
-            //      gradient back to its parameter id by walking the module
-            //      tree. Then optim.step consumes the module + grads
-            //      together. The "from_grads + step" pair has no direct
+            //   2. GradientsParams::from_grads(grads, &module) ties each gradient back to
+            //      its parameter id by walking the module tree. Then optim.step consumes
+            //      the module + grads together. The "from_grads + step" pair has no direct
             //      analog in tch's `optim.backward_step(&loss)`.
             let grads = loss.backward();
             let grads = GradientsParams::from_grads(grads, &p);
@@ -228,18 +218,11 @@ fn main() -> Result<()> {
 /// Evaluate the trained policy on the two SimpleBandit contexts (0.0, 1.0)
 /// and log the argmax action probabilities. Uses the inner (non-autodiff)
 /// backend via `Module::valid()`.
-fn eval_policy(
-    policy: &MlpBurnPolicy<InnerBackend>,
-    device: &burn::tensor::Device<InnerBackend>,
-) {
+fn eval_policy(policy: &MlpBurnPolicy<InnerBackend>, device: &burn::tensor::Device<InnerBackend>) {
     let obs: Tensor<InnerBackend, 2> =
         Tensor::from_data(TensorData::new(vec![0.0_f32, 1.0_f32], [2, 1]), device);
     let (logits, _) = policy.forward(obs);
-    let probs_data: Vec<f32> = logits
-        .clone()
-        .into_data()
-        .to_vec()
-        .expect("eval logits to_vec");
+    let probs_data: Vec<f32> = logits.clone().into_data().to_vec().expect("eval logits to_vec");
     tracing::info!(
         "Trained logits (state=0): {:?}  (state=1): {:?}",
         &probs_data[0..2],

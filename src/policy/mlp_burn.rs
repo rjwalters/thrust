@@ -19,9 +19,11 @@
 //! variants, etc.). This mirrors `geode-fem`'s pattern. The bandit trainer
 //! picks `NdArray<f32>` wrapped in `Autodiff` at the top level.
 
-use burn::module::Module;
-use burn::nn::{Linear, LinearConfig};
-use burn::tensor::{Int, Tensor, activation, backend::Backend};
+use burn::{
+    module::Module,
+    nn::{Linear, LinearConfig},
+    tensor::{Int, Tensor, activation, backend::Backend},
+};
 
 /// Two-layer MLP actor-critic for **discrete** action spaces, ported to Burn.
 ///
@@ -131,10 +133,8 @@ impl<B: Backend> MlpBurnPolicy<B> {
         let log_probs = activation::log_softmax(logits, 1);
         let probs = log_probs.clone().exp();
 
-        let action_log_probs = log_probs
-            .clone()
-            .gather(1, actions.unsqueeze_dim::<2>(1))
-            .squeeze_dim::<1>(1);
+        let action_log_probs =
+            log_probs.clone().gather(1, actions.unsqueeze_dim::<2>(1)).squeeze_dim::<1>(1);
         // H = -Σ p * log p over the action axis.
         let entropy = -(probs * log_probs).sum_dim(1).squeeze_dim::<1>(1);
 
