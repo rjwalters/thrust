@@ -1,170 +1,290 @@
-# Release Manager
+# Release Manager (thrust-rl)
 
-You are preparing a release of **Loom** from the {{workspace}} repository.
+You are preparing a release of **thrust-rl** from the {{workspace}}
+repository for upload to crates.io.
 
-## Overview
+This skill guides a careful, interactive release process. Every release
+must:
 
-This skill guides a careful, interactive release process. Every release must:
-1. Verify CI is green on main
-2. Analyze what changed since the last release
-3. Help the user decide the correct semver bump
-4. Draft and refine the CHANGELOG entry
-5. Update version across all 7 version-bearing files
-6. Commit, tag, and (with confirmation) push
-7. Create a GitHub Release to trigger the build workflow
+1. Verify CI is green on `main`.
+2. Analyze what changed since the last release tag.
+3. Help the user pick the correct semver bump
+   (pre-1.0: breaking changes go to MINOR, not MAJOR).
+4. Draft and refine the `CHANGELOG.md` entry.
+5. Update the single version-bearing file: the root `Cargo.toml`.
+6. Validate via `cargo publish --dry-run` and `cargo package --list`.
+7. Commit, tag, and (with confirmation) push.
+8. Create a GitHub Release.
+9. Hand off to the maintainer for the actual `cargo publish`.
 
-**Do not rush. Each phase requires user confirmation before proceeding.**
+**Do not rush. Each phase requires user confirmation before
+proceeding.**
 
-## Phase 1: Pre-flight Checks
+The canonical written procedure is [`docs/RELEASING.md`](../../../docs/RELEASING.md).
+This skill walks the user through it interactively.
 
-Before starting, verify the release is safe to cut:
+## Phase 1: Pre-flight checks
 
 ```bash
-# Check CI status on main
+# CI status on main
 gh run list --branch main --limit 5 --json name,conclusion --jq '.[] | "\(.name): \(.conclusion)"'
 
-# Check for open PRs that might need to land first
+# Open PRs that might need to land first
 gh pr list --state open --json number,title --jq '.[] | "#\(.number) \(.title)"'
 
-# Check for uncommitted changes
+# Working tree
 git status
+git branch --show-current
 ```
 
-Present findings to the user. If CI is failing, stop and fix first. If there are open PRs, ask if they should land before the release.
+Present findings. If CI is failing, stop and fix first. If there are
+open PRs the user thinks should land in this release, stop and let them
+land.
 
-## Phase 2: Gather Changes
+## Phase 2: Gather changes
 
 ```bash
-# Find the last release tag
+# Last release tag (empty if this is the first-ever release)
 git tag --sort=-v:refname | head -1
 
-# Show current version
-./scripts/version.sh
+# Current declared version in Cargo.toml
+grep -m1 '^version' Cargo.toml
 
-# List all commits since that tag
-git log <last-tag>..HEAD --oneline
-
-# Show the full diff stats
-git diff <last-tag>..HEAD --stat
+# Commits since that tag (or all commits if no tag)
+LAST_TAG=$(git tag --sort=-v:refname | head -1)
+if [ -n "$LAST_TAG" ]; then
+    git log "$LAST_TAG"..HEAD --oneline
+    git diff "$LAST_TAG"..HEAD --stat
+else
+    git log --oneline
+fi
 ```
 
-Present the user with:
-- **Last release**: tag name, date, and version
-- **Commits since release**: count and full list
-- **Change summary**: categorized by conventional commit prefix (feat, fix, refactor, docs, test, chore)
-- **Files changed**: high-level summary of which subsystems were touched
+Present:
+- Last release tag, date, version (or "first release" if none).
+- Commit count since the last release.
+- Categorized commit summary by conventional-commit prefix
+  (`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, etc.) when the
+  repo uses them, otherwise by subsystem (algorithms, environments,
+  multi-agent, WASM, docs, infra).
 
-If there are zero commits since the last tag, stop and tell the user there's nothing to release.
+If there are zero commits since the last tag, stop and tell the user
+there is nothing to release.
 
-## Phase 3: Semver Decision
+## Phase 3: Semver decision (pre-1.0)
 
-Present a semver analysis. Reference https://semver.org:
+Until `1.0.0`, **breaking changes bump MINOR**, not MAJOR. The MAJOR
+slot is reserved for the first stable release.
 
-### Breaking Changes (MAJOR bump)
+Present an analysis. Reference https://semver.org and the pre-1.0
+convention documented in `docs/RELEASING.md`.
+
+### Breaking changes (MINOR bump while pre-1.0)
 Scan for:
-- Removed or renamed public API functions/types
-- Changed ForgeClient protocol methods
-- Changed CLI command flags/behavior
-- Changed MCP tool interfaces
-- Removed or renamed daemon commands
-- Changed config file format
+- Removed or renamed public API items
+  (functions, types, traits, methods, public fields).
+- Changed function signatures (return type, parameter type).
+- Changed default behavior of `Environment::step`, `reset`,
+  `clone_state` / `restore_state`, or `MultiAgentEnvironment`.
+- Changed `PolicyLearner` / `JointMultiAgentTrainer` constructor
+  or `train_step` shape.
+- Changes to the `ExportedModel` JSON format consumed by WASM
+  inference (this would break already-deployed browser demos).
+- Changes to `Cargo.toml` features (added/removed feature names,
+  changed feature contents).
+- Bumping the minimum supported `rustc` version (MSRV).
 
-### New Capabilities (MINOR bump)
-- New forge support (e.g., Gitea, GitLab)
-- New CLI commands (`loom-forge`, `loom-auto-merge`)
-- New agent roles or orchestration features
-- New MCP tools
-- New configuration options
+### Additive new capabilities (MINOR bump too, pre-1.0)
+- New environments, new policy heads, new training algorithms.
+- New CLI examples or scripts.
+- New optional dependencies / features.
+- New optional configuration fields.
 
-### Bug Fixes / Internal (PATCH bump)
-- Bug fixes that don't change API
-- Performance improvements
-- Internal refactoring
-- Documentation updates
-- Dependency bumps
+### Bug fixes / internal / docs (PATCH bump)
+- Bug fixes that don't change public API shape.
+- Performance improvements.
+- Internal refactoring.
+- Documentation-only updates.
+- Dependency bumps that don't break consumers.
 
-Present your recommendation and **ask the user to confirm or override**. Do not proceed until confirmed.
+Present your recommendation and **ask the user to confirm or
+override.** Do not proceed until confirmed.
 
-## Phase 4: Draft CHANGELOG
+## Phase 4: Draft CHANGELOG entry
 
-Draft a CHANGELOG entry following the existing format in `CHANGELOG.md`. Study existing entries to match style.
+Study the existing entries in `CHANGELOG.md` for style. The first
+release (`0.1.0`) uses these subsections, in order, omitting empty
+ones:
+
+- `### Added`
+  - subgroup `#### Algorithms`
+  - `#### Environments`
+  - `#### Multi-agent infrastructure`
+  - `#### WASM and browser demos`
+  - `#### Hyperparameter optimization`
+  - `#### Documentation`
+  - `#### Tooling`
+- `### Changed`
+- `### Fixed`
+- `### Removed`
+- `### Deprecated`
+- `### Security`
+- `### Known limitations`
 
 Key formatting rules:
-- Use `## [X.Y.Z] - YYYY-MM-DD` header with today's date
-- Start with a `### Summary` paragraph describing the release theme
-- Group changes under `### Added`, `### Changed`, `### Fixed`, `### Removed`, `### Renamed` as appropriate
-- Reference issue numbers with `(#NNN)` format
-- Keep descriptions concise but informative
-- Omit empty sections
+- Use `## [X.Y.Z] - YYYY-MM-DD` header with today's date in UTC.
+- Reference PR/issue numbers with `(#NNN)` format.
+- Keep descriptions short but specific (one line per change is fine).
+- Always update the link references at the bottom:
+  ```text
+  [Unreleased]: https://github.com/rjwalters/thrust/compare/vX.Y.Z...HEAD
+  [X.Y.Z]: https://github.com/rjwalters/thrust/releases/tag/vX.Y.Z
+  ```
 
-Present the draft and ask for revisions. Iterate until approved.
+Present the draft. Iterate with the user until approved.
 
-## Phase 5: Apply Changes
+## Phase 5: Apply changes
 
-Once the user approves:
+Once approved:
 
-1. **Update CHANGELOG.md**: Insert the new entry below `## [Unreleased]`
-2. **Bump version**: Run `./scripts/version.sh bump <level> --tag`
-   - This updates all 5 files: `package.json`, `mcp-loom/package.json`, 2 `Cargo.toml` files (`loom-daemon`, `loom-api`), `CLAUDE.md`
-   - Plus `Cargo.lock`
-   - Creates the commit and tag automatically
-3. **Verify**: `./scripts/version.sh check`
+1. **Update `CHANGELOG.md`**:
+   - Move `[Unreleased]` content into a new `[X.Y.Z]` section.
+   - Add the new draft content.
+   - Update the link references at the bottom.
 
-Note: The version bump script creates the commit, so commit the CHANGELOG first:
+2. **Bump `Cargo.toml`** (single version-bearing file):
+   - Edit `[package].version = "X.Y.Z"`.
+
+3. **Refresh `Cargo.lock`**:
+   ```bash
+   cargo check --no-default-features
+   ```
+   (`Cargo.lock` is gitignored in this repo, so this step is just
+   sanity to make sure nothing broke.)
+
+4. **Validate the manifest**:
+   ```bash
+   cargo publish --dry-run --no-default-features --allow-dirty
+   cargo package --list
+   ```
+
+   For the full check (requires libtorch on PATH):
+   ```bash
+   LIBTORCH_USE_PYTORCH=1 cargo publish --dry-run --allow-dirty
+   ```
+
+   If `cargo publish --dry-run` reports any errors (path-only
+   dependencies without versions, missing required metadata,
+   tarball-size limit exceeded, etc.), stop and fix.
+
+5. **Inspect tarball contents**:
+   - Check `cargo package --list` output. Confirm no model
+     checkpoints (`*.pt`, `*.safetensors`), no `web/`, no
+     `web-old/`, no `envs/bucket-brigade/`, no `scripts/`,
+     no `.loom/`, no `.claude/`, no `.github/`.
+   - If something unwanted slipped in, update the `exclude`
+     field in `Cargo.toml`'s `[package]` section.
+
+Show the user the result and ask for confirmation before committing.
+
+## Phase 6: Commit, tag, push
+
 ```bash
+# CHANGELOG first
 git add CHANGELOG.md
-git commit -m "docs: add X.Y.Z changelog entry"
-./scripts/version.sh bump <level> --tag
-# Move tag to include both commits
-git tag -f vX.Y.Z
+git commit -m "docs: prepare CHANGELOG for vX.Y.Z"
+
+# Then Cargo.toml
+git add Cargo.toml
+git commit -m "chore: bump version to vX.Y.Z"
+
+# Push to main and wait for CI
+git push origin main
 ```
 
-Show the user the result and ask for final confirmation.
+Wait for the GitHub Actions runs on the head of `main` to go green.
 
-## Phase 6: Push and Release
+```bash
+gh run watch  # or: gh run list --branch main --limit 1
+```
 
-After final confirmation:
+Then tag:
 
-1. **Push commits and tag**:
-   ```bash
-   git push origin main --tags
-   ```
+```bash
+git tag -a vX.Y.Z -m "thrust-rl vX.Y.Z"
+git push origin vX.Y.Z
+```
 
-2. **Create GitHub Release** (this triggers the build workflow):
-   ```bash
-   gh release create vX.Y.Z --title "vX.Y.Z" --notes-file - <<< "$(changelog excerpt)"
-   ```
-   Use the CHANGELOG entry as the release notes.
+## Phase 7: Create the GitHub Release
 
-3. **Verify build triggered**:
-   ```bash
-   gh run list --workflow=release.yml --limit 1
-   ```
+```bash
+gh release create vX.Y.Z \
+    --title "vX.Y.Z" \
+    --notes-file <(awk '/^## \[X\.Y\.Z\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
+```
 
-**Do not push or create the release without explicit user confirmation.**
+(Replace `X\.Y\.Z` in the awk pattern with the literal version, e.g.
+`/^## \[0\.1\.0\]/`. Don't forget the backslashes --- awk treats `.`
+as a metachar.)
 
-## Phase 7: Post-Release Summary
+No binary artifacts are attached today. The release notes are the
+deliverable; consumers `cargo install` if they want the code.
 
-Present a summary:
+## Phase 8: Hand off to the maintainer for `cargo publish`
+
+**Do not run `cargo publish` from an agent.** That requires a
+crates.io API token, which should not be in agent reach.
+
+Tell the user:
+
+> The repo is now in a publish-ready state. To finish the release,
+> from a clean checkout of `vX.Y.Z`:
+>
+> ```bash
+> git checkout vX.Y.Z
+> LIBTORCH_USE_PYTORCH=1 cargo publish
+> # or: cargo publish --no-verify
+> ```
+>
+> Then verify:
+> - `https://crates.io/crates/thrust-rl` shows version `X.Y.Z`.
+> - `https://docs.rs/thrust-rl/X.Y.Z/` is building (or has built).
+
+## Phase 9: Post-release summary
+
+Present:
 
 ```
 ## Release Complete
 
 - Version: vX.Y.Z
 - Commit: <sha>
-- Tag: vX.Y.Z
+- Tag: vX.Y.Z (pushed)
 - GitHub Release: created
-- Build workflow: [triggered / status]
-- CHANGELOG: updated with N items
-- Version files: 5 files + Cargo.lock updated
+- CHANGELOG entry: N items
+- Tarball size: <size> (cargo package --list count)
+- Pending maintainer action: cargo publish from main at vX.Y.Z
 ```
 
-## Important Notes
+## Important notes
 
-- **Version script**: `scripts/version.sh` is the single source of truth for version management. Never manually edit version numbers.
-- **5 version-bearing files**: `package.json`, `mcp-loom/package.json`, `loom-daemon/Cargo.toml`, `loom-api/Cargo.toml`, `CLAUDE.md`
-- **Release workflow trigger**: The build workflow (`.github/workflows/release.yml`) triggers on GitHub Release creation (`release: types: [created]`), NOT on tag push. You must create a GitHub Release via `gh release create`.
-- **Conventional commits**: This project uses conventional commit prefixes (`feat:`, `fix:`, `chore:`, etc.).
-- **Build output**: The release workflow builds `loom-daemon` binaries (Apple Silicon + Intel) and attaches them to the GitHub Release.
-- **CLAUDE.md update**: The version script updates the `**Loom Version**` line in CLAUDE.md automatically.
-- **Branch protection**: Direct pushes to main will show a ruleset bypass warning — this is expected for release commits.
+- **Single version-bearing file.** The root `Cargo.toml` is the only
+  place to edit the version. There is no `scripts/version.sh`.
+- **`Cargo.lock` is gitignored** in this repo, so version-bump commits
+  contain only `Cargo.toml` changes. That's intentional.
+- **Pre-1.0 semver.** Breaking changes go to MINOR
+  (`0.1.x -> 0.2.0`), not MAJOR. MAJOR is reserved for `1.0.0`.
+- **`env-bucket-brigade` is intentionally disabled in v0.1.0** because
+  the upstream `bucket-brigade-core` crate is path-only and not on
+  crates.io. This will be revisited in a v0.2.x release; see the
+  comment block above `[dependencies]` in `Cargo.toml`.
+- **`tch` (PyTorch C++) is the heavy default dependency.** Builds
+  require either `LIBTORCH=/path/to/libtorch` or
+  `LIBTORCH_USE_PYTORCH=1` with a compatible PyTorch install. Without
+  libtorch you can still validate the manifest with
+  `cargo publish --dry-run --no-default-features`.
+- **`cargo publish` is a maintainer-only step.** Never run it from
+  an autonomous agent.
+- **Branch protection on `main`.** Direct pushes to `main` (for the
+  CHANGELOG / version-bump commits) will show a ruleset-bypass
+  warning. This is expected for release commits.
