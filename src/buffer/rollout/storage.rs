@@ -365,11 +365,11 @@ impl RolloutBatch {
     /// the dimensions reported by [`Self::obs_shape`].
     ///
     /// # Notes
-    /// - This helper is intentionally tch-only; the planned Burn
-    ///   migration will add a sibling `to_burn_tensors` method.
-    /// - For empty batches the observation tensor is still shaped
-    ///   `[0, 0]` to match the existing inline behavior, which simply
-    ///   produced a zero-element tensor.
+    /// - This helper is intentionally tch-only; the planned Burn migration will
+    ///   add a sibling `to_burn_tensors` method.
+    /// - For empty batches the observation tensor is still shaped `[0, 0]` to
+    ///   match the existing inline behavior, which simply produced a
+    ///   zero-element tensor.
     pub fn to_tch_tensors(&self, device: tch::Device) -> RolloutTchTensors {
         let (batch_size, obs_dim) = self.obs_shape();
 
@@ -382,14 +382,7 @@ impl RolloutBatch {
         let advantages = tch::Tensor::from_slice(&self.advantages).to_device(device);
         let returns = tch::Tensor::from_slice(&self.returns).to_device(device);
 
-        RolloutTchTensors {
-            observations,
-            actions,
-            old_log_probs,
-            old_values,
-            advantages,
-            returns,
-        }
+        RolloutTchTensors { observations, actions, old_log_probs, old_values, advantages, returns }
     }
 }
 
@@ -550,8 +543,7 @@ mod tests {
         assert_eq!(t.returns.size(), vec![3]);
 
         // Contents (flatten obs to compare to the source 1-D vec)
-        let obs_flat: Vec<f32> =
-            Vec::try_from(t.observations.flatten(0, -1)).unwrap();
+        let obs_flat: Vec<f32> = Vec::try_from(t.observations.flatten(0, -1)).unwrap();
         assert_eq!(obs_flat, batch.observations);
 
         let acts: Vec<i64> = Vec::try_from(t.actions).unwrap();
