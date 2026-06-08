@@ -7,6 +7,9 @@
 //! - Pong: Single-player Pong vs rule-based opponent
 //! - ContinuousLqr: 1D LQR placeholder env that exercises the continuous
 //!   (`Vec<f32>`) action surface added in issue #61
+//! - BucketBrigade (feature `env-bucket-brigade`): Slepian-Wolf MARL research
+//!   env wrapping `bucket_brigade_core` with the versioned scenario registry
+//!   from bucket-brigade PR #379
 
 pub mod cartpole;
 pub mod continuous_lqr;
