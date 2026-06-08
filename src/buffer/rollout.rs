@@ -23,7 +23,11 @@ pub use sampling::{
     Minibatch, MinibatchIterator, generate_minibatch_indices, sample_minibatch, shuffle_indices,
     train_val_split,
 };
-pub use storage::{RolloutBatch, RolloutBuffer, RolloutTchTensors};
+pub use storage::{RolloutBatch, RolloutBuffer};
+#[cfg(feature = "training-burn")]
+pub use storage::RolloutBurnTensors;
+#[cfg(feature = "training")]
+pub use storage::RolloutTchTensors;
 
 // Submodules
 mod gae;

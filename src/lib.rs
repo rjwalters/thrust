@@ -25,7 +25,14 @@ pub mod env;
 pub mod policy;
 
 /// Experience buffers and replay management (requires training feature)
-#[cfg(feature = "training")]
+///
+/// Gated on either backend (tch `training` or burn `training-burn`) —
+/// the storage layer is plain `Vec<f32>`/`Vec<i64>` regardless of which
+/// tensor framework the trainer ultimately uses. The Burn migration
+/// (#65) keeps the two tensor-emitting surfaces in this module behind
+/// disjoint cfgs so that `--features training-burn` can lean on the
+/// existing buffers without dragging in tch.
+#[cfg(any(feature = "training", feature = "training-burn"))]
 pub mod buffer;
 
 /// Training algorithms (PPO, etc.) (requires training feature)

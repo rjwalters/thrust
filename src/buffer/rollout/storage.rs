@@ -2,6 +2,16 @@
 //!
 //! This module handles the core storage functionality for rollout buffers,
 //! including data insertion, retrieval, and buffer management.
+//!
+//! The host-side storage layout (`Vec<f32>` / `Vec<i64>`) is deliberately
+//! backend-agnostic. The two tensor-emitting surfaces —
+//! [`RolloutBatch::to_tch_tensors`] (tch path) and
+//! [`RolloutBatch::to_burn_tensors`] (Burn path, #65) — are gated behind
+//! disjoint features so that `--features training-burn` does not drag in
+//! tch and vice versa.
+
+#[cfg(feature = "training-burn")]
+use burn::tensor::{Int, Tensor as BurnTensor, TensorData, backend::Backend};
 
 /// Rollout buffer for storing trajectories
 ///
@@ -365,11 +375,11 @@ impl RolloutBatch {
     /// the dimensions reported by [`Self::obs_shape`].
     ///
     /// # Notes
-    /// - This helper is intentionally tch-only; the planned Burn migration will
-    ///   add a sibling `to_burn_tensors` method.
     /// - For empty batches the observation tensor is still shaped `[0, 0]` to
     ///   match the existing inline behavior, which simply produced a
     ///   zero-element tensor.
+    /// - The Burn-backend sibling is [`Self::to_burn_tensors`].
+    #[cfg(feature = "training")]
     pub fn to_tch_tensors(&self, device: tch::Device) -> RolloutTchTensors {
         let (batch_size, obs_dim) = self.obs_shape();
 
@@ -384,6 +394,62 @@ impl RolloutBatch {
 
         RolloutTchTensors { observations, actions, old_log_probs, old_values, advantages, returns }
     }
+
+    /// Construct the full set of training tensors as Burn tensors on
+    /// `device`.
+    ///
+    /// Parallel to [`Self::to_tch_tensors`] but emits a named
+    /// [`RolloutBurnTensors`] bundle (Burn migration epic #65, phase 2a).
+    /// The host-side fields of `RolloutBatch` are unchanged; only the
+    /// tensor type at the boundary is different.
+    ///
+    /// Shapes (all on `device`):
+    /// - `observations`: `[batch, obs_dim]`, `f32`
+    /// - `actions`: `[batch]`, `i64` (Burn `Int` kind)
+    /// - `old_log_probs`: `[batch]`, `f32`
+    /// - `old_values`: `[batch]`, `f32`
+    /// - `advantages`: `[batch]`, `f32`
+    /// - `returns`: `[batch]`, `f32`
+    ///
+    /// Empty batches still produce well-formed `[0, obs_dim]` /
+    /// `[0]` tensors. The `obs_dim` is derived from
+    /// [`Self::obs_shape`] (which returns `0` for an empty batch), so
+    /// the observation tensor for the empty case is shaped `[0, 0]`.
+    #[cfg(feature = "training-burn")]
+    pub fn to_burn_tensors<B: Backend>(&self, device: &B::Device) -> RolloutBurnTensors<B> {
+        let (batch_size, obs_dim) = self.obs_shape();
+
+        // Construct the rank-2 observation tensor directly rather than
+        // building a rank-1 tensor and reshaping. The reshape path hits a
+        // panic deep in cubecl-zspace when both dims are zero (empty
+        // batch), and direct rank-2 construction sidesteps that edge case.
+        let observations = BurnTensor::<B, 2>::from_data(
+            TensorData::new(self.observations.clone(), [batch_size, obs_dim]),
+            device,
+        );
+        let actions = BurnTensor::<B, 1, Int>::from_data(
+            TensorData::new(self.actions.clone(), [batch_size]),
+            device,
+        );
+        let old_log_probs = BurnTensor::<B, 1>::from_data(
+            TensorData::new(self.old_log_probs.clone(), [batch_size]),
+            device,
+        );
+        let old_values = BurnTensor::<B, 1>::from_data(
+            TensorData::new(self.old_values.clone(), [batch_size]),
+            device,
+        );
+        let advantages = BurnTensor::<B, 1>::from_data(
+            TensorData::new(self.advantages.clone(), [batch_size]),
+            device,
+        );
+        let returns = BurnTensor::<B, 1>::from_data(
+            TensorData::new(self.returns.clone(), [batch_size]),
+            device,
+        );
+
+        RolloutBurnTensors { observations, actions, old_log_probs, old_values, advantages, returns }
+    }
 }
 
 /// Bundle of tch tensors produced by [`RolloutBatch::to_tch_tensors`].
@@ -392,6 +458,7 @@ impl RolloutBatch {
 /// inputs first (observations, actions), then the old policy outputs
 /// (log-probs and values used for the importance ratio and value clip),
 /// then the GAE outputs (advantages and returns).
+#[cfg(feature = "training")]
 #[derive(Debug)]
 pub struct RolloutTchTensors {
     /// Observations, shape `[batch_size, obs_dim]`, dtype `f32`.
@@ -414,6 +481,40 @@ pub struct RolloutTchTensors {
     /// Value-function targets (advantages + values), shape
     /// `[batch_size]`, dtype `f32`.
     pub returns: tch::Tensor,
+}
+
+/// Bundle of Burn tensors produced by [`RolloutBatch::to_burn_tensors`].
+///
+/// Mirrors [`RolloutTchTensors`] field-for-field — the only difference is
+/// the tensor type. Generic over the backend `B` so the same trainer
+/// surface works for CPU (`NdArray`), GPU (`Wgpu`, `Cuda`), and
+/// `Autodiff<_>` wrappers. The const-rank parameters (`Tensor<B, 2>` for
+/// observations, `Tensor<B, 1>` for the scalar-per-row fields) are
+/// concrete here so trainer code does not need turbofish at every call
+/// site (friction point #3 from the phase-1 scout report).
+#[cfg(feature = "training-burn")]
+#[derive(Debug)]
+pub struct RolloutBurnTensors<B: Backend> {
+    /// Observations, shape `[batch_size, obs_dim]`, dtype `f32`.
+    pub observations: BurnTensor<B, 2>,
+
+    /// Discrete actions, shape `[batch_size]`, dtype `i64`.
+    pub actions: BurnTensor<B, 1, Int>,
+
+    /// Behavior-policy log-probabilities, shape `[batch_size]`,
+    /// dtype `f32`.
+    pub old_log_probs: BurnTensor<B, 1>,
+
+    /// Behavior-policy value estimates `V(s_t)`, shape `[batch_size]`,
+    /// dtype `f32`.
+    pub old_values: BurnTensor<B, 1>,
+
+    /// GAE advantages, shape `[batch_size]`, dtype `f32`.
+    pub advantages: BurnTensor<B, 1>,
+
+    /// Value-function targets (advantages + values), shape
+    /// `[batch_size]`, dtype `f32`.
+    pub returns: BurnTensor<B, 1>,
 }
 
 #[cfg(test)]
@@ -517,6 +618,7 @@ mod tests {
         let _ = RolloutBatch::from_buffer_partial(&buffer, 5);
     }
 
+    #[cfg(feature = "training")]
     #[test]
     fn test_to_tch_tensors_matches_inline_construction() {
         // The helper must produce tensors byte-for-byte equivalent to the
@@ -562,6 +664,7 @@ mod tests {
         assert_eq!(ret, batch.returns);
     }
 
+    #[cfg(feature = "training")]
     #[test]
     fn test_to_tch_tensors_empty_batch() {
         // Empty batches must still produce well-formed (zero-element)
@@ -585,6 +688,80 @@ mod tests {
         assert_eq!(t.old_values.size(), vec![0]);
         assert_eq!(t.advantages.size(), vec![0]);
         assert_eq!(t.returns.size(), vec![0]);
+    }
+
+    #[cfg(feature = "training-burn")]
+    mod burn_tests {
+        use burn::backend::NdArray;
+
+        use super::*;
+
+        type B = NdArray<f32>;
+
+        #[test]
+        fn test_to_burn_tensors_matches_inline_construction() {
+            // Mirrors the tch round-trip test: shapes + element-wise equality
+            // against the source `Vec`s the batch was built from.
+            let batch = RolloutBatch {
+                observations: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                actions: vec![0, 1, 0],
+                old_log_probs: vec![-0.1, -0.2, -0.3],
+                old_values: vec![0.5, 0.7, 0.9],
+                advantages: vec![0.1, -0.2, 0.3],
+                returns: vec![0.6, 0.5, 1.2],
+            };
+
+            let device = crate::utils::cuda::default_burn_device::<B>();
+            let t = batch.to_burn_tensors::<B>(&device);
+
+            // Shapes.
+            assert_eq!(t.observations.dims(), [3, 2]);
+            assert_eq!(t.actions.dims(), [3]);
+            assert_eq!(t.old_log_probs.dims(), [3]);
+            assert_eq!(t.old_values.dims(), [3]);
+            assert_eq!(t.advantages.dims(), [3]);
+            assert_eq!(t.returns.dims(), [3]);
+
+            // Round-trip values. Observations are row-major flatten, so
+            // copying the `[3, 2]` tensor back to a `Vec<f32>` must equal
+            // the original 1-D buffer.
+            let obs_flat: Vec<f32> = t.observations.into_data().to_vec().unwrap();
+            assert_eq!(obs_flat, batch.observations);
+            let acts: Vec<i64> = t.actions.into_data().to_vec().unwrap();
+            assert_eq!(acts, batch.actions);
+            let lp: Vec<f32> = t.old_log_probs.into_data().to_vec().unwrap();
+            assert_eq!(lp, batch.old_log_probs);
+            let v: Vec<f32> = t.old_values.into_data().to_vec().unwrap();
+            assert_eq!(v, batch.old_values);
+            let adv: Vec<f32> = t.advantages.into_data().to_vec().unwrap();
+            assert_eq!(adv, batch.advantages);
+            let ret: Vec<f32> = t.returns.into_data().to_vec().unwrap();
+            assert_eq!(ret, batch.returns);
+        }
+
+        #[test]
+        fn test_to_burn_tensors_empty_batch() {
+            // Empty batch → `[0, 0]` observation tensor and `[0]`
+            // scalar-per-row tensors, matching the tch path's edge case.
+            let batch = RolloutBatch {
+                observations: vec![],
+                actions: vec![],
+                old_log_probs: vec![],
+                old_values: vec![],
+                advantages: vec![],
+                returns: vec![],
+            };
+
+            let device = crate::utils::cuda::default_burn_device::<B>();
+            let t = batch.to_burn_tensors::<B>(&device);
+
+            assert_eq!(t.observations.dims(), [0, 0]);
+            assert_eq!(t.actions.dims(), [0]);
+            assert_eq!(t.old_log_probs.dims(), [0]);
+            assert_eq!(t.old_values.dims(), [0]);
+            assert_eq!(t.advantages.dims(), [0]);
+            assert_eq!(t.returns.dims(), [0]);
+        }
     }
 
     #[test]
