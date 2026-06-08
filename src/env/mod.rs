@@ -185,6 +185,9 @@ pub use games::{
     simple_bandit, snake,
 };
 
-// Training utilities
-#[cfg(feature = "training")]
+// Training utilities. Gated on either backend (tch `training` or
+// burn `training-burn`) — the pool only needs rayon, which both
+// features pull in. Keeping a single gate here avoids duplicating
+// the vectorized env pool per backend.
+#[cfg(any(feature = "training", feature = "training-burn"))]
 pub mod pool;

@@ -20,3 +20,9 @@ pub mod snake_cnn;
 
 #[cfg(feature = "training")]
 pub use q_network::QNetwork;
+
+// Burn-backend MLP policy — scout for issue #78 / phase 1 of the
+// Burn migration. Deliberately minimal (only what the bandit trainer
+// needs) and decoupled from the tch `MlpPolicy`; both can coexist.
+#[cfg(feature = "training-burn")]
+pub mod mlp_burn;
