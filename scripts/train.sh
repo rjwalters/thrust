@@ -5,8 +5,8 @@
 #   ./scripts/train.sh [example_name]
 #
 # Examples:
-#   ./scripts/train.sh train_cartpole
-#   ./scripts/train.sh train_cartpole --release
+#   ./scripts/train.sh train_cartpole_modern
+#   ./scripts/train.sh train_cartpole_modern --release
 #
 # This is a thin wrapper that sources the venv set up by
 # scripts/setup-libtorch.sh and runs cargo with the right LIBTORCH env vars.
@@ -44,7 +44,7 @@ else
     exit 1
 fi
 
-EXAMPLE="${1:-train_cartpole}"
+EXAMPLE="${1:-train_cartpole_modern}"
 
 RELEASE_FLAG=""
 if [[ "${2:-}" == "--release" ]]; then

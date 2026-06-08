@@ -346,7 +346,7 @@ pub struct UniversalModel {
 
 ### Step 1: Train with PyTorch
 ```bash
-cargo run --example train_cartpole --release
+cargo run --example train_cartpole_modern --release
 # Creates: models/cartpole_model.pt
 ```
 
@@ -415,7 +415,7 @@ Potential improvements (not yet implemented):
 - **Module Export**: `src/policy/mod.rs`
 - **WASM Bindings**: `src/wasm.rs` (uses UniversalModel)
 - **Export Tool**: `examples/export_model.rs`
-- **Training Examples**: `examples/train_cartpole.rs`, `examples/train_snake.rs`
+- **Training Examples**: `examples/games/cartpole/train_cartpole_modern.rs`, `examples/games/snake/train_snake_multi_v2.rs`
 
 ## References
 

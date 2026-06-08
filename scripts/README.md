@@ -20,7 +20,7 @@ ssh rwalters-sandbox-2
 cd ~/thrust && git pull
 
 # Run training (this will use GPU automatically)
-./scripts/gpu-train.sh train_cartpole_long
+./scripts/gpu-train.sh train_cartpole_modern
 
 # Check status
 ./scripts/gpu-status.sh
@@ -33,7 +33,7 @@ cd ~/thrust && git pull
 
 ```bash
 # Run on local Mac with CPU
-./scripts/train.sh train_cartpole
+./scripts/train.sh train_cartpole_modern
 
 # Run tests
 ./scripts/test.sh
@@ -59,5 +59,5 @@ cd ~/thrust && git pull
 
 ## Training Examples
 
-- `train_cartpole` - Short CartPole training (50K steps, 4 envs)
-- `train_cartpole_long` - Long GPU training (500K steps, 8 envs) [GPU only]
+- `train_cartpole_modern` - Canonical CartPole PPO trainer
+- `train_cartpole_dqn` - Canonical CartPole DQN trainer

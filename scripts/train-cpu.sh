@@ -10,7 +10,7 @@ set -euo pipefail
 
 if [ -z "${1:-}" ]; then
     echo "Usage: $0 <example_name> [example_args...]"
-    echo "Example: $0 train_cartpole"
+    echo "Example: $0 train_cartpole_modern"
     exit 1
 fi
 

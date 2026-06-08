@@ -172,33 +172,8 @@ inherits = "release"
 
 # CartPole examples
 [[example]]
-name = "train_cartpole"
-path = "examples/games/cartpole/train_cartpole.rs"
-required-features = ["training"]
-
-[[example]]
-name = "train_cartpole_best"
-path = "examples/games/cartpole/train_cartpole_best.rs"
-required-features = ["training"]
-
-[[example]]
-name = "train_cartpole_long"
-path = "examples/games/cartpole/train_cartpole_long.rs"
-required-features = ["training"]
-
-[[example]]
 name = "train_cartpole_modern"
 path = "examples/games/cartpole/train_cartpole_modern.rs"
-required-features = ["training"]
-
-[[example]]
-name = "train_cartpole_hybrid"
-path = "examples/games/cartpole/train_cartpole_hybrid.rs"
-required-features = ["training"]
-
-[[example]]
-name = "train_cartpole_sb3"
-path = "examples/games/cartpole/train_cartpole_sb3.rs"
 required-features = ["training"]
 
 [[example]]
@@ -211,22 +186,7 @@ name = "optimize_cartpole"
 path = "examples/games/cartpole/optimize_cartpole.rs"
 required-features = ["training"]
 
-[[example]]
-name = "debug_cartpole"
-path = "examples/games/cartpole/debug_cartpole.rs"
-required-features = ["training"]
-
 # Snake examples
-[[example]]
-name = "train_snake"
-path = "examples/games/snake/train_snake.rs"
-required-features = ["training"]
-
-[[example]]
-name = "train_snake_multi"
-path = "examples/games/snake/train_snake_multi.rs"
-required-features = ["training"]
-
 [[example]]
 name = "train_snake_multi_v2"
 path = "examples/games/snake/train_snake_multi_v2.rs"
@@ -240,11 +200,6 @@ required-features = ["training"]
 [[example]]
 name = "export_snake_model"
 path = "examples/games/snake/export_snake_model.rs"
-required-features = ["training"]
-
-[[example]]
-name = "export_snake_init"
-path = "examples/games/snake/export_snake_init.rs"
 required-features = ["training"]
 
 # Pong examples

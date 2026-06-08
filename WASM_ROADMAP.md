@@ -192,7 +192,7 @@ Compile Rust inference code to WASM and run trained policies in the browser with
 ```bash
 # Training (native)
 cargo build --release --features training
-cargo run --example train_cartpole
+cargo run --example train_cartpole_modern
 
 # Export weights
 cargo run --example export_model cartpole_model.pt cartpole_weights.json
@@ -211,7 +211,7 @@ cd web && python -m http.server 8000
 # 1. Train on GPU
 ssh gpu-machine
 cd thrust && git pull
-./scripts/gpu-train.sh train_cartpole_long
+./scripts/gpu-train.sh train_cartpole_modern
 
 # 2. Export weights
 cargo run --example export_model cartpole_model_long.pt web/weights.json

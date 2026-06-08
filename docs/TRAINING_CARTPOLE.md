@@ -234,14 +234,14 @@ Training Steps    Avg Episode Length    Notes
 
 ```bash
 # CPU training (slow)
-cargo run --example train_cartpole_best --release
+cargo run --example train_cartpole_modern --release
 
 # GPU training (fast)
 # See docs/GPU_SETUP.md for GPU configuration
 ssh your-gpu-server 'cd thrust && \
   source venv/bin/activate && \
   export LIBTORCH_USE_PYTORCH=1 && \
-  cargo +nightly run --example train_cartpole_best --release'
+  cargo +nightly run --example train_cartpole_modern --release'
 ```
 
 Expected training time:
@@ -271,7 +271,7 @@ CartPole should reach **400+ steps/episode** by 1M training steps:
 ## Related Files
 
 - **Environment**: `src/env/cartpole.rs`
-- **Training script**: `examples/train_cartpole_best.rs`
+- **Training script**: `examples/games/cartpole/train_cartpole_modern.rs`
 - **Optimization**: `examples/optimize_cartpole.rs`
 - **PPO implementation**: `src/train/ppo/trainer.rs`
 - **GAE implementation**: `src/buffer/rollout/gae.rs`

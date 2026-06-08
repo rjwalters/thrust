@@ -9,7 +9,7 @@ This guide explains how to set up GPU-accelerated training with CUDA for Thrust 
 ./scripts/setup-libtorch.sh
 
 # 2. Run GPU training
-./scripts/train-gpu.sh train_cartpole_best
+./scripts/train-gpu.sh train_cartpole_modern
 ```
 
 ## Prerequisites
