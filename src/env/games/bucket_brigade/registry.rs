@@ -9,7 +9,7 @@
 //! # Why mirror it on the Rust side?
 //!
 //! The upstream `bucket-brigade-core` crate exposes a flat
-//! [`SCENARIOS`](bucket_brigade_core::SCENARIOS) map keyed by *unversioned*
+//! [`SCENARIOS`] map keyed by *unversioned*
 //! base names (`"minimal_specialization"`, `"default"`, …) — that's the
 //! engine's runtime scenario database. The Python `SCENARIO_VERSIONS`
 //! registry layers a frozen versioned ID (`-v1`, `-v2`, …) on top of those
@@ -26,8 +26,9 @@
 //!
 //! Both sides resolve a versioned ID to the same underlying
 //! `bucket-brigade-core` `Scenario` value, so a Thrust env constructed via
-//! [`make`] is byte-equivalent to a Python env constructed via
-//! `bucket_brigade.make()` for the same ID (same scenario, same num_agents).
+//! [`super::env::BucketBrigadeMaEnv::from_scenario_id`] is byte-equivalent
+//! to a Python env constructed via `bucket_brigade.make()` for the same ID
+//! (same scenario, same num_agents).
 //! When adding a new scenario, update both this file and the Python
 //! `SCENARIO_VERSIONS` table together.
 //!
@@ -44,8 +45,8 @@ use bucket_brigade_core::{SCENARIOS, Scenario};
 /// Mirrors `bucket_brigade.envs.registry.DEFAULT_NUM_AGENTS = 4`.
 /// Every published Bucket Brigade result in this repo uses 4 agents.
 /// Pinning this default into the registry is part of what makes an ID
-/// *frozen*: [`make`] with a versioned ID and no `num_agents` override
-/// always yields a 4-agent scenario.
+/// *frozen*: constructing an env from a versioned ID without overriding
+/// `num_agents` always yields a 4-agent scenario.
 pub const DEFAULT_NUM_AGENTS: usize = 4;
 
 /// A frozen scenario entry: the base-name lookup key in
