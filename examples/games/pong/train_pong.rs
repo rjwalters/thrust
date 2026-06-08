@@ -123,25 +123,18 @@ fn main() -> Result<()> {
         buffer.compute_advantages(&last_values_vec, 0.99, 0.95);
 
         let batch = buffer.get_batch();
-        let batch_size = batch.observations.len() / obs_dim as usize;
 
-        let obs_t = tch::Tensor::from_slice(&batch.observations)
-            .reshape([batch_size as i64, obs_dim])
-            .to_device(device);
-        let acts_t = tch::Tensor::from_slice(&batch.actions).to_device(device);
-        let old_lp_t = tch::Tensor::from_slice(&batch.old_log_probs).to_device(device);
-        let old_v_t = tch::Tensor::from_slice(&batch.old_values).to_device(device);
-        let adv_t = tch::Tensor::from_slice(&batch.advantages).to_device(device);
-        let ret_t = tch::Tensor::from_slice(&batch.returns).to_device(device);
+        // Convert to tensors via the shared helper.
+        let t = batch.to_tch_tensors(device);
 
         let stats = trainer.train_step_with_policy(
             &policy,
-            &obs_t,
-            &acts_t,
-            &old_lp_t,
-            &old_v_t,
-            &adv_t,
-            &ret_t,
+            &t.observations,
+            &t.actions,
+            &t.old_log_probs,
+            &t.old_values,
+            &t.advantages,
+            &t.returns,
             |p, obs, acts| p.evaluate_actions(obs, acts),
         )?;
 

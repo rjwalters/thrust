@@ -179,27 +179,18 @@ fn main() -> Result<()> {
         // Get training batch
         let batch = buffer.get_batch();
 
-        // Convert to tensors (batch.observations is already flattened)
-        let batch_size = batch.observations.len() / obs_dim as usize;
-
-        let obs_tensor = tch::Tensor::from_slice(&batch.observations)
-            .reshape([batch_size as i64, obs_dim])
-            .to_device(device);
-        let actions_tensor = tch::Tensor::from_slice(&batch.actions).to_device(device);
-        let old_log_probs_tensor = tch::Tensor::from_slice(&batch.old_log_probs).to_device(device);
-        let old_values_tensor = tch::Tensor::from_slice(&batch.old_values).to_device(device);
-        let advantages_tensor = tch::Tensor::from_slice(&batch.advantages).to_device(device);
-        let returns_tensor = tch::Tensor::from_slice(&batch.returns).to_device(device);
+        // Convert to tensors via the shared helper.
+        let t = batch.to_tch_tensors(device);
 
         // Train
         let stats = trainer.train_step_with_policy(
             &policy,
-            &obs_tensor,
-            &actions_tensor,
-            &old_log_probs_tensor,
-            &old_values_tensor,
-            &advantages_tensor,
-            &returns_tensor,
+            &t.observations,
+            &t.actions,
+            &t.old_log_probs,
+            &t.old_values,
+            &t.advantages,
+            &t.returns,
             |p, obs, acts| p.evaluate_actions(obs, acts),
         )?;
 

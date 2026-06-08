@@ -343,6 +343,84 @@ impl RolloutBatch {
         };
         (batch_size, obs_dim)
     }
+
+    /// Construct the full set of training tensors from this batch in a
+    /// single call.
+    ///
+    /// Each example trainer used to repeat the same 6 lines of
+    /// `tch::Tensor::from_slice(...).to_device(device)` boilerplate
+    /// (with the observation tensor additionally reshaped to
+    /// `[batch_size, obs_dim]`). This helper collapses that pattern
+    /// into one method so trainers can write:
+    ///
+    /// ```ignore
+    /// let t = batch.to_tch_tensors(device);
+    /// // t.observations, t.actions, t.old_log_probs, t.old_values,
+    /// // t.advantages, t.returns
+    /// ```
+    ///
+    /// The returned tensors are byte-for-byte equivalent to the inline
+    /// construction: same dtype (`f32`/`i64`), same device, and the
+    /// observation tensor is reshaped to `[batch_size, obs_dim]` using
+    /// the dimensions reported by [`Self::obs_shape`].
+    ///
+    /// # Notes
+    /// - This helper is intentionally tch-only; the planned Burn
+    ///   migration will add a sibling `to_burn_tensors` method.
+    /// - For empty batches the observation tensor is still shaped
+    ///   `[0, 0]` to match the existing inline behavior, which simply
+    ///   produced a zero-element tensor.
+    pub fn to_tch_tensors(&self, device: tch::Device) -> RolloutTchTensors {
+        let (batch_size, obs_dim) = self.obs_shape();
+
+        let observations = tch::Tensor::from_slice(&self.observations)
+            .reshape([batch_size as i64, obs_dim as i64])
+            .to_device(device);
+        let actions = tch::Tensor::from_slice(&self.actions).to_device(device);
+        let old_log_probs = tch::Tensor::from_slice(&self.old_log_probs).to_device(device);
+        let old_values = tch::Tensor::from_slice(&self.old_values).to_device(device);
+        let advantages = tch::Tensor::from_slice(&self.advantages).to_device(device);
+        let returns = tch::Tensor::from_slice(&self.returns).to_device(device);
+
+        RolloutTchTensors {
+            observations,
+            actions,
+            old_log_probs,
+            old_values,
+            advantages,
+            returns,
+        }
+    }
+}
+
+/// Bundle of tch tensors produced by [`RolloutBatch::to_tch_tensors`].
+///
+/// Fields are in the order PPO trainers consume them: policy/value
+/// inputs first (observations, actions), then the old policy outputs
+/// (log-probs and values used for the importance ratio and value clip),
+/// then the GAE outputs (advantages and returns).
+#[derive(Debug)]
+pub struct RolloutTchTensors {
+    /// Observations, shape `[batch_size, obs_dim]`, dtype `f32`.
+    pub observations: tch::Tensor,
+
+    /// Discrete actions, shape `[batch_size]`, dtype `i64`.
+    pub actions: tch::Tensor,
+
+    /// Behavior-policy log-probabilities, shape `[batch_size]`,
+    /// dtype `f32`.
+    pub old_log_probs: tch::Tensor,
+
+    /// Behavior-policy value estimates `V(s_t)`, shape `[batch_size]`,
+    /// dtype `f32`.
+    pub old_values: tch::Tensor,
+
+    /// GAE advantages, shape `[batch_size]`, dtype `f32`.
+    pub advantages: tch::Tensor,
+
+    /// Value-function targets (advantages + values), shape
+    /// `[batch_size]`, dtype `f32`.
+    pub returns: tch::Tensor,
 }
 
 #[cfg(test)]
@@ -444,6 +522,77 @@ mod tests {
     fn test_rollout_batch_from_buffer_partial_panics_on_overflow() {
         let buffer = RolloutBuffer::new(4, 1, 2);
         let _ = RolloutBatch::from_buffer_partial(&buffer, 5);
+    }
+
+    #[test]
+    fn test_to_tch_tensors_matches_inline_construction() {
+        // The helper must produce tensors byte-for-byte equivalent to the
+        // inline construction pattern that every example trainer used to
+        // duplicate. Compare shapes and contents element-wise.
+        let batch = RolloutBatch {
+            observations: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            actions: vec![0, 1, 0],
+            old_log_probs: vec![-0.1, -0.2, -0.3],
+            old_values: vec![0.5, 0.7, 0.9],
+            advantages: vec![0.1, -0.2, 0.3],
+            returns: vec![0.6, 0.5, 1.2],
+        };
+
+        let device = tch::Device::Cpu;
+        let t = batch.to_tch_tensors(device);
+
+        // Shapes
+        assert_eq!(t.observations.size(), vec![3, 2]);
+        assert_eq!(t.actions.size(), vec![3]);
+        assert_eq!(t.old_log_probs.size(), vec![3]);
+        assert_eq!(t.old_values.size(), vec![3]);
+        assert_eq!(t.advantages.size(), vec![3]);
+        assert_eq!(t.returns.size(), vec![3]);
+
+        // Contents (flatten obs to compare to the source 1-D vec)
+        let obs_flat: Vec<f32> =
+            Vec::try_from(t.observations.flatten(0, -1)).unwrap();
+        assert_eq!(obs_flat, batch.observations);
+
+        let acts: Vec<i64> = Vec::try_from(t.actions).unwrap();
+        assert_eq!(acts, batch.actions);
+
+        let lp: Vec<f32> = Vec::try_from(t.old_log_probs).unwrap();
+        assert_eq!(lp, batch.old_log_probs);
+
+        let v: Vec<f32> = Vec::try_from(t.old_values).unwrap();
+        assert_eq!(v, batch.old_values);
+
+        let adv: Vec<f32> = Vec::try_from(t.advantages).unwrap();
+        assert_eq!(adv, batch.advantages);
+
+        let ret: Vec<f32> = Vec::try_from(t.returns).unwrap();
+        assert_eq!(ret, batch.returns);
+    }
+
+    #[test]
+    fn test_to_tch_tensors_empty_batch() {
+        // Empty batches must still produce well-formed (zero-element)
+        // tensors. The observation tensor is reshaped to [0, 0], which
+        // matches the behavior of the inline pattern when batch_size = 0
+        // (obs_dim derived from obs_shape() is 0 in that case).
+        let batch = RolloutBatch {
+            observations: vec![],
+            actions: vec![],
+            old_log_probs: vec![],
+            old_values: vec![],
+            advantages: vec![],
+            returns: vec![],
+        };
+
+        let t = batch.to_tch_tensors(tch::Device::Cpu);
+
+        assert_eq!(t.observations.size(), vec![0, 0]);
+        assert_eq!(t.actions.size(), vec![0]);
+        assert_eq!(t.old_log_probs.size(), vec![0]);
+        assert_eq!(t.old_values.size(), vec![0]);
+        assert_eq!(t.advantages.size(), vec![0]);
+        assert_eq!(t.returns.size(), vec![0]);
     }
 
     #[test]
