@@ -1,62 +1,215 @@
-//! Minimal MLP actor-critic policy implemented over the Burn 0.21 tensor
-//! framework.
+//! Burn-backend MLP actor-critic policy (phase 4 of the Burn migration, #65).
 //!
-//! # Scope
+//! Sibling to [`crate::policy::mlp::MlpPolicy`] (tch path). The two
+//! modules implement the same 2/3-layer MLP actor-critic architecture
+//! with orthogonal initialization (PPO recipe — gain `sqrt(2)` on the
+//! trunk, `0.01` on the output heads); the only difference is the
+//! tensor framework.
 //!
-//! This module is **scoped to the phase-1 Burn migration scout** (issue #78).
-//! It is intentionally not feature-complete: it provides only the surface area
-//! the bandit trainer needs (forward pass returning `(logits, value)`, action
-//! sampling, action evaluation). It is **not** intended to be the production
-//! design — that work lands in later phases of the migration epic (#65).
+//! # History
 //!
-//! Compared to [`crate::policy::mlp::MlpPolicy`] (tch path), the salient
-//! differences are documented in `docs/BURN_MIGRATION_PHASE1_REPORT.md`.
+//! - **Phase 1 (#78)**: scout port covered only what the
+//!   `train_simple_bandit_burn` example needed (random Kaiming init, 2 layers,
+//!   no `MlpConfig`-style surface). That entry point is preserved as
+//!   [`MlpBurnPolicy::new`] for backward compatibility with the scout binary
+//!   and the parity tests already wired up against it.
+//! - **Phase 4 (#81)**: this module — productionizes the scout. Adds
+//!   [`MlpBurnConfig`] (mirroring `MlpConfig` on the tch path) with orthogonal
+//!   init / activation / depth knobs, a 3-layer variant, and the encoder-tap
+//!   helper the multi-agent regularizers want.
 //!
 //! # Why generic over `B: Backend`?
 //!
-//! Burn's idiomatic pattern is to make every `Module` generic over a `Backend`
-//! type parameter (CPU `NdArray`, GPU `Wgpu`/`Cuda`, autodiff-decorated
-//! variants, etc.). This mirrors `geode-fem`'s pattern. The bandit trainer
-//! picks `NdArray<f32>` wrapped in `Autodiff` at the top level.
+//! Burn's idiomatic pattern is to make every `Module` generic over a
+//! `Backend` type parameter (CPU `NdArray`, GPU `Wgpu`/`Cuda`,
+//! autodiff-decorated variants, etc.). The bandit scout picks
+//! `Autodiff<NdArray<f32>>` at the top level; production trainers can
+//! re-use the same modules with a different backend at the top of the
+//! binary without touching the policy code.
 
 use burn::{
-    module::Module,
-    nn::{Linear, LinearConfig},
+    module::{Module, Param},
+    nn::{Initializer, Linear, LinearConfig},
     tensor::{Int, Tensor, activation, backend::Backend},
 };
 
-/// Two-layer MLP actor-critic for **discrete** action spaces, ported to Burn.
+/// Build a [`Linear`] layer with an explicit weight initializer and a
+/// zeroed bias.
 ///
-/// Layout matches [`crate::policy::mlp::MlpPolicy`] at a high level:
+/// Burn's `LinearConfig::with_initializer` applies the same initializer
+/// to both the weight and the bias, but [`Initializer::Orthogonal`]
+/// requires a rank-≥2 tensor and panics on the 1D bias. The PPO recipe
+/// (mirrored on the tch path) initializes biases to zero anyway, so the
+/// idiomatic Burn analogue is "Orthogonal on the weight, zero on the
+/// bias". This helper packages that two-step setup.
+///
+/// Re-used by [`MlpBurnPolicy`],
+/// [`crate::policy::multi_discrete_mlp_burn::MultiDiscreteMlpBurnPolicy`],
+/// [`crate::policy::q_network_burn::QNetworkBurn`], and
+/// [`crate::policy::snake_cnn_burn::SnakeCnnBurnPolicy`].
+pub(crate) fn linear_with_init<B: Backend>(
+    d_input: usize,
+    d_output: usize,
+    initializer: Initializer,
+    device: &B::Device,
+) -> Linear<B> {
+    // Build a 2D weight Param via the initializer, and a 1D zero bias
+    // Param via Param::from_tensor. `LinearConfig::with_initializer`
+    // can't help here because it applies the same initializer to both
+    // weight and bias, and `Initializer::Orthogonal` panics on the
+    // rank-1 bias tensor (it requires `D >= 2`).
+    let weight: Param<Tensor<B, 2>> = initializer.init_with::<B, 2, _>(
+        [d_input, d_output],
+        Some(d_input),
+        Some(d_output),
+        device,
+    );
+    let bias_tensor = Tensor::<B, 1>::zeros([d_output], device);
+    Linear::<B> { weight, bias: Some(Param::from_tensor(bias_tensor)) }
+}
+
+/// Activation function applied between hidden layers in
+/// [`MlpBurnPolicy`] (and its multi-discrete sibling).
+///
+/// Mirrors [`crate::policy::mlp::Activation`] on the tch path; the two
+/// enums are deliberately separate so the Burn module does not pull in
+/// `tch` types under `--features training-burn` alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BurnActivation {
+    /// Rectified linear unit (`max(0, x)`).
+    ReLU,
+    /// Hyperbolic tangent (`tanh(x)`).
+    Tanh,
+}
+
+/// Configuration for [`MlpBurnPolicy`] architecture.
+///
+/// Mirrors [`crate::policy::mlp::MlpConfig`] on the tch path. Stored
+/// inside the policy so the parity tests can compare both backends on
+/// identical hyperparameters.
+#[derive(Debug, Clone, Copy)]
+pub struct MlpBurnConfig {
+    /// Number of hidden layers in the shared trunk. Only `2` or `3` are
+    /// supported; anything else is treated as `2`.
+    pub num_layers: usize,
+    /// Width of every hidden layer.
+    pub hidden_dim: usize,
+    /// If `true`, initialize hidden-layer weights with
+    /// [`Initializer::Orthogonal`] (gain `sqrt(2)`) and output heads
+    /// with `Initializer::Orthogonal { gain = 0.01 }`. Set `false` to
+    /// fall back to Burn's default Kaiming-uniform init.
+    pub use_orthogonal_init: bool,
+    /// Activation applied between hidden layers.
+    pub activation: BurnActivation,
+}
+
+impl Default for MlpBurnConfig {
+    fn default() -> Self {
+        Self {
+            num_layers: 2,
+            hidden_dim: 64,
+            use_orthogonal_init: true,
+            activation: BurnActivation::Tanh,
+        }
+    }
+}
+
+/// Two- or three-layer MLP actor-critic for **discrete** action spaces,
+/// ported to Burn.
+///
+/// Layout mirrors [`crate::policy::mlp::MlpPolicy`] at a high level:
 ///
 /// ```text
-/// obs ──► fc1 ─tanh─► fc2 ─tanh─► policy_head (logits over n actions)
-///                              └─► value_head  (scalar V(s))
+/// obs → fc1 →act→ fc2 →act→ (fc3 →act→)? policy_head (logits)
+///                                       └─ value_head  (V(s))
 /// ```
 ///
-/// The two heads share the trunk activations, which is the standard PPO
-/// actor-critic recipe. `hidden_dim` is the width of both hidden layers.
+/// Both heads share the trunk activations — standard PPO actor-critic.
+///
+/// # Numerical parity
+///
+/// When constructed with `use_orthogonal_init = true` (the default), the
+/// trunk uses [`Initializer::Orthogonal { gain: sqrt(2) }`] and the
+/// output heads use `gain = 0.01`. These match the tch policy's init
+/// gains exactly (see [`crate::policy::mlp::MlpPolicy::with_config`]),
+/// which is the necessary precondition for the phase-4 numerical-parity
+/// check called out on issue #81.
 #[derive(Module, Debug)]
 pub struct MlpBurnPolicy<B: Backend> {
     fc1: Linear<B>,
     fc2: Linear<B>,
+    fc3: Option<Linear<B>>,
     policy_head: Linear<B>,
     value_head: Linear<B>,
+    activation: BurnActivation,
 }
 
 impl<B: Backend> MlpBurnPolicy<B> {
-    /// Build a fresh policy on `device` with the given dims.
+    /// Backward-compatible 2-layer constructor (the phase 1 scout
+    /// signature). Uses Burn's default Kaiming-uniform init — kept so
+    /// the existing bandit trainer and parity tests are not perturbed.
     ///
-    /// Burn's default `LinearConfig` initializes weights with a Kaiming-uniform
-    /// scheme — adequate for the bandit smoke test; the orthogonal init the
-    /// tch policy uses is a known follow-up (documented in the friction
-    /// report).
+    /// New call sites that want PPO-style orthogonal init should call
+    /// [`MlpBurnPolicy::with_config`] instead.
     pub fn new(obs_dim: usize, action_dim: usize, hidden_dim: usize, device: &B::Device) -> Self {
-        Self {
-            fc1: LinearConfig::new(obs_dim, hidden_dim).init(device),
-            fc2: LinearConfig::new(hidden_dim, hidden_dim).init(device),
-            policy_head: LinearConfig::new(hidden_dim, action_dim).init(device),
-            value_head: LinearConfig::new(hidden_dim, 1).init(device),
+        let config = MlpBurnConfig {
+            num_layers: 2,
+            hidden_dim,
+            // Preserve scout behavior — the phase 1 scout used the
+            // default LinearConfig init (Kaiming uniform), not the
+            // PPO orthogonal recipe.
+            use_orthogonal_init: false,
+            activation: BurnActivation::Tanh,
+        };
+        Self::with_config(obs_dim, action_dim, config, device)
+    }
+
+    /// Build a fresh policy on `device` with the given configuration.
+    ///
+    /// This is the production constructor for phase 4 onwards. Mirrors
+    /// [`crate::policy::mlp::MlpPolicy::with_config`].
+    pub fn with_config(
+        obs_dim: usize,
+        action_dim: usize,
+        config: MlpBurnConfig,
+        device: &B::Device,
+    ) -> Self {
+        let hidden_init = if config.use_orthogonal_init {
+            Initializer::Orthogonal { gain: 2.0_f64.sqrt() }
+        } else {
+            // Burn's default — see LinearConfig docs.
+            Initializer::KaimingUniform { gain: 1.0_f64 / 3.0_f64.sqrt(), fan_out_only: false }
+        };
+        let output_init = if config.use_orthogonal_init {
+            Initializer::Orthogonal { gain: 0.01 }
+        } else {
+            Initializer::KaimingUniform { gain: 1.0_f64 / 3.0_f64.sqrt(), fan_out_only: false }
+        };
+
+        let fc1 = linear_with_init::<B>(obs_dim, config.hidden_dim, hidden_init.clone(), device);
+        let fc2 = linear_with_init::<B>(
+            config.hidden_dim,
+            config.hidden_dim,
+            hidden_init.clone(),
+            device,
+        );
+        let fc3 = if config.num_layers >= 3 {
+            Some(linear_with_init::<B>(config.hidden_dim, config.hidden_dim, hidden_init, device))
+        } else {
+            None
+        };
+
+        let policy_head =
+            linear_with_init::<B>(config.hidden_dim, action_dim, output_init.clone(), device);
+        let value_head = linear_with_init::<B>(config.hidden_dim, 1, output_init, device);
+
+        Self { fc1, fc2, fc3, policy_head, value_head, activation: config.activation }
+    }
+
+    fn apply_activation<const D: usize>(&self, x: Tensor<B, D>) -> Tensor<B, D> {
+        match self.activation {
+            BurnActivation::ReLU => activation::relu(x),
+            BurnActivation::Tanh => activation::tanh(x),
         }
     }
 
@@ -66,24 +219,39 @@ impl<B: Backend> MlpBurnPolicy<B> {
     /// * `logits` is shape `[batch, action_dim]` (pre-softmax).
     /// * `value` is shape `[batch]` (squeezed from `[batch, 1]`).
     pub fn forward(&self, obs: Tensor<B, 2>) -> (Tensor<B, 2>, Tensor<B, 1>) {
-        let h = activation::tanh(self.fc1.forward(obs));
-        let h = activation::tanh(self.fc2.forward(h));
+        let h = self.encoder_features(obs);
         let logits = self.policy_head.forward(h.clone());
         let value = self.value_head.forward(h).squeeze_dim::<1>(1);
         (logits, value)
     }
 
-    /// Sample one action per row from the policy's categorical distribution
-    /// and return `(actions_host, log_probs_host, values_host)` as plain
-    /// `Vec`s.
+    /// Compute the shared-trunk feature representation for `obs`.
     ///
-    /// The trainer-side rollout loop does not need gradient flow through the
-    /// sampled action (only the eventual `evaluate_actions` call on the
-    /// stored transitions matters for the PPO surrogate). We therefore do
-    /// the categorical draw on the host with `rand`, which sidesteps Burn
-    /// 0.21's lack of a first-class `multinomial` op — documented in the
-    /// friction report as a real gap for any port that needs on-device
-    /// sampling (Snake CNN, multi-agent self-play).
+    /// Mirrors [`crate::policy::mlp::MlpPolicy::encoder_features`] —
+    /// auxiliary regularizers (cross-agent redundancy penalties,
+    /// behavioural-diversity bonuses) tap this directly.
+    ///
+    /// Gradients flow back into the trunk.
+    pub fn encoder_features(&self, obs: Tensor<B, 2>) -> Tensor<B, 2> {
+        let h = self.apply_activation(self.fc1.forward(obs));
+        let h = self.apply_activation(self.fc2.forward(h));
+        if let Some(fc3) = &self.fc3 {
+            self.apply_activation(fc3.forward(h))
+        } else {
+            h
+        }
+    }
+
+    /// Sample one action per row from the policy's categorical
+    /// distribution and return `(actions_host, log_probs_host,
+    /// values_host)` as plain `Vec`s.
+    ///
+    /// The trainer-side rollout loop does not need gradient flow
+    /// through the sampled action (only the eventual
+    /// [`MlpBurnPolicy::evaluate_actions`] call on the stored
+    /// transitions matters for the PPO surrogate). We therefore do the
+    /// categorical draw on the host with `rand`, sidestepping Burn
+    /// 0.21's lack of a first-class `multinomial` op.
     pub fn get_action_host(&self, obs: Tensor<B, 2>) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
         use rand::Rng;
         let (logits, value) = self.forward(obs);
@@ -121,9 +289,13 @@ impl<B: Backend> MlpBurnPolicy<B> {
 
     /// Evaluate a batch of `(obs, actions)` pairs.
     ///
-    /// Returns `(action_log_probs, entropy_per_row, values)` — the quantities
-    /// the PPO surrogate loss needs. Entropy is per-row here (not the mean):
-    /// the caller decides how to aggregate.
+    /// Returns `(action_log_probs, entropy_per_row, values)` — the
+    /// quantities the PPO surrogate loss needs. Entropy is per-row here
+    /// (not the mean): the caller decides how to aggregate. This
+    /// matches the tch policy's contract (the tch
+    /// `evaluate_actions` returns a scalar mean; the trainer reduces
+    /// per-row entropy on the Burn path inside
+    /// [`crate::train::ppo_burn::trainer::PPOTrainerBurn::train_step`]).
     pub fn evaluate_actions(
         &self,
         obs: Tensor<B, 2>,
@@ -139,5 +311,87 @@ impl<B: Backend> MlpBurnPolicy<B> {
         let entropy = -(probs * log_probs).sum_dim(1).squeeze_dim::<1>(1);
 
         (action_log_probs, entropy, value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use burn::backend::{Autodiff, NdArray};
+
+    use super::*;
+
+    type B = Autodiff<NdArray<f32>>;
+
+    #[test]
+    fn test_policy_creation_default() {
+        let device = Default::default();
+        let _policy = MlpBurnPolicy::<B>::new(4, 2, 64, &device);
+    }
+
+    #[test]
+    fn test_with_config_two_layer() {
+        let device = Default::default();
+        let cfg = MlpBurnConfig::default();
+        let policy = MlpBurnPolicy::<B>::with_config(4, 2, cfg, &device);
+        assert!(policy.fc3.is_none());
+    }
+
+    #[test]
+    fn test_with_config_three_layer() {
+        let device = Default::default();
+        let cfg = MlpBurnConfig { num_layers: 3, ..Default::default() };
+        let policy = MlpBurnPolicy::<B>::with_config(4, 2, cfg, &device);
+        assert!(policy.fc3.is_some());
+    }
+
+    #[test]
+    fn test_forward_pass_two_layer() {
+        let device = Default::default();
+        let cfg = MlpBurnConfig::default();
+        let policy = MlpBurnPolicy::<B>::with_config(4, 2, cfg, &device);
+        let obs = Tensor::<B, 2>::zeros([8, 4], &device);
+        let (logits, values) = policy.forward(obs);
+        assert_eq!(logits.dims(), [8, 2]);
+        assert_eq!(values.dims(), [8]);
+    }
+
+    #[test]
+    fn test_forward_pass_three_layer() {
+        let device = Default::default();
+        let cfg = MlpBurnConfig { num_layers: 3, ..Default::default() };
+        let policy = MlpBurnPolicy::<B>::with_config(4, 2, cfg, &device);
+        let obs = Tensor::<B, 2>::zeros([8, 4], &device);
+        let (logits, values) = policy.forward(obs);
+        assert_eq!(logits.dims(), [8, 2]);
+        assert_eq!(values.dims(), [8]);
+    }
+
+    #[test]
+    fn test_evaluate_actions_shapes() {
+        let device = Default::default();
+        let policy = MlpBurnPolicy::<B>::with_config(4, 2, MlpBurnConfig::default(), &device);
+        let obs = Tensor::<B, 2>::zeros([8, 4], &device);
+        let actions = Tensor::<B, 1, Int>::from_data(
+            burn::tensor::TensorData::new(vec![0i64, 1, 0, 1, 0, 1, 0, 1], [8]),
+            &device,
+        );
+        let (log_probs, entropy, values) = policy.evaluate_actions(obs, actions);
+        assert_eq!(log_probs.dims(), [8]);
+        assert_eq!(entropy.dims(), [8]);
+        assert_eq!(values.dims(), [8]);
+    }
+
+    #[test]
+    fn test_relu_activation_branch() {
+        let device = Default::default();
+        let cfg = MlpBurnConfig {
+            activation: BurnActivation::ReLU,
+            use_orthogonal_init: false,
+            ..Default::default()
+        };
+        let policy = MlpBurnPolicy::<B>::with_config(4, 2, cfg, &device);
+        let obs = Tensor::<B, 2>::zeros([2, 4], &device);
+        let (logits, _values) = policy.forward(obs);
+        assert_eq!(logits.dims(), [2, 2]);
     }
 }
