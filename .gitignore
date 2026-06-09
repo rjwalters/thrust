@@ -1,11 +1,5 @@
 /target
-/libtorch/*
-!/libtorch/README.md
 Cargo.lock
-
-# pip venv used by scripts/setup-libtorch.sh
-/venv
-/.envrc.libtorch
 
 # Large model files (use Git LFS if needed)
 models/**/*.pt

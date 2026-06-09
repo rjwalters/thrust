@@ -54,18 +54,15 @@
 //!
 //! - Schaul et al., *Prioritized Experience Replay* ([ICLR 2016](https://arxiv.org/abs/1511.05952)).
 
-#[cfg(feature = "training-burn")]
 use burn::tensor::{Int, Tensor as BurnTensor, TensorData, backend::Backend};
 use rand::Rng;
-#[cfg(feature = "training")]
-use tch::{Device, Tensor};
 
 use super::sum_tree::SumTree;
 
 /// One minibatch sampled from a [`PrioritizedReplayBuffer`].
 ///
-/// All fields are CPU-side primitive vectors; convert to `tch::Tensor`s
-/// via [`PrioritizedBatch::to_tensors`] when handing them to the trainer.
+/// All fields are CPU-side primitive vectors; convert to Burn tensors
+/// via [`PrioritizedBatch::to_burn_tensors`] when handing them to the trainer.
 #[derive(Debug, Clone)]
 pub struct PrioritizedBatch {
     /// Flattened current observations, shape `[batch_size * obs_dim]`.
@@ -86,7 +83,7 @@ pub struct PrioritizedBatch {
     /// [`PrioritizedReplayBuffer::update_priorities`] alongside the new
     /// TD errors.
     pub indices: Vec<usize>,
-    /// Length of one observation slice (so `to_tensors` can reshape).
+    /// Length of one observation slice.
     pub obs_dim: usize,
 }
 
@@ -101,42 +98,11 @@ impl PrioritizedBatch {
         self.actions.is_empty()
     }
 
-    /// Stack the batch into `tch::Tensor`s on `device`.
-    ///
-    /// Returns `(obs, actions, rewards, next_obs, dones, is_weights)`
-    /// with shapes:
-    /// - `obs`: `[batch, obs_dim]`, `Kind::Float`
-    /// - `actions`: `[batch]`, `Kind::Int64`
-    /// - `rewards`: `[batch]`, `Kind::Float`
-    /// - `next_obs`: `[batch, obs_dim]`, `Kind::Float`
-    /// - `dones`: `[batch]`, `Kind::Float` (0.0 or 1.0)
-    /// - `is_weights`: `[batch]`, `Kind::Float`
-    #[cfg(feature = "training")]
-    pub fn to_tensors(&self, device: Device) -> (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor) {
-        let batch = self.len() as i64;
-        let obs_dim = self.obs_dim as i64;
-
-        let obs = Tensor::from_slice(&self.observations)
-            .reshape([batch, obs_dim])
-            .to_device(device);
-        let next_obs = Tensor::from_slice(&self.next_observations)
-            .reshape([batch, obs_dim])
-            .to_device(device);
-        let actions = Tensor::from_slice(&self.actions).to_device(device);
-        let rewards = Tensor::from_slice(&self.rewards).to_device(device);
-        let dones_f: Vec<f32> = self.dones.iter().map(|&d| if d { 1.0 } else { 0.0 }).collect();
-        let dones = Tensor::from_slice(&dones_f).to_device(device);
-        let is_weights = Tensor::from_slice(&self.is_weights).to_device(device);
-
-        (obs, actions, rewards, next_obs, dones, is_weights)
-    }
-
     /// Stack the batch into Burn tensors on `device`.
     ///
-    /// Parallel to [`Self::to_tensors`] but emits a named
-    /// [`PrioritizedBurnTensors`] struct so the DQN trainer can grab
-    /// fields by name. Includes the importance-sampling weights that the
-    /// uniform [`super::ReplayBatch`] does not carry.
+    /// Returns a named [`PrioritizedBurnTensors`] struct so the DQN
+    /// trainer can grab fields by name. Includes the importance-sampling
+    /// weights that the uniform [`super::ReplayBatch`] does not carry.
     ///
     /// Shapes (all on `device`):
     /// - `observations`: `[batch, obs_dim]`, `f32`
@@ -149,7 +115,6 @@ impl PrioritizedBatch {
     /// Note: `indices` is *not* a tensor — leaf-index round-trips back
     /// into [`PrioritizedReplayBuffer::update_priorities`] as a host
     /// `&[usize]`, so it stays on `self`.
-    #[cfg(feature = "training-burn")]
     pub fn to_burn_tensors<B: Backend>(&self, device: &B::Device) -> PrioritizedBurnTensors<B> {
         let batch = self.len();
         let obs_dim = self.obs_dim;
@@ -195,7 +160,6 @@ impl PrioritizedBatch {
 /// `ReplayBurnTensors` field set. The trainer multiplies the per-row
 /// TD-error magnitude by `is_weights` before reducing to a scalar loss
 /// — this is the bias correction described in Schaul et al. §3.4.
-#[cfg(feature = "training-burn")]
 #[derive(Debug)]
 pub struct PrioritizedBurnTensors<B: Backend> {
     /// Observations, shape `[batch, obs_dim]`, dtype `f32`.
@@ -705,25 +669,6 @@ mod tests {
         assert!((batch.is_weights[0] - 1.0).abs() < 1e-6);
     }
 
-    #[cfg(feature = "training")]
-    #[test]
-    fn test_to_tensors_shapes() {
-        let mut buf = PrioritizedReplayBuffer::new(8, 4, 0.6, 1e-6);
-        for i in 0..6 {
-            buf.push(&[i as f32; 4], (i % 2) as i64, i as f32, &[i as f32 + 1.0; 4], i == 5);
-        }
-        let mut rng = StdRng::seed_from_u64(1);
-        let batch = buf.sample(3, 0.4, &mut rng);
-        let (obs, actions, rewards, next_obs, dones, is_weights) = batch.to_tensors(Device::Cpu);
-        assert_eq!(obs.size(), vec![3, 4]);
-        assert_eq!(next_obs.size(), vec![3, 4]);
-        assert_eq!(actions.size(), vec![3]);
-        assert_eq!(rewards.size(), vec![3]);
-        assert_eq!(dones.size(), vec![3]);
-        assert_eq!(is_weights.size(), vec![3]);
-    }
-
-    #[cfg(feature = "training-burn")]
     mod burn_tests {
         use burn::backend::NdArray;
 

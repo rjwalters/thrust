@@ -14,9 +14,6 @@
 //!   `"minimal_specialization-v1"`) to base scenarios in
 //!   [`bucket_brigade_core::SCENARIOS`]. The versioned registry is the
 //!   reproducibility surface shared between Python and Rust trainers.
-//! - [`multi_agent`] (training-only): the
-//!   `crate::multi_agent::MultiAgentEnvironment` impl. Gated behind the
-//!   `training` feature because that's where the multi-agent trait lives.
 //!
 //! # Quick start
 //!
@@ -34,9 +31,6 @@
 
 pub mod env;
 pub mod registry;
-
-#[cfg(feature = "training")]
-pub mod multi_agent;
 
 pub use env::{ACTION_DIMS, BucketBrigadeMaEnv, MaStepResult, NUM_HOUSES, SCENARIO_INFO_LEN};
 pub use registry::{

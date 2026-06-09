@@ -6,10 +6,14 @@ Welcome to Thrust! This guide will help you get up and running.
 
 Before you begin, ensure you have:
 
-- **Rust 1.75+** - Install via [rustup](https://rustup.rs/)
-- **Git** - For cloning the repository
-- **libtorch** (coming in Phase 1, Week 3) - PyTorch C++ library
-- **CUDA Toolkit** (optional) - For GPU acceleration
+- **Rust nightly** - Install via [rustup](https://rustup.rs/); the
+  workspace pins a nightly toolchain in `rust-toolchain.toml`.
+- **Git** - For cloning the repository.
+
+That's it. The default `training` feature uses Burn's pure-Rust NdArray
+backend, so `cargo build` works out of the box without libtorch, CUDA,
+or any other system library. Opt-in GPU backends (wgpu, cuda) are
+documented in [BURN_BACKENDS.md](BURN_BACKENDS.md).
 
 ## 🏃 Quick Setup
 
@@ -87,7 +91,7 @@ See [WORKPLAN.md](../WORKPLAN.md) for the complete roadmap.
 
 ### Related Projects
 - [PufferLib](https://github.com/PufferAI/PufferLib) - Our inspiration
-- [tch-rs](https://github.com/LaurentMazare/tch-rs) - PyTorch bindings
+- [Burn](https://burn.dev) - The tensor framework Thrust uses
 
 ## ❓ FAQ
 

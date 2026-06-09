@@ -1,274 +1,227 @@
-//! Q-Network for DQN training
+//! Burn-backend Q-Network for DQN training (phase 4 of the Burn
+//! migration, #65).
 //!
-//! This module provides a multi-layer perceptron Q-network used by the
-//! DQN training algorithm. The network outputs one Q-value per discrete
-//! action and shares the same backbone topology as
-//! [`crate::policy::mlp::MlpPolicy`] (2-layer Tanh MLP with orthogonal
-//! initialization).
-//!
-//! Unlike `MlpPolicy`, `QNetwork` has a single output head — no separate
-//! value head — and the head's outputs are interpreted directly as
-//! `Q(s, a)` values (no softmax).
+//! Sibling to [`crate::policy::q_network::QNetworkBurn`] (tch path). The two
+//! modules share the same 2-layer Tanh backbone as
+//! [`crate::policy::mlp::MlpBurnPolicy`] /
+//! [`crate::policy::mlp::MlpBurnPolicy`] with PPO-style orthogonal
+//! initialization (gain `sqrt(2)` on the trunk, `0.01` on the Q-head). Unlike
+//! the MLP policy this network has a single output head — its outputs are
+//! interpreted directly as `Q(s, a)` values (no softmax).
 //!
 //! # Architecture
 //!
 //! ```text
-//! Input (observations) [batch, obs_dim]
-//!         |
-//!     [Dense(hidden_dim)]
-//!         |
-//!      Tanh
-//!         |
-//!     [Dense(hidden_dim)]
-//!         |
-//!      Tanh
-//!         |
-//!     [Dense(n_actions)]
-//!         |
+//! Input [batch, obs_dim]
+//!     → fc1 → Tanh
+//!     → fc2 → Tanh
+//!     → q_head
 //!  Q-values [batch, n_actions]
 //! ```
+//!
+//! # Target-net sync
+//!
+//! The tch path's `VarStore::copy(&source)` is replaced by Burn's
+//! record-based clone:
+//!
+//! ```ignore
+//! let snapshot = online.clone();           // cheap — Burn Modules clone
+//! target = target.load_record(snapshot.into_record());
+//! ```
+//!
+//! This is exposed as
+//! [`crate::policy::q_network::QNetworkBurn::copy_params_from`]
+//! so the Burn DQN trainer (phase 5) can drop in the same
+//! `target.copy_params_from(&online)` call site shape the tch trainer uses.
 
-use anyhow::Result;
-use tch::{
-    Device, Tensor,
-    nn::{self, Init, Module, OptimizerConfig},
+use burn::{
+    module::Module,
+    nn::{Initializer, Linear},
+    tensor::{Tensor, activation, backend::Backend},
 };
 
-/// Multi-layer perceptron Q-network for discrete actions
+use super::mlp::linear_with_init;
+
+/// Configuration for [`QNetworkBurn`] architecture.
 ///
-/// Implements a feedforward Q-network with:
-/// - 2 shared hidden layers with Tanh activations
-/// - Orthogonal weight initialization (gain = sqrt(2) for hidden, 0.01 for the
-///   output head — same recipe as `MlpPolicy`)
-/// - Single linear output head mapping to `n_actions` Q-values
-///
-/// The network is intentionally a sibling of `MlpPolicy` rather than a
-/// modification of it: PPO depends on the exact structure of `MlpPolicy`,
-/// and decoupling the Q-network keeps DQN changes self-contained.
-pub struct QNetwork {
-    vs: nn::VarStore,
-    backbone: nn::Sequential,
-    q_head: nn::Linear,
-    device: Device,
-    obs_dim: i64,
-    n_actions: i64,
-    hidden_dim: i64,
+/// Held as a separate type from
+/// [`crate::policy::mlp::MlpBurnConfig`] so that callers can
+/// independently tune the Q-network (e.g. wider hidden_dim for richer
+/// observation spaces) without dragging the policy module along.
+#[derive(Debug, Clone, Copy)]
+pub struct QNetworkBurnConfig {
+    /// Width of every hidden layer.
+    pub hidden_dim: usize,
+    /// If `true`, initialize hidden-layer weights with orthogonal
+    /// (gain `sqrt(2)`) and the Q-head with `gain = 0.01`. Set
+    /// `false` for Burn's stock Kaiming-uniform default.
+    pub use_orthogonal_init: bool,
 }
 
-impl QNetwork {
-    /// Create a new Q-network with the standard 2-layer Tanh backbone.
-    ///
-    /// # Arguments
-    ///
-    /// * `obs_dim` - Observation space dimensionality
-    /// * `n_actions` - Number of discrete actions
-    /// * `hidden_dim` - Size of hidden layers (typically 64 for low-dim
-    ///   control)
-    pub fn new(obs_dim: i64, n_actions: i64, hidden_dim: i64) -> Self {
-        let device = Device::cuda_if_available();
-        let vs = nn::VarStore::new(device);
-        let root = vs.root();
+impl Default for QNetworkBurnConfig {
+    fn default() -> Self {
+        Self { hidden_dim: 64, use_orthogonal_init: true }
+    }
+}
 
-        let hidden_init = Init::Orthogonal { gain: 2.0_f64.sqrt() };
-        let mut hidden_config = nn::LinearConfig::default();
-        hidden_config.ws_init = hidden_init;
+/// Two-layer Tanh Q-network on Burn.
+#[derive(Module, Debug)]
+pub struct QNetworkBurn<B: Backend> {
+    fc1: Linear<B>,
+    fc2: Linear<B>,
+    q_head: Linear<B>,
+}
 
-        // Shared backbone: two Linear -> Tanh blocks. The path names are
-        // chosen so the VarStore layout mirrors `MlpPolicy::shared`: this
-        // makes the parameter dictionaries comparable and keeps the WASM
-        // export pathway uniform if QNetwork export is added later.
-        let backbone = nn::seq()
-            .add(nn::linear(&root / "backbone" / "fc1", obs_dim, hidden_dim, hidden_config))
-            .add_fn(|x| x.tanh())
-            .add(nn::linear(&root / "backbone" / "fc2", hidden_dim, hidden_dim, hidden_config))
-            .add_fn(|x| x.tanh());
+impl<B: Backend> QNetworkBurn<B> {
+    /// Build a fresh Q-network with the default orthogonal-init config.
+    pub fn new(obs_dim: usize, n_actions: usize, hidden_dim: usize, device: &B::Device) -> Self {
+        Self::with_config(
+            obs_dim,
+            n_actions,
+            QNetworkBurnConfig { hidden_dim, ..Default::default() },
+            device,
+        )
+    }
 
-        let output_init = Init::Orthogonal { gain: 0.01 };
-        let mut output_config = nn::LinearConfig::default();
-        output_config.ws_init = output_init;
+    /// Build a fresh Q-network with the given configuration.
+    pub fn with_config(
+        obs_dim: usize,
+        n_actions: usize,
+        config: QNetworkBurnConfig,
+        device: &B::Device,
+    ) -> Self {
+        let hidden_init = if config.use_orthogonal_init {
+            Initializer::Orthogonal { gain: 2.0_f64.sqrt() }
+        } else {
+            Initializer::KaimingUniform { gain: 1.0_f64 / 3.0_f64.sqrt(), fan_out_only: false }
+        };
+        let output_init = if config.use_orthogonal_init {
+            Initializer::Orthogonal { gain: 0.01 }
+        } else {
+            Initializer::KaimingUniform { gain: 1.0_f64 / 3.0_f64.sqrt(), fan_out_only: false }
+        };
 
-        let q_head = nn::linear(&root / "q_head", hidden_dim, n_actions, output_config);
-        let device = vs.device();
+        let fc1 = linear_with_init::<B>(obs_dim, config.hidden_dim, hidden_init.clone(), device);
+        let fc2 = linear_with_init::<B>(config.hidden_dim, config.hidden_dim, hidden_init, device);
+        let q_head = linear_with_init::<B>(config.hidden_dim, n_actions, output_init, device);
 
-        Self { vs, backbone, q_head, device, obs_dim, n_actions, hidden_dim }
+        Self { fc1, fc2, q_head }
     }
 
     /// Forward pass: compute `Q(s, a)` for every action `a`.
     ///
-    /// # Arguments
-    /// * `obs` - Observation tensor of shape `[batch, obs_dim]`
+    /// * `obs` shape `[batch, obs_dim]`.
+    /// * Returns Q-values of shape `[batch, n_actions]`.
+    pub fn forward(&self, obs: Tensor<B, 2>) -> Tensor<B, 2> {
+        let h = activation::tanh(self.fc1.forward(obs));
+        let h = activation::tanh(self.fc2.forward(h));
+        self.q_head.forward(h)
+    }
+
+    /// Replace this network's parameters with a deep copy of `source`'s
+    /// parameters.
     ///
-    /// # Returns
-    /// Q-value tensor of shape `[batch, n_actions]`.
-    pub fn forward(&self, obs: &Tensor) -> Tensor {
-        let features = self.backbone.forward(obs);
-        self.q_head.forward(&features)
-    }
-
-    /// Get the number of discrete actions this Q-network covers.
-    pub fn n_actions(&self) -> i64 {
-        self.n_actions
-    }
-
-    /// Get the observation dimension this Q-network expects.
-    pub fn obs_dim(&self) -> i64 {
-        self.obs_dim
-    }
-
-    /// Get the hidden layer width.
-    pub fn hidden_dim(&self) -> i64 {
-        self.hidden_dim
-    }
-
-    /// Get the device this network is on (CPU or CUDA).
-    pub fn device(&self) -> Device {
-        self.device
-    }
-
-    /// Borrow the underlying `VarStore` (e.g. for optimizer construction).
-    pub fn var_store(&self) -> &nn::VarStore {
-        &self.vs
-    }
-
-    /// Mutably borrow the underlying `VarStore`.
-    pub fn var_store_mut(&mut self) -> &mut nn::VarStore {
-        &mut self.vs
-    }
-
-    /// Create an Adam optimizer for this Q-network.
-    pub fn optimizer(&mut self, learning_rate: f64) -> nn::Optimizer {
-        nn::Adam::default().build(&self.vs, learning_rate).unwrap()
-    }
-
-    /// Copy all parameters from `source` into this network's `VarStore`.
-    ///
-    /// Used by [`crate::train::dqn::DQNTrainer`] to perform a hard target-net
-    /// sync: every `target_update_interval` env steps, the target network's
-    /// weights are overwritten with the online network's weights.
-    ///
-    /// Delegates to `tch::nn::VarStore::copy`, which performs a shape-checked,
-    /// tensor-by-tensor copy and returns an error if the two VarStores
-    /// disagree on shape.
-    pub fn copy_params_from(&mut self, source: &QNetwork) -> Result<()> {
-        self.vs.copy(&source.vs)?;
-        Ok(())
-    }
-
-    /// Save model parameters to a file.
-    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
-        self.vs.save(path)?;
-        Ok(())
-    }
-
-    /// Load model parameters from a file.
-    pub fn load<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
-        self.vs.load(path)?;
-        Ok(())
-    }
-
-    /// Freeze gradients (e.g. so the target network is not updated by the
-    /// optimizer if it ever ends up sharing one).
-    pub fn freeze(&mut self) {
-        self.vs.freeze();
-    }
-
-    /// Unfreeze gradients.
-    pub fn unfreeze(&mut self) {
-        self.vs.unfreeze();
+    /// Returns a new module with the same architecture but the
+    /// source's records. Burn's `Optimizer` ownership model (`step`
+    /// consumes the module by value) means we return `Self` rather
+    /// than mutating `&mut self`; the DQN trainer holds the target
+    /// net in an `Option<Self>` and swaps it through this call.
+    pub fn copy_params_from(self, source: &QNetworkBurn<B>) -> QNetworkBurn<B>
+    where
+        B: Backend,
+    {
+        // Burn modules can clone their record cheaply (the record is a
+        // tree of `Param`s; each `Param` is cheap to clone since the
+        // underlying tensors are reference-counted on the autodiff
+        // path). `load_record` consumes the receiver and returns a new
+        // module with the source's parameters.
+        self.load_record(source.clone().into_record())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use tch::Kind;
+    use burn::backend::{Autodiff, NdArray};
 
     use super::*;
 
+    type B = Autodiff<NdArray<f32>>;
+
     #[test]
-    fn test_q_network_creation() {
-        let q_net = QNetwork::new(4, 2, 64);
-        assert_eq!(q_net.obs_dim(), 4);
-        assert_eq!(q_net.n_actions(), 2);
-        assert_eq!(q_net.hidden_dim(), 64);
+    fn test_q_network_burn_creation() {
+        let device = Default::default();
+        let _q_net = QNetworkBurn::<B>::new(4, 2, 64, &device);
     }
 
     #[test]
-    fn test_forward_shape() {
-        let q_net = QNetwork::new(4, 2, 64);
-        let obs = Tensor::randn([8, 4], (Kind::Float, q_net.device()));
-        let q_values = q_net.forward(&obs);
-        assert_eq!(q_values.size(), vec![8, 2]);
+    fn test_q_network_burn_forward_shape() {
+        let device = Default::default();
+        let q_net = QNetworkBurn::<B>::new(4, 3, 32, &device);
+        let obs = Tensor::<B, 2>::zeros([8, 4], &device);
+        let q_values = q_net.forward(obs);
+        assert_eq!(q_values.dims(), [8, 3]);
     }
 
+    /// Mirrors `q_network::tests::test_copy_params_from_byte_equal`
+    /// from the tch path: after copying online → target, their forward
+    /// outputs must agree exactly.
     #[test]
-    fn test_copy_params_from_byte_equal() {
-        let mut online = QNetwork::new(4, 2, 32);
-        let mut target = QNetwork::new(4, 2, 32);
+    fn test_copy_params_from_matches_online() {
+        let device = Default::default();
+        let online = QNetworkBurn::<B>::with_config(
+            4,
+            2,
+            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false },
+            &device,
+        );
+        let target = QNetworkBurn::<B>::with_config(
+            4,
+            2,
+            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false },
+            &device,
+        );
 
-        // Sanity: before the copy the two networks should produce different
-        // outputs because they were initialized from different RNG draws.
-        let obs = Tensor::randn([4, 4], (Kind::Float, online.device()));
-        let q_online_before = online.forward(&obs);
-        let q_target_before = target.forward(&obs);
-        let pre_diff = (&q_online_before - &q_target_before).abs().sum(Kind::Float);
-        let pre_diff_val: f64 = pre_diff.try_into().unwrap_or(0.0);
-        assert!(pre_diff_val > 0.0, "expected fresh nets to disagree before copy");
+        // Build a simple synthetic batch.
+        let obs = Tensor::<B, 2>::from_data(
+            burn::tensor::TensorData::new(vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8], [2, 4]),
+            &device,
+        );
 
-        // Hard copy of online → target.
-        target.copy_params_from(&online).expect("copy_params_from failed");
+        // Sanity check: fresh nets should disagree (different orthogonal
+        // draws). We compare via host floats since we don't have a
+        // direct |a - b| reduction here.
+        let q_online_before: Vec<f32> = online.forward(obs.clone()).into_data().to_vec().unwrap();
+        let q_target_before: Vec<f32> = target.forward(obs.clone()).into_data().to_vec().unwrap();
+        let any_diff_before =
+            q_online_before.iter().zip(&q_target_before).any(|(a, b)| (a - b).abs() > 1e-6);
+        assert!(any_diff_before, "expected fresh nets to disagree before copy");
 
-        // After the copy every named variable must match byte-for-byte.
-        let online_vars = online.var_store().variables();
-        let target_vars = target.var_store().variables();
-        assert_eq!(online_vars.len(), target_vars.len());
-        for (name, online_t) in &online_vars {
-            let target_t = target_vars.get(name).expect("missing var in target");
-            let diff = (online_t - target_t).abs().sum(Kind::Float);
-            let diff_val: f64 = diff.try_into().unwrap_or(f64::INFINITY);
-            assert_eq!(
-                diff_val, 0.0,
-                "var {} differs after copy_params_from (sum |diff| = {})",
-                name, diff_val
+        // Sync target ← online.
+        let online_for_recall = QNetworkBurn::<B>::with_config(
+            4,
+            2,
+            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false },
+            &device,
+        );
+        // To compare, we want the sync to make `target` match `online`
+        // exactly. The Burn idiom returns a fresh module, which we
+        // re-bind:
+        let target_copied = target.copy_params_from(&online);
+        let q_online_after: Vec<f32> = online.forward(obs.clone()).into_data().to_vec().unwrap();
+        let q_target_after: Vec<f32> =
+            target_copied.forward(obs.clone()).into_data().to_vec().unwrap();
+        for (a, b) in q_online_after.iter().zip(&q_target_after) {
+            assert!(
+                (a - b).abs() < 1e-6,
+                "Q output mismatch after copy_params_from: online={a} target={b}"
             );
         }
 
-        // And the forward pass must now agree exactly.
-        let q_online_after = online.forward(&obs);
-        let q_target_after = target.forward(&obs);
-        let post_diff = (&q_online_after - &q_target_after).abs().sum(Kind::Float);
-        let post_diff_val: f64 = post_diff.try_into().unwrap_or(f64::INFINITY);
-        assert_eq!(post_diff_val, 0.0, "Q outputs differ after copy");
-
-        // Mutating online should NOT now affect target (independent VarStores).
-        let mut opt = online.optimizer(1e-2);
-        let pred = online.forward(&obs);
-        let loss = pred.square().mean(Kind::Float);
-        opt.zero_grad();
-        loss.backward();
-        opt.step();
-        let q_online_after_step = online.forward(&obs);
-        let q_target_after_step = target.forward(&obs);
-        let drift = (&q_online_after_step - &q_target_after_step).abs().sum(Kind::Float);
-        let drift_val: f64 = drift.try_into().unwrap_or(0.0);
-        assert!(drift_val > 0.0, "target unexpectedly tracked online net after grad step");
-    }
-
-    #[test]
-    fn test_save_load_roundtrip() {
-        let q_net = QNetwork::new(4, 2, 32);
-        let obs = Tensor::randn([4, 4], (Kind::Float, q_net.device()));
-        let q_before = q_net.forward(&obs);
-        let path = std::env::temp_dir().join("thrust_test_q_network.safetensors");
-        q_net.save(&path).unwrap();
-
-        let mut q_net2 = QNetwork::new(4, 2, 32);
-        q_net2.load(&path).unwrap();
-        let q_after = q_net2.forward(&obs);
-
-        let diff = (&q_before - &q_after).abs().mean(Kind::Float);
-        let diff_val: f64 = diff.try_into().unwrap();
-        assert!(diff_val < 1e-6);
-
-        std::fs::remove_file(&path).ok();
+        // And a *fresh* `online_for_recall` (independent draws) should
+        // still disagree with the synced target — confirms we copied
+        // online's specific draws, not "any zero-init".
+        let q_fresh: Vec<f32> = online_for_recall.forward(obs).into_data().to_vec().unwrap();
+        let still_differs = q_fresh.iter().zip(&q_target_after).any(|(a, b)| (a - b).abs() > 1e-6);
+        assert!(still_differs, "synced target unexpectedly matched a *different* fresh net");
     }
 }

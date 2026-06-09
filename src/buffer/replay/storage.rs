@@ -2,7 +2,7 @@
 //!
 //! This module implements a fixed-capacity ring buffer over flat `Vec`s
 //! suitable for vanilla DQN-style replay. Transitions are stored as
-//! plain CPU-side primitive vectors rather than `tch::Tensor`s so the
+//! plain CPU-side primitive vectors rather than Burn tensors so the
 //! buffer stays WASM-compatible if it's ever exposed there, and so the
 //! same code path can serve `--no-default-features` builds.
 //!

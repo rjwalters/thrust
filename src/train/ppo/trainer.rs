@@ -1,290 +1,234 @@
-//! PPO Trainer implementation
+//! Burn-backend PPO trainer (phase 3 of the Burn migration, #80).
 //!
-//! This module contains the main PPOTrainer struct and its training methods.
+//! Sibling to [`crate::train::ppo::PPOTrainerBurn`] (tch path). Both
+//! trainers implement the same clipped-surrogate, value-clip,
+//! entropy-bonus, KL-early-stop recipe; the only difference is the
+//! tensor backend and the optimizer ownership model.
+//!
+//! # Ownership model
+//!
+//! Burn's `Optimizer<M, B>` is move-through: every gradient step
+//! consumes the module by value and returns the updated copy. Phase
+//! 1's scout (#78) confirmed this is the **single biggest** structural
+//! divergence between the two backends — see
+//! `docs/BURN_MIGRATION_PHASE1_REPORT.md` friction point #1.
+//!
+//! The Burn trainer therefore *owns* the policy module via an
+//! `Option<P>` field and swaps it through the optimizer on every
+//! step:
+//!
+//! ```text
+//! let module = self.policy.take().unwrap();
+//! let grads = loss.backward();
+//! let grads = GradientsParams::from_grads(grads, &module);
+//! let module = self.optimizer.inner_mut().step(lr, module, grads);
+//! self.policy = Some(module);
+//! ```
+//!
+//! The tch trainer is `struct PPOTrainer<P>` with `policy: P`; the
+//! Burn trainer is `struct PPOTrainerBurn<B, P, O>` with the policy
+//! held in `Option<P>`. Phase 5 (#82) collapses the two when the
+//! ownership-model asymmetry goes away (only Burn remains).
+//!
+//! # Evaluating the policy
+//!
+//! The trainer takes a closure `evaluate_fn(&P, observations, actions)`
+//! that returns `(log_probs, entropy, values)` exactly as the tch
+//! trainer does (see `PPOTrainer::train_step_with_policy`). This keeps
+//! the loss math identical and lets the caller plug in any module
+//! whose forward pass yields the right tensor shapes — including, for
+//! phase 4, the proper `MlpBurnPolicy`/`SnakeCnnBurn` ports.
 
 use anyhow::{Result, anyhow};
-use tch::Tensor;
+use burn::{
+    module::AutodiffModule,
+    optim::{GradientsParams, Optimizer},
+    tensor::{Int, Tensor, backend::AutodiffBackend},
+};
 
-use super::{config::PPOConfig, loss::*, stats::TrainingStats};
-use crate::train::optimizer::{BackendOptimizer, TchOptimizer};
+use super::{
+    config::PPOConfig,
+    loss::{
+        compute_entropy_loss, compute_policy_loss, compute_value_loss, generate_minibatch_indices,
+        scalar_f64,
+    },
+    stats::TrainingStats,
+};
+use crate::train::optimizer::{BackendOptimizer, BurnOptimizer};
 
-/// PPO Trainer for policy optimization
+/// Burn-backend PPO trainer.
 ///
-/// Manages the training process including optimizer setup,
-/// gradient computation, and parameter updates.
+/// Generic over:
+/// - `B: AutodiffBackend` — the Burn backend (e.g. `Autodiff<NdArray<f32>>`,
+///   `Autodiff<Wgpu>`, etc.).
+/// - `P: AutodiffModule<B>` — the policy module type.
+/// - `O: Optimizer<P, B>` — the Burn optimizer (typically built from
+///   `AdamConfig::new().init()`).
 ///
-/// # Optimizer abstraction (phase 2b, #92)
-///
-/// The `optimizer` field is a [`TchOptimizer`] — a thin newtype around
-/// `tch::nn::Optimizer` that implements the backend-agnostic
-/// [`BackendOptimizer`] trait. Algorithm bodies call into the trait
-/// methods (`zero_grad`, `clip_grad_norm`, `step`); the tch tensor's
-/// `loss.backward()` stays as a tensor method because backward is not
-/// part of the optimizer's responsibility on the tch path. Phase 3 (#80)
-/// generalizes this to also support a `BurnOptimizer<B, M, O>` flow when
-/// the loss math becomes backend-agnostic. The `set_optimizer` entry
-/// point still accepts a `tch::nn::Optimizer` for source-compat with
-/// existing examples; it wraps internally.
-#[derive(Debug)]
-pub struct PPOTrainer<P> {
+/// The policy is held in `Option<P>` because Burn's `Optimizer::step`
+/// consumes the module by value. We use `.take()` / put-back across
+/// each gradient step.
+pub struct PPOTrainerBurn<B, P, O>
+where
+    B: AutodiffBackend,
+    P: AutodiffModule<B>,
+    O: Optimizer<P, B>,
+{
     config: PPOConfig,
-    policy: P,
-    optimizer: Option<TchOptimizer>,
+    policy: Option<P>,
+    optimizer: BurnOptimizer<B, P, O>,
     total_steps: usize,
     total_episodes: usize,
     low_entropy_count: usize,
 }
 
-impl<P> PPOTrainer<P> {
-    /// Create a new PPO trainer
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - PPO configuration parameters
-    /// * `policy` - Policy network
-    pub fn new(config: PPOConfig, policy: P) -> Result<Self> {
+impl<B, P, O> PPOTrainerBurn<B, P, O>
+where
+    B: AutodiffBackend,
+    P: AutodiffModule<B> + Clone,
+    O: Optimizer<P, B>,
+{
+    /// Build a new Burn PPO trainer.
+    pub fn new(config: PPOConfig, policy: P, optimizer: BurnOptimizer<B, P, O>) -> Result<Self> {
         config.validate()?;
-
         Ok(Self {
             config,
-            policy,
-            optimizer: None,
+            policy: Some(policy),
+            optimizer,
             total_steps: 0,
             total_episodes: 0,
             low_entropy_count: 0,
         })
     }
 
-    /// Set the optimizer for training.
-    ///
-    /// Source-compat shim: accepts a raw `tch::nn::Optimizer` and wraps
-    /// it in a [`TchOptimizer`] internally so existing examples don't
-    /// need to import the new optimizer abstraction. Callers that want
-    /// to plug in a pre-built [`TchOptimizer`] (e.g. with a specific
-    /// recorded learning rate) can use [`Self::set_backend_optimizer`].
-    ///
-    /// This must be called before training starts.
-    pub fn set_optimizer(&mut self, optimizer: tch::nn::Optimizer) {
-        // The tch optimizer doesn't expose its construction-time learning
-        // rate; record it as 0.0 to signal "unknown". Diagnostic-only.
-        self.optimizer = Some(TchOptimizer::new(optimizer, 0.0));
-    }
-
-    /// Set the optimizer for training, taking a pre-built
-    /// [`TchOptimizer`] (so the wrapper's diagnostic learning-rate field
-    /// is populated correctly).
-    pub fn set_backend_optimizer(&mut self, optimizer: TchOptimizer) {
-        self.optimizer = Some(optimizer);
-    }
-
-    /// Get reference to the policy
-    pub fn policy(&self) -> &P {
-        &self.policy
-    }
-
-    /// Get mutable reference to the policy
-    pub fn policy_mut(&mut self) -> &mut P {
-        &mut self.policy
-    }
-
-    /// Get the configuration
+    /// Borrow the configuration.
     pub fn config(&self) -> &PPOConfig {
         &self.config
     }
 
-    /// Get total training steps
+    /// Borrow the policy. Panics if the trainer is mid-step (the policy
+    /// has been moved into the optimizer); only safe to call between
+    /// `train_step` invocations.
+    pub fn policy(&self) -> &P {
+        self.policy.as_ref().expect("policy is None mid-step")
+    }
+
+    /// Total completed gradient updates.
     pub fn total_steps(&self) -> usize {
         self.total_steps
     }
 
-    /// Get total episodes completed
+    /// Total completed episodes (caller increments).
     pub fn total_episodes(&self) -> usize {
         self.total_episodes
     }
 
-    /// Train for one PPO update
-    ///
-    /// This performs:
-    /// 1. Multiple epochs of minibatch updates
-    /// 2. Policy and value loss computation
-    /// 3. Gradient descent parameter updates
-    ///
-    /// # Arguments
-    ///
-    /// * `observations` - Observation tensor `[batch_size, obs_dim]`
-    /// * `actions` - Action tensor `[batch_size]`
-    /// * `old_log_probs` - Old log probabilities `[batch_size]`
-    /// * `old_values` - Old value estimates `[batch_size]`
-    /// * `advantages` - Computed advantages `[batch_size]`
-    /// * `returns` - Computed returns `[batch_size]`
-    /// * `forward_fn` - Function that performs forward pass through policy
-    ///
-    /// # Returns
-    /// Training statistics for this update
-    pub fn train_step<F>(
-        &mut self,
-        observations: &Tensor,
-        actions: &Tensor,
-        old_log_probs: &Tensor,
-        old_values: &Tensor,
-        advantages: &Tensor,
-        returns: &Tensor,
-        forward_fn: F,
-    ) -> Result<TrainingStats>
-    where
-        F: FnMut(&Tensor, &Tensor) -> (Tensor, Tensor, Tensor),
-    {
-        // Delegate to the aux-aware variant with a no-op aux closure.
-        self.train_step_with_aux(
-            observations,
-            actions,
-            old_log_probs,
-            old_values,
-            advantages,
-            returns,
-            forward_fn,
-            |_obs: &Tensor| None,
-        )
+    /// Increment the episode counter.
+    pub fn increment_episodes(&mut self, n: usize) {
+        self.total_episodes += n;
     }
 
-    /// Train for one PPO update with an auxiliary loss term.
+    /// Train for one PPO update.
     ///
-    /// Identical to [`Self::train_step`] except that `aux_fn` is invoked on
-    /// each minibatch's observations and may return an optional scalar tensor
-    /// that is added to the total loss before the backward pass:
+    /// Implements the same algorithm as
+    /// `PPOTrainer::train_step_with_policy` on the tch path:
+    /// 1. Normalize advantages to zero mean / unit variance.
+    /// 2. For each of `n_epochs` epochs, shuffle the buffer and iterate
+    ///    minibatches.
+    /// 3. Compute surrogate / value / entropy losses.
+    /// 4. `total_loss = policy + vf_coef * value + ent_coef * entropy`.
+    /// 5. Backprop, build `GradientsParams`, step the optimizer.
+    /// 6. KL early stop if `approx_kl > target_kl`.
+    /// 7. Entropy-collapse guard.
     ///
-    /// ```text
-    /// total_loss = policy_loss
-    ///            + vf_coef * value_loss
-    ///            + ent_coef * entropy_loss
-    ///            + aux_loss   // <-- this
-    /// ```
-    ///
-    /// The aux loss should already incorporate any scaling coefficient
-    /// (`λ * f(features)`); the trainer doesn't scale it. The corresponding
-    /// scalar is reported in [`TrainingStats::aux_loss`].
-    ///
-    /// Use cases:
-    /// - **Cross-agent representation regularizers** (Slepian-Wolf MARL P3):
-    ///   compute pairwise cross-correlation across agents' `encoder_features`.
-    /// - **Behavioural diversity bonuses** (DIAYN-style).
-    /// - **Imitation / KL-to-demo** regularizers.
-    /// - **Self-supervised auxiliaries** (forward/inverse models, BYOL, etc.).
-    ///
-    /// # Arguments
-    /// Same as [`Self::train_step`], plus:
-    /// * `aux_fn` --- `FnMut(&Tensor /* minibatch obs */) -> Option<Tensor>`.
-    ///   Return `None` to skip the auxiliary term on this minibatch; return
-    ///   `Some(scalar_loss)` (already scaled) to have it added to total_loss.
+    /// The `evaluate_fn` closure receives `(&policy, obs, actions)` and
+    /// must return `(log_probs, entropy, values)` — exactly the same
+    /// shape as the policy network's `evaluate_actions` method.
     #[allow(clippy::too_many_arguments)]
-    pub fn train_step_with_aux<F, A>(
+    pub fn train_step<F>(
         &mut self,
-        observations: &Tensor,
-        actions: &Tensor,
-        old_log_probs: &Tensor,
-        old_values: &Tensor,
-        advantages: &Tensor,
-        returns: &Tensor,
-        mut forward_fn: F,
-        mut aux_fn: A,
+        observations: Tensor<B, 2>,
+        actions: Tensor<B, 1, Int>,
+        old_log_probs: Tensor<B, 1>,
+        old_values: Tensor<B, 1>,
+        advantages: Tensor<B, 1>,
+        returns: Tensor<B, 1>,
+        mut evaluate_fn: F,
     ) -> Result<TrainingStats>
     where
-        F: FnMut(&Tensor, &Tensor) -> (Tensor, Tensor, Tensor),
-        A: FnMut(&Tensor) -> Option<Tensor>,
+        F: FnMut(&P, Tensor<B, 2>, Tensor<B, 1, Int>) -> (Tensor<B, 1>, Tensor<B, 1>, Tensor<B, 1>),
     {
-        let optimizer = self
-            .optimizer
-            .as_mut()
-            .ok_or_else(|| anyhow!("Optimizer not set. Call set_optimizer() first."))?;
-
-        let batch_size = observations.size()[0] as usize;
+        let device = observations.device();
+        let batch_size = observations.dims()[0];
         let mut stats_sum = TrainingStats::zeros();
         let mut num_updates = 0;
 
-        // Advantage normalization: standard practice in PPO to stabilize training
-        // Normalize to zero mean and unit variance across the entire batch
-        let adv_mean = advantages.mean(tch::Kind::Float);
-        let adv_std = advantages.std(false);
+        // Advantage normalization (matches the tch trainer).
+        let adv_mean_scalar = scalar_f64(advantages.clone().mean()) as f32;
+        let adv_data: Vec<f32> = advantages.into_data().to_vec().unwrap_or_default();
+        let adv_std = host_std_biased(&adv_data, adv_mean_scalar as f64) as f32;
+        let advantages_normalized_host: Vec<f32> =
+            adv_data.iter().map(|&a| (a - adv_mean_scalar) / (adv_std + 1e-8)).collect();
 
-        // Always normalize advantages (standard in all PPO implementations)
-        // This ensures that positive and negative advantages are balanced
-        let advantages_normalized = (advantages - adv_mean) / (adv_std + 1e-8);
-
-        // Multiple epochs over the data
-        for epoch in 0..self.config.n_epochs {
+        for _epoch in 0..self.config.n_epochs {
             let batch_indices = generate_minibatch_indices(batch_size, self.config.batch_size);
 
             for indices in &batch_indices {
-                // Convert indices to i64 for tensor indexing
-                let indices_i64: Vec<i64> = indices.iter().map(|&i| i as i64).collect();
-                let indices_tensor = Tensor::from_slice(&indices_i64);
+                let mb_obs = select_rows_2d(observations.clone(), indices, &device);
+                let mb_actions = select_rows_int(actions.clone(), indices, &device);
+                let mb_old_log_probs = select_rows_1d(old_log_probs.clone(), indices, &device);
+                let mb_old_values = select_rows_1d(old_values.clone(), indices, &device);
+                let mb_returns = select_rows_1d(returns.clone(), indices, &device);
+                let mb_adv: Vec<f32> =
+                    indices.iter().map(|&i| advantages_normalized_host[i]).collect();
+                let mb_advantages = Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::new(mb_adv, [indices.len()]),
+                    &device,
+                );
 
-                // Sample minibatch
-                let mb_obs =
-                    observations.index_select(0, &indices_tensor.to_device(observations.device()));
-                let mb_actions =
-                    actions.index_select(0, &indices_tensor.to_device(actions.device()));
-                let mb_old_log_probs = old_log_probs
-                    .index_select(0, &indices_tensor.to_device(old_log_probs.device()));
-                let mb_old_values =
-                    old_values.index_select(0, &indices_tensor.to_device(old_values.device()));
-                let mb_advantages = advantages_normalized
-                    .index_select(0, &indices_tensor.to_device(advantages_normalized.device()));
-                let mb_returns =
-                    returns.index_select(0, &indices_tensor.to_device(returns.device()));
+                // Take the policy out so we can move it through `step`.
+                let policy = self
+                    .policy
+                    .take()
+                    .ok_or_else(|| anyhow!("policy is None; concurrent train_step calls?"))?;
 
-                // Forward pass
-                let (log_probs, entropy, values) = forward_fn(&mb_obs, &mb_actions);
+                let (log_probs, entropy, values) =
+                    evaluate_fn(&policy, mb_obs.clone(), mb_actions.clone());
 
-                // Compute losses
                 let (policy_loss, clip_fraction, approx_kl) = compute_policy_loss(
-                    &log_probs,
-                    &mb_old_log_probs,
-                    &mb_advantages,
+                    log_probs,
+                    mb_old_log_probs,
+                    mb_advantages,
                     self.config.clip_range,
                 );
 
                 let (value_loss, explained_var) = compute_value_loss(
-                    &values,
-                    &mb_old_values,
-                    &mb_returns,
+                    values,
+                    mb_old_values,
+                    mb_returns,
                     self.config.clip_range_vf,
                 );
 
-                let entropy_loss = compute_entropy_loss(&entropy);
+                let entropy_loss = compute_entropy_loss(entropy.clone());
 
-                // Optional auxiliary loss --- caller-supplied scalar tensor
-                // (already scaled by any coefficient the caller wants).
-                let aux_loss_opt = aux_fn(&mb_obs);
+                // Scalars for stat collection.
+                let policy_loss_val = scalar_f64(policy_loss.clone());
+                let value_loss_val = scalar_f64(value_loss.clone());
+                let entropy_val = scalar_f64(entropy.mean());
 
-                // Extract scalar values before tensors are moved
-                let policy_loss_val: f64 = f64::try_from(&policy_loss).unwrap_or(0.0);
-                let value_loss_val: f64 = f64::try_from(&value_loss).unwrap_or(0.0);
-                let entropy_val: f64 = f64::try_from(&entropy).unwrap_or(0.0);
-                let aux_loss_val: f64 =
-                    aux_loss_opt.as_ref().and_then(|t| f64::try_from(t).ok()).unwrap_or(0.0);
+                // total_loss = policy_loss + vf_coef * value_loss + ent_coef * entropy_loss
+                let total_loss = policy_loss
+                    + value_loss.mul_scalar(self.config.vf_coef as f32)
+                    + entropy_loss.mul_scalar(self.config.ent_coef as f32);
+                let total_loss_val = scalar_f64(total_loss.clone());
 
-                // Total loss
-                let mut loss = &policy_loss
-                    + self.config.vf_coef * &value_loss
-                    + self.config.ent_coef * &entropy_loss;
-                if let Some(aux) = aux_loss_opt {
-                    loss = loss + aux;
-                }
+                // Burn gradient flow: backward → GradientsParams → step.
+                let grads = total_loss.backward();
+                let grads = GradientsParams::from_grads(grads, &policy);
+                let lr = self.optimizer.learning_rate();
+                let policy = self.optimizer.inner_mut().step(lr, policy, grads);
+                self.policy = Some(policy);
 
-                let total_loss_val: f64 = f64::try_from(&loss).unwrap_or(0.0);
-
-                // Backward pass
-                optimizer.zero_grad();
-                loss.backward();
-
-                // Gradient clipping
-                optimizer.clip_grad_norm(self.config.max_grad_norm);
-
-                // Optimizer step
-                optimizer.step();
-
-                // Accumulate statistics
                 let step_stats = TrainingStats::new(
                     policy_loss_val,
                     value_loss_val,
@@ -293,43 +237,25 @@ impl<P> PPOTrainer<P> {
                     clip_fraction,
                     approx_kl,
                     explained_var,
-                )
-                .with_aux_loss(aux_loss_val);
+                );
                 stats_sum.add(&step_stats);
                 num_updates += 1;
 
-                // Early stopping based on KL divergence
                 if approx_kl > self.config.target_kl {
                     break;
                 }
             }
         }
 
-        // Update training counters
         self.total_steps += num_updates;
-
-        // Get average statistics
         let avg_stats = stats_sum.average();
 
-        // Check for entropy collapse (early stopping)
+        // Entropy-collapse guard (matches the tch trainer).
         const ENTROPY_THRESHOLD: f64 = 0.05;
         const MAX_LOW_ENTROPY_COUNT: usize = 3;
-
         if avg_stats.entropy < ENTROPY_THRESHOLD {
             self.low_entropy_count += 1;
-            tracing::warn!(
-                "⚠️  Low entropy detected: {:.4} (count: {}/{})",
-                avg_stats.entropy,
-                self.low_entropy_count,
-                MAX_LOW_ENTROPY_COUNT
-            );
-
             if self.low_entropy_count >= MAX_LOW_ENTROPY_COUNT {
-                tracing::error!(
-                    "🚨 Training stopped: Entropy collapse detected! Entropy has been below {:.3} for {} consecutive updates.",
-                    ENTROPY_THRESHOLD,
-                    MAX_LOW_ENTROPY_COUNT
-                );
                 return Err(anyhow!(
                     "Training stopped due to entropy collapse (entropy < {} for {} updates)",
                     ENTROPY_THRESHOLD,
@@ -337,304 +263,147 @@ impl<P> PPOTrainer<P> {
                 ));
             }
         } else {
-            // Reset counter if entropy is healthy
-            if self.low_entropy_count > 0 {
-                tracing::info!(
-                    "✅ Entropy recovered: {:.4} (reset low entropy counter)",
-                    avg_stats.entropy
-                );
-                self.low_entropy_count = 0;
-            }
-        }
-
-        // Return average statistics
-        Ok(avg_stats)
-    }
-
-    /// Train for one PPO update with explicit policy reference
-    ///
-    /// This is a convenience method that calls train_step with a closure
-    /// that evaluates the policy.
-    ///
-    /// # Arguments
-    ///
-    /// * `policy` - Policy to evaluate
-    /// * `observations` - Observation tensor `[batch_size, obs_dim]`
-    /// * `actions` - Action tensor `[batch_size]`
-    /// * `old_log_probs` - Old log probabilities `[batch_size]`
-    /// * `old_values` - Old value estimates `[batch_size]`
-    /// * `advantages` - Computed advantages `[batch_size]`
-    /// * `returns` - Computed returns `[batch_size]`
-    /// * `evaluate_fn` - Function that evaluates policy at (obs, actions)
-    ///
-    /// # Returns
-    /// Training statistics for this update
-    pub fn train_step_with_policy<Policy, F>(
-        &mut self,
-        policy: &Policy,
-        observations: &Tensor,
-        actions: &Tensor,
-        old_log_probs: &Tensor,
-        old_values: &Tensor,
-        advantages: &Tensor,
-        returns: &Tensor,
-        evaluate_fn: F,
-    ) -> Result<TrainingStats>
-    where
-        F: Fn(&Policy, &Tensor, &Tensor) -> (Tensor, Tensor, Tensor),
-    {
-        self.train_step(
-            observations,
-            actions,
-            old_log_probs,
-            old_values,
-            advantages,
-            returns,
-            |obs, acts| evaluate_fn(policy, obs, acts),
-        )
-    }
-
-    /// Train for one PPO update using the trainer's own policy.
-    ///
-    /// Like [`Self::train_step_with_policy`], but evaluates `self.policy`
-    /// directly instead of requiring the caller to supply a separate
-    /// `&Policy` reference. This avoids the `&mut self + &self.policy`
-    /// split-borrow conflict at call sites: by performing the split-borrow
-    /// internally on disjoint struct fields (`policy` vs. `optimizer`,
-    /// `config`, etc.), the borrow checker proves disjointness in safe code.
-    ///
-    /// # Arguments
-    /// Same as [`Self::train_step`], except `evaluate_fn` receives
-    /// `&self.policy` as its first argument and is invoked per-minibatch.
-    pub fn train_step_self_policy<F>(
-        &mut self,
-        observations: &Tensor,
-        actions: &Tensor,
-        old_log_probs: &Tensor,
-        old_values: &Tensor,
-        advantages: &Tensor,
-        returns: &Tensor,
-        evaluate_fn: F,
-    ) -> Result<TrainingStats>
-    where
-        F: Fn(&P, &Tensor, &Tensor) -> (Tensor, Tensor, Tensor),
-    {
-        // Split-borrow `self` into its disjoint fields. Rust accepts this in
-        // safe code because `policy`, `optimizer`, `config`, `total_steps`,
-        // and `low_entropy_count` are non-overlapping struct fields.
-        let Self { config, policy, optimizer, total_steps, low_entropy_count, .. } = self;
-
-        let optimizer = optimizer
-            .as_mut()
-            .ok_or_else(|| anyhow!("Optimizer not set. Call set_optimizer() first."))?;
-
-        let batch_size = observations.size()[0] as usize;
-        let mut stats_sum = TrainingStats::zeros();
-        let mut num_updates = 0;
-
-        // Advantage normalization (matches train_step_with_aux).
-        let adv_mean = advantages.mean(tch::Kind::Float);
-        let adv_std = advantages.std(false);
-        let advantages_normalized = (advantages - adv_mean) / (adv_std + 1e-8);
-
-        // Multiple epochs over the data
-        for _epoch in 0..config.n_epochs {
-            let batch_indices = generate_minibatch_indices(batch_size, config.batch_size);
-
-            for indices in &batch_indices {
-                let indices_i64: Vec<i64> = indices.iter().map(|&i| i as i64).collect();
-                let indices_tensor = Tensor::from_slice(&indices_i64);
-
-                // Sample minibatch
-                let mb_obs =
-                    observations.index_select(0, &indices_tensor.to_device(observations.device()));
-                let mb_actions =
-                    actions.index_select(0, &indices_tensor.to_device(actions.device()));
-                let mb_old_log_probs = old_log_probs
-                    .index_select(0, &indices_tensor.to_device(old_log_probs.device()));
-                let mb_old_values =
-                    old_values.index_select(0, &indices_tensor.to_device(old_values.device()));
-                let mb_advantages = advantages_normalized
-                    .index_select(0, &indices_tensor.to_device(advantages_normalized.device()));
-                let mb_returns =
-                    returns.index_select(0, &indices_tensor.to_device(returns.device()));
-
-                // Forward pass: call directly through `&self.policy` via the
-                // split-borrow above. No `unsafe`, no raw pointers.
-                let (log_probs, entropy, values) = evaluate_fn(policy, &mb_obs, &mb_actions);
-
-                // Compute losses
-                let (policy_loss, clip_fraction, approx_kl) = compute_policy_loss(
-                    &log_probs,
-                    &mb_old_log_probs,
-                    &mb_advantages,
-                    config.clip_range,
-                );
-
-                let (value_loss, explained_var) =
-                    compute_value_loss(&values, &mb_old_values, &mb_returns, config.clip_range_vf);
-
-                let entropy_loss = compute_entropy_loss(&entropy);
-
-                // Extract scalar values before tensors are moved
-                let policy_loss_val: f64 = f64::try_from(&policy_loss).unwrap_or(0.0);
-                let value_loss_val: f64 = f64::try_from(&value_loss).unwrap_or(0.0);
-                let entropy_val: f64 = f64::try_from(&entropy).unwrap_or(0.0);
-
-                // Total loss
-                let loss =
-                    &policy_loss + config.vf_coef * &value_loss + config.ent_coef * &entropy_loss;
-
-                let total_loss_val: f64 = f64::try_from(&loss).unwrap_or(0.0);
-
-                // Backward pass
-                optimizer.zero_grad();
-                loss.backward();
-
-                // Gradient clipping
-                optimizer.clip_grad_norm(config.max_grad_norm);
-
-                // Optimizer step
-                optimizer.step();
-
-                // Accumulate statistics
-                let step_stats = TrainingStats::new(
-                    policy_loss_val,
-                    value_loss_val,
-                    entropy_val,
-                    total_loss_val,
-                    clip_fraction,
-                    approx_kl,
-                    explained_var,
-                );
-                stats_sum.add(&step_stats);
-                num_updates += 1;
-
-                // Early stopping based on KL divergence
-                if approx_kl > config.target_kl {
-                    break;
-                }
-            }
-        }
-
-        // Update training counters
-        *total_steps += num_updates;
-
-        // Get average statistics
-        let avg_stats = stats_sum.average();
-
-        // Check for entropy collapse (early stopping)
-        const ENTROPY_THRESHOLD: f64 = 0.05;
-        const MAX_LOW_ENTROPY_COUNT: usize = 3;
-
-        if avg_stats.entropy < ENTROPY_THRESHOLD {
-            *low_entropy_count += 1;
-            tracing::warn!(
-                "⚠️  Low entropy detected: {:.4} (count: {}/{})",
-                avg_stats.entropy,
-                *low_entropy_count,
-                MAX_LOW_ENTROPY_COUNT
-            );
-
-            if *low_entropy_count >= MAX_LOW_ENTROPY_COUNT {
-                tracing::error!(
-                    "🚨 Training stopped: Entropy collapse detected! Entropy has been below {:.3} for {} consecutive updates.",
-                    ENTROPY_THRESHOLD,
-                    MAX_LOW_ENTROPY_COUNT
-                );
-                return Err(anyhow!(
-                    "Training stopped due to entropy collapse (entropy < {} for {} updates)",
-                    ENTROPY_THRESHOLD,
-                    MAX_LOW_ENTROPY_COUNT
-                ));
-            }
-        } else if *low_entropy_count > 0 {
-            // Reset counter if entropy is healthy
-            tracing::info!(
-                "✅ Entropy recovered: {:.4} (reset low entropy counter)",
-                avg_stats.entropy
-            );
-            *low_entropy_count = 0;
+            self.low_entropy_count = 0;
         }
 
         Ok(avg_stats)
     }
+}
 
-    /// Increment step counter
-    pub fn increment_steps(&mut self, steps: usize) {
-        self.total_steps += steps;
+/// Biased standard deviation (denominator `n`).
+fn host_std_biased(xs: &[f32], mean: f64) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
     }
+    let n = xs.len() as f64;
+    let sq_dev = xs.iter().map(|&x| (x as f64 - mean).powi(2)).sum::<f64>();
+    (sq_dev / n).sqrt()
+}
 
-    /// Increment episode counter
-    pub fn increment_episodes(&mut self, episodes: usize) {
-        self.total_episodes += episodes;
+/// Select `indices` rows from a rank-2 tensor.
+fn select_rows_2d<B: AutodiffBackend>(
+    tensor: Tensor<B, 2>,
+    indices: &[usize],
+    device: &B::Device,
+) -> Tensor<B, 2> {
+    let cols = tensor.dims()[1];
+    let host: Vec<f32> = tensor.into_data().to_vec().unwrap_or_default();
+    let mut out = Vec::with_capacity(indices.len() * cols);
+    for &i in indices {
+        let start = i * cols;
+        out.extend_from_slice(&host[start..start + cols]);
     }
+    Tensor::<B, 2>::from_data(burn::tensor::TensorData::new(out, [indices.len(), cols]), device)
+}
+
+/// Select `indices` rows from a rank-1 float tensor.
+fn select_rows_1d<B: AutodiffBackend>(
+    tensor: Tensor<B, 1>,
+    indices: &[usize],
+    device: &B::Device,
+) -> Tensor<B, 1> {
+    let host: Vec<f32> = tensor.into_data().to_vec().unwrap_or_default();
+    let out: Vec<f32> = indices.iter().map(|&i| host[i]).collect();
+    Tensor::<B, 1>::from_data(burn::tensor::TensorData::new(out, [indices.len()]), device)
+}
+
+/// Select `indices` rows from a rank-1 int tensor.
+fn select_rows_int<B: AutodiffBackend>(
+    tensor: Tensor<B, 1, Int>,
+    indices: &[usize],
+    device: &B::Device,
+) -> Tensor<B, 1, Int> {
+    let host: Vec<i64> = tensor.into_data().to_vec().unwrap_or_default();
+    let out: Vec<i64> = indices.iter().map(|&i| host[i]).collect();
+    Tensor::<B, 1, Int>::from_data(burn::tensor::TensorData::new(out, [indices.len()]), device)
 }
 
 #[cfg(test)]
 mod tests {
+    use burn::{
+        backend::{Autodiff, NdArray},
+        optim::AdamConfig,
+    };
+
     use super::*;
-    use crate::policy::mlp::MlpPolicy;
+    use crate::{policy::mlp::MlpBurnPolicy, train::optimizer::BurnOptimizer};
 
-    /// DoD smoke test (issue #92): `PPOTrainer` constructs with a tch
-    /// optimizer via the phase-2b [`TchOptimizer`] wrapper.
-    ///
-    /// Confirms the optimizer field type change is source-compatible
-    /// with the existing `set_optimizer` entry point (which wraps the
-    /// raw `tch::nn::Optimizer` internally) and that the new
-    /// `set_backend_optimizer` entry point accepts a pre-built
-    /// [`TchOptimizer`] for callers that want to record the learning
-    /// rate explicitly.
+    type B = Autodiff<NdArray<f32>>;
+
+    /// Smoke test: a Burn PPO trainer constructs and exposes the same
+    /// config back through `config()`.
     #[test]
-    fn ppo_trainer_constructs_with_tch_optimizer() {
-        let config = PPOConfig::default();
-        let mut policy = MlpPolicy::new(4, 2, 32);
-        let tch_opt = policy.optimizer(3e-4);
-
-        let mut trainer = PPOTrainer::new(config.clone(), policy).unwrap();
-        // Source-compat path: raw tch optimizer.
-        trainer.set_optimizer(tch_opt);
-        assert!(trainer.optimizer.is_some());
-
-        // Backend-aware path: pre-built TchOptimizer (records lr).
-        let mut policy2 = MlpPolicy::new(4, 2, 32);
-        let tch_opt2 = policy2.optimizer(1e-3);
-        let backend_opt = TchOptimizer::new(tch_opt2, 1e-3);
-        let mut trainer2 = PPOTrainer::new(config, policy2).unwrap();
-        trainer2.set_backend_optimizer(backend_opt);
-        assert!(trainer2.optimizer.is_some());
-        assert!(
-            (trainer2.optimizer.as_ref().unwrap().learning_rate() - 1e-3).abs() < 1e-12,
-            "TchOptimizer should preserve the recorded learning rate"
-        );
+    fn ppo_trainer_burn_constructs() {
+        let device = Default::default();
+        let policy = MlpBurnPolicy::<B>::new(4, 2, 32, &device);
+        let inner_opt = AdamConfig::new().init();
+        let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner_opt, 3e-4);
+        let trainer = PPOTrainerBurn::new(PPOConfig::default(), policy, burn_opt).unwrap();
+        assert_eq!(trainer.total_steps(), 0);
     }
 
-    /// DoD smoke test (issue #92): the [`BurnOptimizer`] type can be
-    /// constructed and satisfies [`BackendOptimizer`].
-    ///
-    /// Pattern A keeps the PPOTrainer struct monomorphic in its
-    /// optimizer field (tch only) for phase 2b; phase 3 (#80) is where
-    /// the trainer body becomes generic and starts holding a
-    /// `BurnOptimizer`. The DoD's intent — verify the Burn-side
-    /// optimizer abstraction is constructible — is satisfied by this
-    /// test plus the more thorough `train::optimizer::tests::
-    /// burn_optimizer_satisfies_trait` test in the optimizer module
-    /// itself.
-    #[cfg(feature = "training-burn")]
+    /// End-to-end: a single train_step against a synthetic batch
+    /// completes without error, moves through the optimizer, and
+    /// records `num_updates > 0`.
     #[test]
-    fn burn_optimizer_constructs_for_ppo_module_shape() {
-        use burn::{
-            backend::{Autodiff, NdArray},
-            optim::AdamConfig,
-        };
-
-        use crate::{policy::mlp_burn::MlpBurnPolicy, train::optimizer::BurnOptimizer};
-
-        type B = Autodiff<NdArray<f32>>;
+    fn ppo_trainer_burn_train_step_runs() {
         let device = Default::default();
-        let _module = MlpBurnPolicy::<B>::new(4, 2, 32, &device);
-        let inner = AdamConfig::new().init();
-        let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner, 3e-4);
-        assert!((burn_opt.learning_rate() - 3e-4).abs() < 1e-12);
+        let policy = MlpBurnPolicy::<B>::new(4, 2, 16, &device);
+        let inner_opt = AdamConfig::new().init();
+        let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner_opt, 1e-3);
+        // Smaller batch_size so the synthetic 8-row batch produces > 1
+        // minibatch per epoch.
+        let config = PPOConfig::default().batch_size(4).n_epochs(1);
+        let mut trainer = PPOTrainerBurn::new(config, policy, burn_opt).unwrap();
+
+        let batch = 8;
+        let obs_dim = 4;
+        let mut obs_data = Vec::with_capacity(batch * obs_dim);
+        for i in 0..batch * obs_dim {
+            obs_data.push((i as f32) * 0.01);
+        }
+        let observations = Tensor::<B, 2>::from_data(
+            burn::tensor::TensorData::new(obs_data, [batch, obs_dim]),
+            &device,
+        );
+        let actions = Tensor::<B, 1, Int>::from_data(
+            burn::tensor::TensorData::new(vec![0i64, 1, 0, 1, 0, 1, 0, 1], [batch]),
+            &device,
+        );
+        let old_log_probs = Tensor::<B, 1>::from_data(
+            burn::tensor::TensorData::new(vec![-0.7f32; batch], [batch]),
+            &device,
+        );
+        let old_values = Tensor::<B, 1>::from_data(
+            burn::tensor::TensorData::new(vec![0.0f32; batch], [batch]),
+            &device,
+        );
+        let advantages = Tensor::<B, 1>::from_data(
+            burn::tensor::TensorData::new(
+                vec![1.0f32, -1.0, 0.5, -0.5, 1.0, -1.0, 0.5, -0.5],
+                [batch],
+            ),
+            &device,
+        );
+        let returns = Tensor::<B, 1>::from_data(
+            burn::tensor::TensorData::new(vec![1.0f32; batch], [batch]),
+            &device,
+        );
+
+        let stats = trainer
+            .train_step(
+                observations,
+                actions,
+                old_log_probs,
+                old_values,
+                advantages,
+                returns,
+                |p, o, a| p.evaluate_actions(o, a),
+            )
+            .unwrap();
+        assert!(trainer.total_steps() > 0);
+        // Stats should be finite.
+        assert!(stats.policy_loss.is_finite());
+        assert!(stats.value_loss.is_finite());
     }
 }

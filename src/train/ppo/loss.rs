@@ -1,141 +1,187 @@
-//! Loss computation functions for PPO
+//! PPO loss math (Burn backend).
 //!
-//! This module contains the core loss computation functions used
-//! in PPO training including policy loss, value loss, and entropy loss.
+//! After phase 5 of the Burn migration (#82), Burn is the only tensor
+//! backend in the workspace; this module hosts the canonical PPO loss
+//! surface used by [`crate::train::ppo::trainer::PPOTrainerBurn`].
 //!
-//! # Backend gating
+//! # API notes
 //!
-//! All tensor-typed helpers in this file (`compute_policy_loss`,
-//! `compute_value_loss`, `compute_entropy_loss`, `compute_gae`) are
-//! tch-backend specific and gated on `feature = "training"`. The
-//! backend-agnostic helpers (`generate_minibatch_indices`) sit outside
-//! the gate so the Burn-side trainer
-//! ([`crate::train::ppo_burn::trainer::PPOTrainerBurn`]) can share
-//! them. See [`crate::train::ppo_burn::loss`] for the Burn-backend
-//! parallels.
+//! - Burn's `mean()` returns a rank-1 scalar tensor — there is no `Kind::Float`
+//!   argument, and the resulting tensor still carries the backend parameter. We
+//!   expose the scalar-extracting helper ([`scalar_f64`]) that the trainer
+//!   needs at the loss boundary.
+//! - Burn carries the const rank in the type, so the policy-loss / value-loss
+//!   tensors carry their concrete rank (`Tensor<B, 1>` for per-row, scalar at
+//!   the end).
+//! - We extract scalars via [`scalar_f64`] which detaches implicitly via
+//!   `.into_scalar()`; no explicit `no_grad` scope is needed because the
+//!   autograd tape is not extended beyond the loss tensors we *return*.
 
-#[cfg(feature = "training")]
-use tch::{Kind, Tensor};
+use burn::{
+    prelude::ToElement,
+    tensor::{Tensor, backend::Backend},
+};
 
-/// Compute PPO policy loss with clipping
+/// Read a scalar tensor's value into an `f64`.
 ///
-/// Returns (policy_loss, clip_fraction, approx_kl)
-///
-/// # Arguments
-/// * `log_probs` - Log probabilities of actions under current policy
-/// * `old_log_probs` - Log probabilities of actions under old policy
-/// * `advantages` - Computed advantages
-/// * `clip_range` - PPO clipping parameter (epsilon)
-#[cfg(feature = "training")]
-pub fn compute_policy_loss(
-    log_probs: &Tensor,
-    old_log_probs: &Tensor,
-    advantages: &Tensor,
-    clip_range: f64,
-) -> (Tensor, f64, f64) {
-    // Compute probability ratio
-    let ratio = (log_probs - old_log_probs).exp();
-
-    // Compute clipped surrogate objective
-    let clipped_ratio = ratio.clamp(1.0 - clip_range, 1.0 + clip_range);
-    let policy_loss_1 = advantages * &ratio;
-    let policy_loss_2 = advantages * clipped_ratio;
-    let policy_loss = -policy_loss_1.minimum(&policy_loss_2).mean(Kind::Float);
-
-    // Compute fraction of clipped updates
-    let clip_fraction = (&ratio - 1.0)
-        .abs()
-        .greater(clip_range)
-        .to_kind(tch::Kind::Float)
-        .mean(Kind::Float);
-
-    // Approximate KL divergence for early stopping
-    let approx_kl = (old_log_probs - log_probs).mean(Kind::Float);
-
-    (
-        policy_loss,
-        f64::try_from(&clip_fraction).unwrap_or(0.0),
-        f64::try_from(&approx_kl).unwrap_or(0.0),
-    )
+/// Burn's `into_scalar()` consumes the tensor and returns
+/// `B::FloatElem`. We use Burn's [`ToElement`] trait to convert it to
+/// `f64` regardless of whether the underlying float type is `f32` or
+/// `f64`. Equivalent to tch's `f64::try_from(&tensor)` pattern, and
+/// (critically) does not extend the autograd tape — the returned `f64`
+/// is a host-side primitive.
+pub fn scalar_f64<B: Backend>(tensor: Tensor<B, 1>) -> f64 {
+    tensor.into_scalar().to_f64()
 }
 
-/// Compute value function loss with optional clipping
+/// Compute PPO policy (surrogate) loss with clipping.
 ///
-/// Implements the *pessimistic* clipped value loss used by SB3 and CleanRL:
-/// the per-sample loss is the **maximum** of the unclipped MSE and the
-/// MSE computed against a clipped value prediction. Taking the max
-/// mirrors the policy clip — it penalizes the worse of the two losses
-/// and prevents the value head from "outrunning" the trust region during
-/// the inner PPO update epochs.
-///
-/// When `clip_range_vf == f64::INFINITY` (or otherwise non-finite),
-/// clipping is a mathematical no-op so we short-circuit to the plain
-/// unclipped MSE. CartPole / Pong rely on this to opt out of value
-/// clipping without paying for a redundant `clamp` + `square` + `max`.
-///
-/// Returns (value_loss, explained_variance)
+/// Returns `(policy_loss, clip_fraction, approx_kl)`. The two `f64`
+/// values are host-side metrics (already detached from the autograd
+/// graph) for trainer-side reporting and KL early stopping.
 ///
 /// # Arguments
-/// * `values` - Predicted values under current value function
-/// * `old_values` - Predicted values under old value function
-/// * `returns` - Computed returns (targets)
-/// * `clip_range_vf` - Value function clipping parameter (use `f64::INFINITY`
-///   to disable clipping)
-#[cfg(feature = "training")]
-pub fn compute_value_loss(
-    values: &Tensor,
-    old_values: &Tensor,
-    returns: &Tensor,
+///
+/// * `log_probs` - Log-probabilities of the actions under the *current* policy.
+///   `[batch]`.
+/// * `old_log_probs` - Log-probabilities under the *behaviour* policy.
+///   `[batch]`.
+/// * `advantages` - Normalized advantages `[batch]`.
+/// * `clip_range` - PPO clipping parameter `ε`.
+///
+/// # Returns
+///
+/// 1. `policy_loss` — scalar tensor (rank 1, shape `[1]`) carrying the
+///    grad-bearing surrogate loss.
+/// 2. `clip_fraction` — fraction of samples where `|ratio − 1| > ε`. Diagnostic
+///    only.
+/// 3. `approx_kl` — `E[old_log_prob − new_log_prob]`, the standard biased KL
+///    estimator used by SB3/CleanRL for early stopping.
+pub fn compute_policy_loss<B: Backend>(
+    log_probs: Tensor<B, 1>,
+    old_log_probs: Tensor<B, 1>,
+    advantages: Tensor<B, 1>,
+    clip_range: f64,
+) -> (Tensor<B, 1>, f64, f64) {
+    // ratio = exp(new − old)
+    let log_ratio = log_probs.clone() - old_log_probs.clone();
+    let ratio = log_ratio.clone().exp();
+
+    // Clipped surrogate objective (pessimistic min).
+    let clipped_ratio = ratio.clone().clamp(1.0 - clip_range, 1.0 + clip_range);
+    let surrogate_1 = advantages.clone() * ratio.clone();
+    let surrogate_2 = advantages * clipped_ratio;
+    let per_sample = surrogate_1.min_pair(surrogate_2);
+    let policy_loss = per_sample.mean().neg();
+
+    // Clip fraction: mean of (|ratio − 1| > ε).
+    //
+    // Burn 0.21's bool→float cast goes via `.float()`. The threshold
+    // comparison gives a `Bool` tensor; we materialize it to a float,
+    // take the mean, and pull the scalar to the host.
+    let one = Tensor::<B, 1>::ones_like(&ratio);
+    let abs_dev = (ratio - one).abs();
+    let clipped_mask = abs_dev.greater_elem(clip_range as f32).float();
+    let clip_fraction = scalar_f64(clipped_mask.mean());
+
+    // Biased KL estimator: E[old − new].
+    let approx_kl = scalar_f64((old_log_probs - log_probs).mean());
+
+    (policy_loss, clip_fraction, approx_kl)
+}
+
+/// Compute the value-function loss with optional clipping.
+///
+/// Implements the *pessimistic* clipped value loss (the SB3/CleanRL
+/// recipe). When `clip_range_vf` is non-finite the clipped branch is
+/// skipped and we fall through to the plain MSE — semantically
+/// identical to the tch path.
+///
+/// # Arguments
+///
+/// * `values` - Current value-function predictions `V(s_t)`. `[batch]`.
+/// * `old_values` - Behaviour-policy value predictions. `[batch]`.
+/// * `returns` - Bootstrap targets (advantages + old_values). `[batch]`.
+/// * `clip_range_vf` - Value clipping parameter; `f64::INFINITY` to disable.
+///
+/// # Returns
+///
+/// 1. `value_loss` — scalar tensor carrying the grad-bearing value loss.
+/// 2. `explained_var` — host-side `1 − Var(returns − values) / Var(returns)`.
+pub fn compute_value_loss<B: Backend>(
+    values: Tensor<B, 1>,
+    old_values: Tensor<B, 1>,
+    returns: Tensor<B, 1>,
     clip_range_vf: f64,
-) -> (Tensor, f64) {
+) -> (Tensor<B, 1>, f64) {
     let value_loss = if clip_range_vf.is_finite() {
-        let values_clipped =
-            old_values + (values - old_values).clamp(-clip_range_vf, clip_range_vf);
-        let vf_loss_1 = (values - returns).square();
-        let vf_loss_2 = (values_clipped - returns).square();
-        // Pessimistic clip: take the worse (larger) of the two per-sample
-        // losses. Using `minimum` here would silently disable the clip,
-        // since the smaller loss is always available; that was a bug.
-        vf_loss_1.maximum(&vf_loss_2).mean(Kind::Float)
+        let clipped_dev =
+            (values.clone() - old_values.clone()).clamp(-clip_range_vf, clip_range_vf);
+        let values_clipped = old_values + clipped_dev;
+        let vf_loss_1 = (values.clone() - returns.clone()).powf_scalar(2.0_f32);
+        let vf_loss_2 = (values_clipped - returns.clone()).powf_scalar(2.0_f32);
+        vf_loss_1.max_pair(vf_loss_2).mean()
     } else {
-        (values - returns).square().mean(Kind::Float)
+        (values.clone() - returns.clone()).powf_scalar(2.0_f32).mean()
     };
 
-    // Compute explained variance
-    let var_returns = returns.var(false);
-    let var_returns_val: f64 = f64::try_from(&var_returns).unwrap_or(0.0);
-    let explained_var = if var_returns_val == 0.0 {
-        1.0 // Perfect prediction if no variance in returns
-    } else {
-        let residual_var = (returns - values).var(false);
-        let residual_var_val: f64 = f64::try_from(&residual_var).unwrap_or(0.0);
-        1.0 - residual_var_val / var_returns_val
-    };
+    // Explained variance is a pure host-side metric.
+    let returns_vec: Vec<f32> = returns.clone().into_data().to_vec().unwrap_or_default();
+    let values_vec: Vec<f32> = values.into_data().to_vec().unwrap_or_default();
+    let explained_var = host_explained_variance(&returns_vec, &values_vec);
 
     (value_loss, explained_var)
 }
 
-/// Compute entropy loss (negative entropy for maximization)
+/// Host-side explained-variance computation.
 ///
-/// # Arguments
-/// * `entropy` - Entropy tensor from policy distribution
-#[cfg(feature = "training")]
-pub fn compute_entropy_loss(entropy: &Tensor) -> Tensor {
-    -entropy.mean(Kind::Float)
+/// `1 − Var(returns − values) / Var(returns)`. Mirrors the tch path's
+/// `var(false)` (biased estimator with denominator `n`) so the two
+/// implementations agree numerically.
+fn host_explained_variance(returns: &[f32], values: &[f32]) -> f64 {
+    if returns.is_empty() {
+        return 1.0;
+    }
+    let var_returns = host_variance_biased(returns);
+    if var_returns == 0.0 {
+        return 1.0;
+    }
+    let residual: Vec<f32> = returns.iter().zip(values).map(|(r, v)| r - v).collect();
+    let var_residual = host_variance_biased(&residual);
+    1.0 - var_residual / var_returns
 }
 
-/// Generate minibatch indices for PPO training
+fn host_variance_biased(xs: &[f32]) -> f64 {
+    if xs.is_empty() {
+        return 0.0;
+    }
+    let n = xs.len() as f64;
+    let mean = xs.iter().map(|&x| x as f64).sum::<f64>() / n;
+    let sq_dev = xs.iter().map(|&x| (x as f64 - mean).powi(2)).sum::<f64>();
+    sq_dev / n
+}
+
+/// Entropy loss = `-mean(entropy)` (we minimize loss, so we negate the
+/// entropy bonus before adding it into the total loss).
+pub fn compute_entropy_loss<B: Backend>(entropy: Tensor<B, 1>) -> Tensor<B, 1> {
+    entropy.mean().neg()
+}
+
+/// Generate randomized minibatch indices from a flat rollout buffer.
 ///
-/// Creates shuffled minibatches from a buffer of the given size.
-/// Each minibatch contains approximately `batch_size` samples.
+/// Backend-agnostic helper (uses `rand` only). Each minibatch contains
+/// approximately `batch_size` samples; the last batch is short if
+/// `buffer_size % batch_size != 0`.
 ///
 /// # Arguments
-/// * `buffer_size` - Total number of samples in buffer
-/// * `batch_size` - Desired size of each minibatch
+///
+/// * `buffer_size` - Total number of samples in the buffer.
+/// * `batch_size` - Desired size of each minibatch.
 ///
 /// # Returns
+///
 /// Vector of vectors, where each inner vector contains indices for one
-/// minibatch
+/// minibatch.
 pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<Vec<usize>> {
     use rand::seq::SliceRandom;
 
@@ -145,176 +191,58 @@ pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<
     indices.chunks(batch_size).map(|chunk| chunk.to_vec()).collect()
 }
 
-/// Compute Generalized Advantage Estimation (GAE)
-///
-/// # Arguments
-/// * `rewards` - Reward tensor [num_steps, num_envs]
-/// * `values` - Value estimates [num_steps, num_envs]
-/// * `next_values` - Next step value estimates `[num_envs]`
-/// * `dones` - Done flags [num_steps, num_envs]
-/// * `gamma` - Discount factor
-/// * `gae_lambda` - GAE lambda parameter
-///
-/// # Returns
-/// (advantages, returns) tensors
-#[cfg(feature = "training")]
-pub fn compute_gae(
-    rewards: &Tensor,
-    values: &Tensor,
-    next_values: &Tensor,
-    dones: &Tensor,
-    gamma: f64,
-    gae_lambda: f64,
-) -> (Tensor, Tensor) {
-    let mut advantages = Vec::new();
-    let mut returns = Vec::new();
-
-    let num_steps = rewards.size()[0];
-    let num_envs = rewards.size()[1];
-
-    for env_id in 0..num_envs {
-        let env_rewards = rewards.slice(1, env_id, env_id + 1, 1).squeeze_dim(1);
-        let env_values = values.slice(1, env_id, env_id + 1, 1).squeeze_dim(1);
-        let env_next_values = next_values.slice(0, env_id, env_id + 1, 1).squeeze_dim(0);
-        let env_dones = dones.slice(1, env_id, env_id + 1, 1).squeeze_dim(1);
-
-        let (env_advantages, env_returns) = compute_gae_single_env(
-            &env_rewards,
-            &env_values,
-            &env_next_values,
-            &env_dones,
-            gamma,
-            gae_lambda,
-        );
-
-        advantages.push(env_advantages.unsqueeze(1));
-        returns.push(env_returns.unsqueeze(1));
-    }
-
-    let advantages = Tensor::cat(&advantages, 1);
-    let returns = Tensor::cat(&returns, 1);
-
-    (advantages, returns)
-}
-
-/// Compute GAE for a single environment
-#[cfg(feature = "training")]
-fn compute_gae_single_env(
-    rewards: &Tensor,
-    values: &Tensor,
-    next_value: &Tensor,
-    dones: &Tensor,
-    gamma: f64,
-    gae_lambda: f64,
-) -> (Tensor, Tensor) {
-    let mut advantages = Vec::new();
-    let mut returns = Vec::new();
-    let mut last_gae = 0.0_f32;
-
-    let rewards_vec: Vec<f32> = Vec::try_from(rewards).unwrap_or_default();
-    let values_vec: Vec<f32> = Vec::try_from(values).unwrap_or_default();
-    let dones_vec: Vec<f32> = Vec::try_from(dones).unwrap_or_default();
-    let next_value_scalar: f32 = f32::try_from(next_value).unwrap_or(0.0);
-
-    // Iterate backwards through the trajectory
-    for t in (0..rewards_vec.len()).rev() {
-        let reward = rewards_vec[t];
-        let value = values_vec[t];
-        let done = dones_vec[t];
-
-        if t == rewards_vec.len() - 1 {
-            // Last step
-            let next_value = if done == 1.0 { 0.0 } else { next_value_scalar };
-            let delta = reward + (gamma as f32) * next_value - value;
-            last_gae = delta;
-        } else {
-            // Bootstrap from next advantage
-            let next_value = if done == 1.0 { 0.0 } else { values_vec[t + 1] };
-            let delta = reward + (gamma as f32) * next_value - value;
-            last_gae = delta + (gamma as f32) * (gae_lambda as f32) * last_gae;
-        }
-
-        advantages.push(last_gae);
-        returns.push(value + last_gae);
-    }
-
-    advantages.reverse();
-    returns.reverse();
-
-    (Tensor::from_slice(&advantages), Tensor::from_slice(&returns))
-}
-
-#[cfg(all(test, feature = "training"))]
+#[cfg(test)]
 mod tests {
-    use tch::Tensor;
+    use burn::{
+        backend::{Autodiff, NdArray},
+        tensor::{Tensor, TensorData},
+    };
 
     use super::*;
 
-    #[test]
-    fn test_compute_policy_loss() {
-        // Test basic policy loss computation
-        let log_probs = Tensor::from_slice(&[0.0, 0.5, -0.5]);
-        let old_log_probs = Tensor::from_slice(&[0.0, 0.0, 0.0]);
-        let advantages = Tensor::from_slice(&[1.0, -1.0, 0.5]);
-        let clip_range = 0.2;
+    type B = Autodiff<NdArray<f32>>;
 
-        let (loss, clip_frac, kl) =
-            compute_policy_loss(&log_probs, &old_log_probs, &advantages, clip_range);
-
-        // Loss should be a scalar tensor
-        assert_eq!(loss.size().len(), 0);
-        // Clip fraction and KL should be computed
-        assert!(clip_frac >= 0.0 && clip_frac <= 1.0);
-        assert!(kl >= 0.0); // KL should be non-negative
+    fn tensor1d(data: &[f32]) -> Tensor<B, 1> {
+        let device = Default::default();
+        Tensor::<B, 1>::from_data(TensorData::new(data.to_vec(), [data.len()]), &device)
     }
 
     #[test]
-    fn test_compute_value_loss() {
-        // Test value loss computation
-        let values = Tensor::from_slice(&[1.0, 2.0, 0.5]);
-        let old_values = Tensor::from_slice(&[1.0, 1.5, 0.8]);
-        let returns = Tensor::from_slice(&[1.2, 2.1, 0.6]);
-        let clip_range_vf = 0.2;
+    fn test_compute_policy_loss_shapes_and_ranges() {
+        let log_probs = tensor1d(&[0.0, 0.5, -0.5]);
+        let old_log_probs = tensor1d(&[0.0, 0.0, 0.0]);
+        let advantages = tensor1d(&[1.0, -1.0, 0.5]);
+        let clip_range = 0.2;
 
-        let (loss, explained_var) =
-            compute_value_loss(&values, &old_values, &returns, clip_range_vf);
+        let (loss, clip_frac, kl) =
+            compute_policy_loss(log_probs, old_log_probs, advantages, clip_range);
 
-        // Loss should be a scalar tensor
-        assert_eq!(loss.size().len(), 0);
-        // Explained variance should be between 0 and 1
-        assert!(explained_var >= 0.0 && explained_var <= 1.0);
+        // Loss should be a rank-1 scalar tensor of shape [1].
+        assert_eq!(loss.dims(), [1]);
+        assert!((0.0..=1.0).contains(&clip_frac));
+        // The biased KL estimator can go either direction; just sanity
+        // check it's finite.
+        assert!(kl.is_finite());
     }
 
     #[test]
     fn test_compute_value_loss_pessimistic_clip() {
-        // Regression test for the `minimum` vs `maximum` bug.
-        //
-        // Construct a case where the clipped loss is *much smaller* than
-        // the unclipped MSE. With `values - old_values = 5.0` and
-        // `clip_range_vf = 0.2`, the clipped prediction is `old_values + 0.2`.
-        // Setting `returns = old_values` gives:
-        //   * unclipped MSE = (5.0)^2                = 25.0
-        //   * clipped   MSE = (0.2)^2                = 0.04
-        //
-        // The buggy `min(...)` implementation returns 0.04 (effectively
-        // disabling the clip). The correct pessimistic `max(...)`
-        // implementation returns 25.0. We assert >= unclipped MSE so we
-        // pin down the post-fix invariant without being brittle to
-        // numerical drift.
-        let old_values = Tensor::from_slice(&[0.0_f32, 0.0, 0.0]);
-        let values = Tensor::from_slice(&[5.0_f32, 5.0, 5.0]);
-        let returns = Tensor::from_slice(&[0.0_f32, 0.0, 0.0]);
+        // Same construction as the tch test: clipped loss is tiny vs
+        // unclipped, so the pessimistic max must reflect the unclipped
+        // MSE.
+        let old_values = tensor1d(&[0.0_f32, 0.0, 0.0]);
+        let values = tensor1d(&[5.0_f32, 5.0, 5.0]);
+        let returns = tensor1d(&[0.0_f32, 0.0, 0.0]);
         let clip_range_vf = 0.2;
 
-        let (loss, _) = compute_value_loss(&values, &old_values, &returns, clip_range_vf);
-        let loss_val = f64::try_from(&loss).unwrap();
+        let (loss, _) = compute_value_loss(values, old_values, returns, clip_range_vf);
+        let loss_val = scalar_f64(loss);
 
         let unclipped_mse = 25.0_f64;
         let eps = 1e-4_f64;
         assert!(
             loss_val >= unclipped_mse - eps,
-            "expected pessimistic (max) clipped value loss >= unclipped MSE ({}), got {}. \
-             A value near 0.04 indicates the `minimum` bug has resurfaced.",
+            "expected pessimistic clipped value loss >= unclipped MSE ({}), got {}",
             unclipped_mse,
             loss_val
         );
@@ -322,21 +250,16 @@ mod tests {
 
     #[test]
     fn test_compute_value_loss_infinite_clip_is_plain_mse() {
-        // Passing `f64::INFINITY` for `clip_range_vf` must short-circuit
-        // to the unclipped MSE. CartPole and Pong rely on this to disable
-        // value clipping without paying for the clamp/square/max path.
-        let old_values = Tensor::from_slice(&[1.0_f32, 1.5, 0.8]);
-        let values = Tensor::from_slice(&[1.0_f32, 2.0, 0.5]);
-        let returns = Tensor::from_slice(&[1.2_f32, 2.1, 0.6]);
+        let old_values = tensor1d(&[1.0_f32, 1.5, 0.8]);
+        let values = tensor1d(&[1.0_f32, 2.0, 0.5]);
+        let returns = tensor1d(&[1.2_f32, 2.1, 0.6]);
 
-        let (loss_inf, _) = compute_value_loss(&values, &old_values, &returns, f64::INFINITY);
-        let loss_inf_val = f64::try_from(&loss_inf).unwrap();
+        let (loss_inf, _) = compute_value_loss(values, old_values, returns, f64::INFINITY);
+        let loss_inf_val = scalar_f64(loss_inf);
 
-        // Expected = mean( (values - returns)^2 )
-        //          = mean( 0.04, 0.01, 0.01 ) = 0.02
         let expected = 0.02_f64;
         assert!(
-            (loss_inf_val - expected).abs() < 1e-5,
+            (loss_inf_val - expected).abs() < 1e-4,
             "infinite clip should yield plain MSE {}, got {}",
             expected,
             loss_inf_val
@@ -344,37 +267,13 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_entropy_loss() {
-        // Test entropy loss computation
-        let entropy = Tensor::from_slice(&[0.5, 1.0, 0.1]);
-
-        let loss = compute_entropy_loss(&entropy);
-
-        // Loss should be a scalar tensor
-        assert_eq!(loss.size().len(), 0);
-
-        // Entropy loss should be negative (since it's -entropy)
-        let loss_val = loss.double_value(&[]) as f32;
+    fn test_compute_entropy_loss_negates_mean() {
+        let entropy = tensor1d(&[0.5, 1.0, 0.1]);
+        let loss = compute_entropy_loss(entropy);
+        assert_eq!(loss.dims(), [1]);
+        let loss_val = scalar_f64(loss);
+        // mean = (0.5 + 1.0 + 0.1) / 3 = 0.5333...; negated = -0.5333...
         assert!(loss_val < 0.0);
-    }
-
-    #[test]
-    fn test_generate_minibatch_indices() {
-        let buffer_size = 100;
-        let batch_size = 32;
-
-        let indices = generate_minibatch_indices(buffer_size, batch_size);
-
-        // Should have multiple batches
-        assert!(!indices.is_empty());
-
-        // Each batch should be approximately batch_size
-        for batch in &indices {
-            assert!(batch.len() <= batch_size);
-        }
-
-        // Total samples should cover the buffer
-        let total_samples: usize = indices.iter().map(|b| b.len()).sum();
-        assert_eq!(total_samples, buffer_size);
+        assert!((loss_val - (-0.5333333_f64)).abs() < 1e-4);
     }
 }

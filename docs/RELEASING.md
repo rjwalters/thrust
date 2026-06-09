@@ -92,12 +92,12 @@ Run `cargo publish --dry-run` to make sure the manifest is publishable
 and the tarball builds:
 
 ```bash
-# Without libtorch on the host machine, run with --no-default-features:
-cargo publish --dry-run --no-default-features
+# Full default-features dry-run (Burn NdArray backend; pure Rust, no
+# external system libraries required):
+cargo publish --dry-run
 
-# With libtorch available (either via $LIBTORCH or LIBTORCH_USE_PYTORCH=1),
-# run the full default-features dry-run too:
-LIBTORCH_USE_PYTORCH=1 cargo publish --dry-run
+# No-default-features dry-run (skips the training stack entirely):
+cargo publish --dry-run --no-default-features
 ```
 
 Inspect the tarball contents:
@@ -165,7 +165,7 @@ git checkout vX.Y.Z
 cargo login <your-crates.io-token>
 
 # Publish for real (no --dry-run this time):
-LIBTORCH_USE_PYTORCH=1 cargo publish
+cargo publish
 
 # Or, if you trust the dry-run and want to skip the verification rebuild:
 cargo publish --no-verify
@@ -191,15 +191,7 @@ curl -s https://crates.io/api/v1/crates/thrust-rl | jq '.crate.max_stable_versio
 open https://docs.rs/thrust-rl/X.Y.Z/
 ```
 
-If docs.rs failed (commonly because of `tch` / libtorch), open a
-follow-up issue with the failing log and consider whether to publish
-without the `training` feature on docs.rs by adding to `Cargo.toml`:
-
-```toml
-[package.metadata.docs.rs]
-no-default-features = true
-features = []
-```
+If docs.rs failed, open a follow-up issue with the failing log.
 
 ## Yanking a bad release
 

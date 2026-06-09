@@ -35,7 +35,7 @@ pub struct DQNConfig {
     pub target_update_interval: usize,
 
     /// Discount factor used in the TD target. With Double-DQN
-    /// (used unconditionally by [`crate::train::dqn::DQNTrainer`]):
+    /// (used unconditionally by [`crate::train::dqn::DQNTrainerBurn`]):
     /// `y = r + γ · (1 - done) · Q_target(s', argmax_a' Q_online(s', a'))`.
     pub gamma: f64,
 
@@ -56,7 +56,7 @@ pub struct DQNConfig {
     /// Polyak (soft) target update coefficient `τ ∈ (0, 1]`.
     ///
     /// When `Some(τ)`, every call to
-    /// [`crate::train::dqn::DQNTrainer::maybe_sync_target`] performs the
+    /// [`crate::train::dqn::DQNTrainerBurn::maybe_sync_target`] performs the
     /// blend
     ///
     /// ```text
@@ -329,7 +329,7 @@ impl DQNConfig {
 
     /// Enable Polyak (soft) target updates with coefficient `τ`.
     ///
-    /// When set, [`crate::train::dqn::DQNTrainer::maybe_sync_target`]
+    /// When set, [`crate::train::dqn::DQNTrainerBurn::maybe_sync_target`]
     /// performs `θ_target ← τ · θ_online + (1 − τ) · θ_target` on every
     /// call (i.e. every env step in the standard rollout loop) instead of
     /// the hard copy gated by `target_update_interval`.
