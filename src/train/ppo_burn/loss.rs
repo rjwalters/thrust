@@ -16,22 +16,21 @@
 //! # API differences vs. tch
 //!
 //! - Burn ops are free functions on the tensor (`tensor.clamp(lo, hi)`,
-//!   `tensor.exp()`, `min_pair`, `mean`, etc.) like tch, but Burn's
-//!   `mean()` returns a rank-1 scalar tensor — there is no `Kind::Float`
-//!   argument, and the resulting tensor still carries the backend
-//!   parameter. We expose the scalar-extracting helpers
-//!   ([`scalar_f64`]) that the trainer needs at the loss boundary.
-//! - Burn carries the const rank in the type, so the policy-loss /
-//!   value-loss tensors carry their concrete rank (`Tensor<B, 1>` for
-//!   per-row, scalar at the end). We avoid the scalar-tensor
-//!   ambiguity tch has with `Kind::Float` by always returning the
-//!   scalar tensor and letting the caller decide when to materialize.
-//! - The tch path uses `tch::no_grad` for the metrics extraction
-//!   (clip-fraction / approx-KL) because those values feed reporting,
-//!   not gradients. The Burn path does not need an explicit `no_grad`
-//!   scope — we extract scalars via [`scalar_f64`] which detaches
-//!   implicitly via `.into_scalar()`. The autograd tape is not extended
-//!   beyond the loss tensors we *return*.
+//!   `tensor.exp()`, `min_pair`, `mean`, etc.) like tch, but Burn's `mean()`
+//!   returns a rank-1 scalar tensor — there is no `Kind::Float` argument, and
+//!   the resulting tensor still carries the backend parameter. We expose the
+//!   scalar-extracting helpers ([`scalar_f64`]) that the trainer needs at the
+//!   loss boundary.
+//! - Burn carries the const rank in the type, so the policy-loss / value-loss
+//!   tensors carry their concrete rank (`Tensor<B, 1>` for per-row, scalar at
+//!   the end). We avoid the scalar-tensor ambiguity tch has with `Kind::Float`
+//!   by always returning the scalar tensor and letting the caller decide when
+//!   to materialize.
+//! - The tch path uses `tch::no_grad` for the metrics extraction (clip-fraction
+//!   / approx-KL) because those values feed reporting, not gradients. The Burn
+//!   path does not need an explicit `no_grad` scope — we extract scalars via
+//!   [`scalar_f64`] which detaches implicitly via `.into_scalar()`. The
+//!   autograd tape is not extended beyond the loss tensors we *return*.
 
 use burn::{
     prelude::ToElement,
@@ -58,8 +57,8 @@ pub fn scalar_f64<B: Backend>(tensor: Tensor<B, 1>) -> f64 {
 ///
 /// # Arguments
 ///
-/// * `log_probs` - Log-probabilities of the actions under the *current*
-///   policy. `[batch]`.
+/// * `log_probs` - Log-probabilities of the actions under the *current* policy.
+///   `[batch]`.
 /// * `old_log_probs` - Log-probabilities under the *behaviour* policy.
 ///   `[batch]`.
 /// * `advantages` - Normalized advantages `[batch]`.
@@ -69,10 +68,10 @@ pub fn scalar_f64<B: Backend>(tensor: Tensor<B, 1>) -> f64 {
 ///
 /// 1. `policy_loss` — scalar tensor (rank 1, shape `[1]`) carrying the
 ///    grad-bearing surrogate loss.
-/// 2. `clip_fraction` — fraction of samples where `|ratio − 1| > ε`.
-///    Diagnostic only.
-/// 3. `approx_kl` — `E[old_log_prob − new_log_prob]`, the standard
-///    biased KL estimator used by SB3/CleanRL for early stopping.
+/// 2. `clip_fraction` — fraction of samples where `|ratio − 1| > ε`. Diagnostic
+///    only.
+/// 3. `approx_kl` — `E[old_log_prob − new_log_prob]`, the standard biased KL
+///    estimator used by SB3/CleanRL for early stopping.
 pub fn compute_policy_loss<B: Backend>(
     log_probs: Tensor<B, 1>,
     old_log_probs: Tensor<B, 1>,
@@ -119,13 +118,11 @@ pub fn compute_policy_loss<B: Backend>(
 /// * `values` - Current value-function predictions `V(s_t)`. `[batch]`.
 /// * `old_values` - Behaviour-policy value predictions. `[batch]`.
 /// * `returns` - Bootstrap targets (advantages + old_values). `[batch]`.
-/// * `clip_range_vf` - Value clipping parameter; `f64::INFINITY` to
-///   disable.
+/// * `clip_range_vf` - Value clipping parameter; `f64::INFINITY` to disable.
 ///
 /// # Returns
 ///
-/// 1. `value_loss` — scalar tensor carrying the grad-bearing value
-///    loss.
+/// 1. `value_loss` — scalar tensor carrying the grad-bearing value loss.
 /// 2. `explained_var` — host-side `1 − Var(returns − values) / Var(returns)`.
 pub fn compute_value_loss<B: Backend>(
     values: Tensor<B, 1>,
@@ -249,8 +246,7 @@ mod tests {
         let values = tensor1d(&[1.0_f32, 2.0, 0.5]);
         let returns = tensor1d(&[1.2_f32, 2.1, 0.6]);
 
-        let (loss_inf, _) =
-            compute_value_loss(values, old_values, returns, f64::INFINITY);
+        let (loss_inf, _) = compute_value_loss(values, old_values, returns, f64::INFINITY);
         let loss_inf_val = scalar_f64(loss_inf);
 
         let expected = 0.02_f64;

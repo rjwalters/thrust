@@ -28,9 +28,9 @@
 // tch-specific bits (`compute_gae`, `compute_policy_loss`,
 // `compute_value_loss`, `PPOTrainer`) stay gated on `training`.
 pub use config::PPOConfig;
+pub use loss::generate_minibatch_indices;
 #[cfg(feature = "training")]
 pub use loss::{compute_entropy_loss, compute_gae, compute_policy_loss, compute_value_loss};
-pub use loss::generate_minibatch_indices;
 pub use stats::{AggregatedStats, TrainingStats};
 #[cfg(feature = "training")]
 pub use trainer::PPOTrainer;

@@ -7,10 +7,10 @@
 //! # Contents
 //!
 //! - [`loss`] — backend-generic PPO loss math (policy/value/entropy).
-//! - [`trainer`] — `PPOTrainerBurn<B, P, O>` that owns the policy
-//!   module (Burn's optimizer-consumes-module ownership model) and
-//!   exposes a `train_step` that runs the same surrogate-loss /
-//!   gradient-step / KL-early-stop logic as the tch trainer.
+//! - [`trainer`] — `PPOTrainerBurn<B, P, O>` that owns the policy module
+//!   (Burn's optimizer-consumes-module ownership model) and exposes a
+//!   `train_step` that runs the same surrogate-loss / gradient-step /
+//!   KL-early-stop logic as the tch trainer.
 //!
 //! # Numerical parity
 //!
@@ -26,9 +26,8 @@
 //! and pulls in tch types at the top of every file. Putting the Burn
 //! port under `train/ppo` would mean either:
 //!
-//! 1. Loosening the feature gate on the whole tch module, which forces
-//!    every tch-gated file to also be valid under `training-burn` alone;
-//!    or
+//! 1. Loosening the feature gate on the whole tch module, which forces every
+//!    tch-gated file to also be valid under `training-burn` alone; or
 //! 2. Pervasive cfg-attr scaffolding inside each file.
 //!
 //! Both are noisy; the parallel-sibling pattern (`ppo` for tch,

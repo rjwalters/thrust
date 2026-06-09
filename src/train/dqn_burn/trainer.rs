@@ -9,35 +9,33 @@
 //!
 //! The Burn trainer:
 //!
-//! - Owns an online Q-network module `Q` and a target Q-network module
-//!   of the same type. The trainer is generic over `Q: AutodiffModule<B>
+//! - Owns an online Q-network module `Q` and a target Q-network module of the
+//!   same type. The trainer is generic over `Q: AutodiffModule<B>
 //!   + Clone` so the actual network shape (CartPole MLP, Snake CNN,
 //!   etc.) ships in phase 4.
-//! - Provides ε-greedy action selection through a caller-supplied
-//!   `greedy_fn` (the network's forward + argmax). The trainer owns
-//!   the ε schedule and the env-step counter — the same as the tch
-//!   trainer's `select_action` API.
+//! - Provides ε-greedy action selection through a caller-supplied `greedy_fn`
+//!   (the network's forward + argmax). The trainer owns the ε schedule and the
+//!   env-step counter — the same as the tch trainer's `select_action` API.
 //! - Performs the Smooth-L1 / Double-DQN training step inside
-//!   [`DQNTrainerBurn::train_step`]. Caller-supplied closures hand off
-//!   the forward pass — exactly the shape the tch trainer uses when
-//!   `train_step` is called against an external loss closure.
-//! - Pushes transitions into a [`crate::buffer::replay::ReplayBuffer`]
-//!   and samples minibatches the same way as the tch trainer.
+//!   [`DQNTrainerBurn::train_step`]. Caller-supplied closures hand off the
+//!   forward pass — exactly the shape the tch trainer uses when `train_step` is
+//!   called against an external loss closure.
+//! - Pushes transitions into a [`crate::buffer::replay::ReplayBuffer`] and
+//!   samples minibatches the same way as the tch trainer.
 //! - Soft / Polyak target updates are folded into
-//!   [`DQNTrainerBurn::soft_update_target`], which the caller invokes
-//!   with the `tau` from config.
+//!   [`DQNTrainerBurn::soft_update_target`], which the caller invokes with the
+//!   `tau` from config.
 //!
 //! # NOT in scope for phase 3
 //!
-//! - Prioritized replay is intentionally **not** ported in this phase
-//!   — it would inflate the LOC delta past the 800-line budget called
-//!   out on issue #80. The hooks are still there
-//!   (`huber_per_sample` is exposed on the loss module) and phase 4
-//!   / 5 can add the IS-weighted path.
-//! - Hard / interval-based target sync is implemented as `clone()`
-//!   of the online module into the target slot when the env-step
-//!   counter hits the interval; the soft path uses Burn's module-tree
-//!   mutation through the trainer-provided `soft_blend_fn`.
+//! - Prioritized replay is intentionally **not** ported in this phase — it
+//!   would inflate the LOC delta past the 800-line budget called out on issue
+//!   #80. The hooks are still there (`huber_per_sample` is exposed on the loss
+//!   module) and phase 4 / 5 can add the IS-weighted path.
+//! - Hard / interval-based target sync is implemented as `clone()` of the
+//!   online module into the target slot when the env-step counter hits the
+//!   interval; the soft path uses Burn's module-tree mutation through the
+//!   trainer-provided `soft_blend_fn`.
 //!
 //! The acceptance test for phase 3 is that `train_cartpole_dqn` can be
 //! ported to this trainer with no algorithmic divergence; the
@@ -85,8 +83,8 @@ pub struct DQNStepStatsBurn {
 ///
 /// Generic over:
 /// - `B: AutodiffBackend`,
-/// - `Q: AutodiffModule<B> + Clone` — the Q-network module type
-///   (single backbone + action-dim head; ports in phase 4),
+/// - `Q: AutodiffModule<B> + Clone` — the Q-network module type (single
+///   backbone + action-dim head; ports in phase 4),
 /// - `O: Optimizer<Q, B>` — the Burn optimizer.
 pub struct DQNTrainerBurn<B, Q, O>
 where
@@ -241,13 +239,12 @@ where
     /// Two modes:
     /// 1. **Hard sync** (default): clones online → target every
     ///    `target_update_interval` env steps.
-    /// 2. **Soft / Polyak** (`config.soft_update_tau = Some(τ)`):
-    ///    the caller-supplied `blend_fn` is invoked every step. The
-    ///    caller is responsible for implementing the per-parameter
-    ///    blend `θ_target ← τ · θ_online + (1 − τ) · θ_target`. Burn
-    ///    0.21 does not expose a uniform `map_params` API, so the
-    ///    blend is parameterized over the concrete module type by the
-    ///    caller.
+    /// 2. **Soft / Polyak** (`config.soft_update_tau = Some(τ)`): the
+    ///    caller-supplied `blend_fn` is invoked every step. The caller is
+    ///    responsible for implementing the per-parameter blend `θ_target ← τ ·
+    ///    θ_online + (1 − τ) · θ_target`. Burn 0.21 does not expose a uniform
+    ///    `map_params` API, so the blend is parameterized over the concrete
+    ///    module type by the caller.
     pub fn maybe_sync_target<F>(&mut self, blend_fn: F) -> bool
     where
         F: FnOnce(&Q, Q, f64) -> Q,
@@ -276,13 +273,12 @@ where
     /// Double-DQN TD target.
     ///
     /// Caller supplies two closures:
-    /// - `forward_fn(&Q, obs)` — forward pass returning the
-    ///   `[batch, n_actions]` Q-values, with grad bearing iff the
-    ///   module is the online network.
-    /// - `forward_target_fn(&Q, obs)` — forward pass returning the
-    ///   `[batch, n_actions]` target-net Q-values. The trainer takes
-    ///   care of detaching these for the TD target — caller doesn't
-    ///   need to manage `no_grad`.
+    /// - `forward_fn(&Q, obs)` — forward pass returning the `[batch,
+    ///   n_actions]` Q-values, with grad bearing iff the module is the online
+    ///   network.
+    /// - `forward_target_fn(&Q, obs)` — forward pass returning the `[batch,
+    ///   n_actions]` target-net Q-values. The trainer takes care of detaching
+    ///   these for the TD target — caller doesn't need to manage `no_grad`.
     ///
     /// Returns `Ok(None)` if the buffer doesn't yet hold
     /// `min_buffer_size` transitions.
@@ -384,8 +380,7 @@ where
         let q_online_all = forward_fn(&online, t.observations);
         let q_taken = gather_action_q(q_online_all.clone(), t.actions);
         let next_q_target_all = forward_target_fn(&self.target, t.next_observations);
-        let td_target =
-            compute_td_target(t.rewards, t.dones, next_q_target_all, self.config.gamma);
+        let td_target = compute_td_target(t.rewards, t.dones, next_q_target_all, self.config.gamma);
 
         let td_loss = compute_loss(q_taken.clone(), td_target);
         let td_loss_val: f64 = td_loss.clone().into_scalar().to_f64();
@@ -421,9 +416,7 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
-    use crate::{
-        policy::mlp_burn::MlpBurnPolicy, train::optimizer::BurnOptimizer,
-    };
+    use crate::{policy::mlp_burn::MlpBurnPolicy, train::optimizer::BurnOptimizer};
 
     type B = Autodiff<NdArray<f32>>;
 
@@ -445,8 +438,7 @@ mod tests {
         let online = MlpBurnPolicy::<B>::new(4, 2, 16, &device);
         let inner_opt = AdamConfig::new().init();
         let burn_opt = BurnOptimizer::new(inner_opt, small_config().learning_rate);
-        let trainer =
-            DQNTrainerBurn::new(small_config(), online, burn_opt, 4, 2, device).unwrap();
+        let trainer = DQNTrainerBurn::new(small_config(), online, burn_opt, 4, 2, device).unwrap();
         assert_eq!(trainer.total_env_steps(), 0);
         assert_eq!(trainer.buffer_len(), 0);
     }
@@ -492,9 +484,7 @@ mod tests {
             let (logits, _) = q.forward(o);
             logits
         };
-        let stats = trainer
-            .train_step(&mut rng, forward_fn, forward_fn)
-            .unwrap();
+        let stats = trainer.train_step(&mut rng, forward_fn, forward_fn).unwrap();
         assert!(stats.is_some());
         let s = stats.unwrap();
         assert!(s.td_loss.is_finite());

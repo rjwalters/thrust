@@ -7,10 +7,9 @@
 //! # Contents
 //!
 //! - [`loss`] — backend-generic DQN / Double-DQN loss math.
-//! - [`trainer`] — `DQNTrainerBurn<B, Q, O>` that owns the online
-//!   Q-network module (Burn's optimizer-consumes-module ownership
-//!   model) and exposes a `train_step` that runs Smooth-L1 loss /
-//!   gradient-step logic.
+//! - [`trainer`] — `DQNTrainerBurn<B, Q, O>` that owns the online Q-network
+//!   module (Burn's optimizer-consumes-module ownership model) and exposes a
+//!   `train_step` that runs Smooth-L1 loss / gradient-step logic.
 //!
 //! # Why a separate module
 //!

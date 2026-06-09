@@ -21,8 +21,8 @@
 //!
 //! 1. Makes `messages.rs` backend-agnostic (no `tch::Tensor` fields).
 //! 2. Removes a redundant host→tch→host round-trip on every message.
-//! 3. Sets up phase 4 to swap `MlpPolicy` for `MlpBurnPolicy` in the
-//!    simulator without touching the message protocol.
+//! 3. Sets up phase 4 to swap `MlpPolicy` for `MlpBurnPolicy` in the simulator
+//!    without touching the message protocol.
 
 use super::population::AgentId;
 

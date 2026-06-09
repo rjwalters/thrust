@@ -163,10 +163,8 @@ where
         let adv_mean_scalar = scalar_f64(advantages.clone().mean()) as f32;
         let adv_data: Vec<f32> = advantages.into_data().to_vec().unwrap_or_default();
         let adv_std = host_std_biased(&adv_data, adv_mean_scalar as f64) as f32;
-        let advantages_normalized_host: Vec<f32> = adv_data
-            .iter()
-            .map(|&a| (a - adv_mean_scalar) / (adv_std + 1e-8))
-            .collect();
+        let advantages_normalized_host: Vec<f32> =
+            adv_data.iter().map(|&a| (a - adv_mean_scalar) / (adv_std + 1e-8)).collect();
 
         for _epoch in 0..self.config.n_epochs {
             let batch_indices = generate_minibatch_indices(batch_size, self.config.batch_size);
@@ -177,10 +175,8 @@ where
                 let mb_old_log_probs = select_rows_1d(old_log_probs.clone(), indices, &device);
                 let mb_old_values = select_rows_1d(old_values.clone(), indices, &device);
                 let mb_returns = select_rows_1d(returns.clone(), indices, &device);
-                let mb_adv: Vec<f32> = indices
-                    .iter()
-                    .map(|&i| advantages_normalized_host[i])
-                    .collect();
+                let mb_adv: Vec<f32> =
+                    indices.iter().map(|&i| advantages_normalized_host[i]).collect();
                 let mb_advantages = Tensor::<B, 1>::from_data(
                     burn::tensor::TensorData::new(mb_adv, [indices.len()]),
                     &device,
@@ -270,7 +266,8 @@ where
     }
 }
 
-/// Biased standard deviation (denominator `n`), matching `tch::Tensor::std(false)`.
+/// Biased standard deviation (denominator `n`), matching
+/// `tch::Tensor::std(false)`.
 fn host_std_biased(xs: &[f32], mean: f64) -> f64 {
     if xs.is_empty() {
         return 0.0;
@@ -293,10 +290,7 @@ fn select_rows_2d<B: AutodiffBackend>(
         let start = i * cols;
         out.extend_from_slice(&host[start..start + cols]);
     }
-    Tensor::<B, 2>::from_data(
-        burn::tensor::TensorData::new(out, [indices.len(), cols]),
-        device,
-    )
+    Tensor::<B, 2>::from_data(burn::tensor::TensorData::new(out, [indices.len(), cols]), device)
 }
 
 /// Select `indices` rows from a rank-1 float tensor.
@@ -307,10 +301,7 @@ fn select_rows_1d<B: AutodiffBackend>(
 ) -> Tensor<B, 1> {
     let host: Vec<f32> = tensor.into_data().to_vec().unwrap_or_default();
     let out: Vec<f32> = indices.iter().map(|&i| host[i]).collect();
-    Tensor::<B, 1>::from_data(
-        burn::tensor::TensorData::new(out, [indices.len()]),
-        device,
-    )
+    Tensor::<B, 1>::from_data(burn::tensor::TensorData::new(out, [indices.len()]), device)
 }
 
 /// Select `indices` rows from a rank-1 int tensor.
@@ -321,10 +312,7 @@ fn select_rows_int<B: AutodiffBackend>(
 ) -> Tensor<B, 1, Int> {
     let host: Vec<i64> = tensor.into_data().to_vec().unwrap_or_default();
     let out: Vec<i64> = indices.iter().map(|&i| host[i]).collect();
-    Tensor::<B, 1, Int>::from_data(
-        burn::tensor::TensorData::new(out, [indices.len()]),
-        device,
-    )
+    Tensor::<B, 1, Int>::from_data(burn::tensor::TensorData::new(out, [indices.len()]), device)
 }
 
 #[cfg(test)]
@@ -335,9 +323,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{
-        policy::mlp_burn::MlpBurnPolicy, train::optimizer::BurnOptimizer,
-    };
+    use crate::{policy::mlp_burn::MlpBurnPolicy, train::optimizer::BurnOptimizer};
 
     type B = Autodiff<NdArray<f32>>;
 

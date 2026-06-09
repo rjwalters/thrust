@@ -8,14 +8,14 @@
 //!
 //! # What is and isn't compared
 //!
-//! - **In scope**: scalar values returned by the loss functions
-//!   (`policy_loss`, `value_loss`, `entropy_loss`, `td_target`,
-//!   `td_loss`). These are computed from synthetic inputs that exist
-//!   on both backends and have known numerical answers.
+//! - **In scope**: scalar values returned by the loss functions (`policy_loss`,
+//!   `value_loss`, `entropy_loss`, `td_target`, `td_loss`). These are computed
+//!   from synthetic inputs that exist on both backends and have known numerical
+//!   answers.
 //! - **Out of scope**: gradients. Burn and tch use different autograd
-//!   implementations and their derivatives may differ in the last bit
-//!   even when the forward pass matches; gradient-level parity is
-//!   tested at the trainer-integration level in phases 4/5.
+//!   implementations and their derivatives may differ in the last bit even when
+//!   the forward pass matches; gradient-level parity is tested at the
+//!   trainer-integration level in phases 4/5.
 
 use burn::{
     backend::{Autodiff, NdArray},

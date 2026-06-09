@@ -146,13 +146,8 @@ pub fn compute_dqn_loss_double<B: Backend>(
     gamma: f64,
 ) -> Tensor<B, 1> {
     let q_taken = gather_action_q(q_online_all, actions);
-    let target = compute_td_target_double(
-        rewards,
-        dones,
-        next_q_online_all,
-        next_q_target_all,
-        gamma,
-    );
+    let target =
+        compute_td_target_double(rewards, dones, next_q_online_all, next_q_target_all, gamma);
     compute_loss(q_taken, target)
 }
 
@@ -216,8 +211,7 @@ mod tests {
         let q_online_next = tensor2d(&[0.5, 2.0, 1.0, 0.5], 2, 2);
         let q_target_next = tensor2d(&[10.0, 3.0, 7.0, 4.0], 2, 2);
 
-        let target =
-            compute_td_target_double(rewards, dones, q_online_next, q_target_next, 0.9);
+        let target = compute_td_target_double(rewards, dones, q_online_next, q_target_next, 0.9);
         let vals = read_vec(target);
         assert!((vals[0] - 3.7).abs() < 1e-4, "double-Q target sample 0 = {}", vals[0]);
         assert!((vals[1] - 0.5).abs() < 1e-4, "double-Q target sample 1 = {}", vals[1]);
@@ -257,7 +251,8 @@ mod tests {
 
     #[test]
     fn test_compute_dqn_loss_runs_end_to_end() {
-        let q_online = tensor2d(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2], 4, 3);
+        let q_online =
+            tensor2d(&[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2], 4, 3);
         let actions = actions1d(&[0, 1, 2, 1]);
         let rewards = tensor1d(&[1.0, 0.0, -1.0, 0.5]);
         let dones = tensor1d(&[0.0, 1.0, 0.0, 0.0]);
