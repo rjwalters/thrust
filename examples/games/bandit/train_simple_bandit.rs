@@ -1,22 +1,32 @@
 //! Train an actor-critic policy on `SimpleBandit` using the Burn 0.21
-//! backend (CPU `NdArray` + `Autodiff`).
+//! backend.
 //!
 //! The bandit trainer is the canonical end-to-end Burn example for the
 //! thrust-rl crate. It demonstrates the rollout/loss/update loop using
 //! the [`MlpBurnPolicy`] module, the move-through optimizer ownership
 //! model, and the `EnvPool` vectorized env wrapper.
 //!
+//! # Backends
+//!
+//! - **Default**: CPU `NdArray` + `Autodiff` (no extra features).
+//! - **Opt-in GPU**: `--features "training,wgpu"` swaps in `Autodiff<Wgpu>`
+//!   (cross-platform GPU via Vulkan / Metal / DX12 / WebGPU). Used by issue
+//!   #102 to validate Burn's GPU path end-to-end.
+//!
 //! Run:
 //!
 //! ```bash
 //! cargo run --example train_simple_bandit --release
+//! # or, on a GPU box:
+//! cargo run --release --features "training,wgpu" --example train_simple_bandit
 //! ```
 //!
-//! Expected: success rate > 0.95 within ~50k env steps.
+//! Expected: success rate > 0.95 within ~50k env steps on either
+//! backend.
 
 use anyhow::Result;
 use burn::{
-    backend::{Autodiff, NdArray},
+    backend::Autodiff,
     module::AutodiffModule,
     optim::{AdamConfig, GradientsParams, Optimizer},
     tensor::{Int, Tensor, TensorData},
@@ -26,11 +36,19 @@ use thrust_rl::{
     policy::mlp::MlpBurnPolicy,
 };
 
-// Pick the concrete backend stack up-front so the rest of the file is
-// monomorphic — keeps the scout simple. CPU only; GPU backends (wgpu, cuda)
-// are deferred to phase 6 of the migration.
-type Backend = Autodiff<NdArray<f32>>;
-type InnerBackend = NdArray<f32>;
+// Concrete backend stack — selected at compile time via Cargo features.
+// `--features "training,wgpu"` swaps the CPU NdArray default for Burn's
+// cross-platform GPU backend (Vulkan / Metal / DX12 / WebGPU).
+#[cfg(not(feature = "wgpu"))]
+type InnerBackend = burn::backend::NdArray<f32>;
+#[cfg(feature = "wgpu")]
+type InnerBackend = burn::backend::Wgpu<f32, i32>;
+type Backend = Autodiff<InnerBackend>;
+
+#[cfg(not(feature = "wgpu"))]
+const BACKEND_LABEL: &str = "NdArray<f32> + Autodiff (CPU)";
+#[cfg(feature = "wgpu")]
+const BACKEND_LABEL: &str = "Wgpu<f32, i32> + Autodiff (GPU: Vulkan/Metal/DX12/WebGPU)";
 
 const NUM_ENVS: usize = 4;
 const NUM_STEPS: usize = 100;
@@ -45,7 +63,8 @@ const HIDDEN_DIM: usize = 64;
 fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    tracing::info!("SimpleBandit + Burn (NdArray<f32> + Autodiff) scout trainer");
+    tracing::info!("SimpleBandit + Burn ({}) scout trainer", BACKEND_LABEL);
+    let training_start = std::time::Instant::now();
 
     // ---- env setup ---------------------------------------------------------
     let probe = SimpleBandit::new();
@@ -201,7 +220,18 @@ fn main() -> Result<()> {
     }
 
     let final_success = total_reward / total_steps as f64;
-    tracing::info!("Final success rate (burn path): {:.1}%", final_success * 100.0);
+    let elapsed = training_start.elapsed();
+    tracing::info!(
+        "Final success rate (burn path, {}): {:.1}% over {} steps",
+        BACKEND_LABEL,
+        final_success * 100.0,
+        total_steps
+    );
+    tracing::info!(
+        "Training wall-clock: {:.2}s ({:.0} env-steps/sec)",
+        elapsed.as_secs_f64(),
+        total_steps as f64 / elapsed.as_secs_f64()
+    );
 
     // Sanity-check: also confirm the trained policy makes correct argmax
     // choices on the two contexts (eval mode, no autodiff).

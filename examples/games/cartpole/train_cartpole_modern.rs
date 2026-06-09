@@ -31,7 +31,7 @@
 
 use anyhow::Result;
 use burn::{
-    backend::{Autodiff, NdArray},
+    backend::Autodiff,
     optim::AdamConfig,
     tensor::{Int, Tensor, TensorData},
 };
@@ -44,7 +44,20 @@ use thrust_rl::{
     },
 };
 
-type Backend = Autodiff<NdArray<f32>>;
+// Concrete backend stack — selected at compile time via Cargo features.
+// `--features "training,wgpu"` swaps the CPU NdArray default for Burn's
+// cross-platform GPU backend (Vulkan / Metal / DX12 / WebGPU). See issue
+// #102 for the GPU validation run.
+#[cfg(not(feature = "wgpu"))]
+type InnerBackend = burn::backend::NdArray<f32>;
+#[cfg(feature = "wgpu")]
+type InnerBackend = burn::backend::Wgpu<f32, i32>;
+type Backend = Autodiff<InnerBackend>;
+
+#[cfg(not(feature = "wgpu"))]
+const BACKEND_LABEL: &str = "NdArray<f32> + Autodiff (CPU)";
+#[cfg(feature = "wgpu")]
+const BACKEND_LABEL: &str = "Wgpu<f32, i32> + Autodiff (GPU: Vulkan/Metal/DX12/WebGPU)";
 
 const NUM_ENVS: usize = 16;
 const NUM_STEPS: usize = 256;
@@ -62,7 +75,7 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_TIMESTEPS);
 
-    tracing::info!("Starting Modern CartPole PPO Training (Burn backend)");
+    tracing::info!("Starting Modern CartPole PPO Training (Burn backend: {})", BACKEND_LABEL);
 
     let training_start = std::time::Instant::now();
 
