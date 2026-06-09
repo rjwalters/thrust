@@ -6,18 +6,19 @@
 //!
 //! # Contents
 //!
-//! - [`loss`] — backend-generic PPO loss math (policy/value/entropy).
-//! - [`trainer`] — `PPOTrainerBurn<B, P, O>` that owns the policy module
-//!   (Burn's optimizer-consumes-module ownership model) and exposes a
-//!   `train_step` that runs the same surrogate-loss / gradient-step /
+//! - [`crate::train::ppo_burn::loss`] — backend-generic PPO loss math
+//!   (policy/value/entropy).
+//! - [`crate::train::ppo_burn::trainer`] — `PPOTrainerBurn<B, P, O>` that owns
+//!   the policy module (Burn's optimizer-consumes-module ownership model) and
+//!   exposes a `train_step` that runs the same surrogate-loss / gradient-step /
 //!   KL-early-stop logic as the tch trainer.
 //!
 //! # Numerical parity
 //!
 //! Identical inputs to the tch PPO loss surface must produce the same
 //! scalar values to **1e-4 absolute tolerance** (DoD on issue #80).
-//! That is enforced by the integration parity tests in
-//! [`crate::train::parity_tests`] (active only when both `training` and
+//! That is enforced by the integration parity tests in the
+//! `parity_tests` module (active only when both `training` and
 //! `training-burn` features are enabled).
 //!
 //! # Why a separate module

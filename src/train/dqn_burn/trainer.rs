@@ -10,9 +10,8 @@
 //! The Burn trainer:
 //!
 //! - Owns an online Q-network module `Q` and a target Q-network module of the
-//!   same type. The trainer is generic over `Q: AutodiffModule<B>
-//!   + Clone` so the actual network shape (CartPole MLP, Snake CNN,
-//!   etc.) ships in phase 4.
+//!   same type. The trainer is generic over `Q: AutodiffModule<B> + Clone` so
+//!   the actual network shape (CartPole MLP, Snake CNN, etc.) ships in phase 4.
 //! - Provides ε-greedy action selection through a caller-supplied `greedy_fn`
 //!   (the network's forward + argmax). The trainer owns the ε schedule and the
 //!   env-step counter — the same as the tch trainer's `select_action` API.
@@ -23,8 +22,8 @@
 //! - Pushes transitions into a [`crate::buffer::replay::ReplayBuffer`] and
 //!   samples minibatches the same way as the tch trainer.
 //! - Soft / Polyak target updates are folded into
-//!   [`DQNTrainerBurn::soft_update_target`], which the caller invokes with the
-//!   `tau` from config.
+//!   [`DQNTrainerBurn::maybe_sync_target`], which the caller invokes with a
+//!   blend closure that applies the `tau` from config.
 //!
 //! # NOT in scope for phase 3
 //!
