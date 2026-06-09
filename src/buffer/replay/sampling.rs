@@ -2,28 +2,19 @@
 //!
 //! `sample` draws `batch_size` independent uniform indices from the
 //! filled portion of a [`super::storage::ReplayBuffer`] and copies the
-//! transitions into flat CPU-side vectors. `ReplayBatch::to_tensors`
-//! then stacks those vectors into `tch::Tensor`s on the requested
-//! device so the trainer can run a single Q-network forward pass.
-//!
-//! For the in-flight Burn migration (#65), `ReplayBatch::to_burn_tensors`
-//! produces the equivalent bundle as Burn tensors. The two methods are
-//! parallel surfaces, gated by `feature = "training"` and
-//! `feature = "training-burn"` respectively; nothing in the storage
-//! layout itself depends on the choice of tensor backend.
+//! transitions into flat CPU-side vectors. `ReplayBatch::to_burn_tensors`
+//! then stacks those vectors into Burn tensors on the requested device so
+//! the trainer can run a single Q-network forward pass.
 
-#[cfg(feature = "training-burn")]
 use burn::tensor::{Int, Tensor as BurnTensor, TensorData, backend::Backend};
 use rand::Rng;
-#[cfg(feature = "training")]
-use tch::{Device, Tensor};
 
 use super::storage::ReplayBuffer;
 
 /// One minibatch sampled from the replay buffer.
 ///
-/// All fields are CPU-side primitive vectors; convert to `tch::Tensor`s
-/// via [`ReplayBatch::to_tensors`] when handing them to the trainer.
+/// All fields are CPU-side primitive vectors; convert to Burn tensors
+/// via [`ReplayBatch::to_burn_tensors`] when handing them to the trainer.
 #[derive(Debug, Clone)]
 pub struct ReplayBatch {
     /// Flattened current observations, shape `[batch_size * obs_dim]`.
@@ -52,49 +43,18 @@ impl ReplayBatch {
         self.actions.is_empty()
     }
 
-    /// Stack the batch into `tch::Tensor`s on `device`.
-    ///
-    /// Returns `(obs, actions, rewards, next_obs, dones)` with shapes:
-    /// - `obs`: `[batch, obs_dim]`, `Kind::Float`
-    /// - `actions`: `[batch]`, `Kind::Int64`
-    /// - `rewards`: `[batch]`, `Kind::Float`
-    /// - `next_obs`: `[batch, obs_dim]`, `Kind::Float`
-    /// - `dones`: `[batch]`, `Kind::Float` (0.0 or 1.0 — Kind::Float is what
-    ///   the TD-target formula `(1 - done)` needs).
-    #[cfg(feature = "training")]
-    pub fn to_tensors(&self, device: Device) -> (Tensor, Tensor, Tensor, Tensor, Tensor) {
-        let batch = self.len() as i64;
-        let obs_dim = self.obs_dim as i64;
-
-        let obs = Tensor::from_slice(&self.observations)
-            .reshape([batch, obs_dim])
-            .to_device(device);
-        let next_obs = Tensor::from_slice(&self.next_observations)
-            .reshape([batch, obs_dim])
-            .to_device(device);
-        let actions = Tensor::from_slice(&self.actions).to_device(device);
-        let rewards = Tensor::from_slice(&self.rewards).to_device(device);
-        let dones_f: Vec<f32> = self.dones.iter().map(|&d| if d { 1.0 } else { 0.0 }).collect();
-        let dones = Tensor::from_slice(&dones_f).to_device(device);
-
-        (obs, actions, rewards, next_obs, dones)
-    }
-
     /// Stack the batch into Burn tensors on `device`.
     ///
-    /// Parallel to [`Self::to_tensors`] but emits a named
-    /// [`ReplayBurnTensors`] struct so trainers can pattern-match named
-    /// fields rather than positional tuple elements. Mirrors the
-    /// `RolloutTchTensors` convention introduced in #86.
+    /// Returns a named [`ReplayBurnTensors`] struct so trainers can
+    /// pattern-match named fields rather than positional tuple elements.
     ///
     /// Shapes (all on `device`):
     /// - `observations`: `[batch, obs_dim]`, `f32`
     /// - `actions`: `[batch]`, `i64` (Burn `Int` kind)
     /// - `rewards`: `[batch]`, `f32`
     /// - `next_observations`: `[batch, obs_dim]`, `f32`
-    /// - `dones`: `[batch]`, `f32` (0.0 / 1.0 — same convention as the tch path
-    ///   so the `(1 - done)` TD-target formula carries over).
-    #[cfg(feature = "training-burn")]
+    /// - `dones`: `[batch]`, `f32` (0.0 / 1.0; the TD-target formula `(1 -
+    ///   done)` consumes it directly as a float mask).
     pub fn to_burn_tensors<B: Backend>(&self, device: &B::Device) -> ReplayBurnTensors<B> {
         let batch = self.len();
         let obs_dim = self.obs_dim;
@@ -127,10 +87,8 @@ impl ReplayBatch {
 ///
 /// Fields are in the order DQN trainers consume them: state and action
 /// first, then the reward signal, then the bootstrap state and terminal
-/// mask used to build the TD target. Parallel to the tch path's positional
-/// 5-tuple but named so callers can grab fields by name (which keeps
-/// downstream patches that add fields source-compatible).
-#[cfg(feature = "training-burn")]
+/// mask used to build the TD target. Fields are named so downstream
+/// patches that add fields stay source-compatible.
 #[derive(Debug)]
 pub struct ReplayBurnTensors<B: Backend> {
     /// Observations, shape `[batch, obs_dim]`, dtype `f32`.
@@ -184,8 +142,6 @@ pub fn sample<R: Rng>(buffer: &ReplayBuffer, batch_size: usize, rng: &mut R) -> 
 #[cfg(test)]
 mod tests {
     use rand::{SeedableRng, rngs::StdRng};
-    #[cfg(feature = "training")]
-    use tch::Kind;
 
     use super::*;
 
@@ -229,28 +185,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "training")]
-    #[test]
-    fn test_to_tensors_shapes() {
-        let mut buf = ReplayBuffer::new(8, 4);
-        for i in 0..6 {
-            buf.push(&[i as f32; 4], (i % 2) as i64, i as f32, &[i as f32 + 1.0; 4], i == 5);
-        }
-        let mut rng = StdRng::seed_from_u64(1);
-        let batch = sample(&buf, 3, &mut rng);
-        let (obs, actions, rewards, next_obs, dones) = batch.to_tensors(Device::Cpu);
-        assert_eq!(obs.size(), vec![3, 4]);
-        assert_eq!(next_obs.size(), vec![3, 4]);
-        assert_eq!(actions.size(), vec![3]);
-        assert_eq!(rewards.size(), vec![3]);
-        assert_eq!(dones.size(), vec![3]);
-        assert_eq!(actions.kind(), Kind::Int64);
-        assert_eq!(rewards.kind(), Kind::Float);
-        // dones tensor is float-valued so it can be used in (1 - done)
-        assert_eq!(dones.kind(), Kind::Float);
-    }
-
-    #[cfg(feature = "training-burn")]
     mod burn_tests {
         use burn::backend::NdArray;
 

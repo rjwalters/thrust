@@ -36,17 +36,13 @@ Ready to contribute code? Great! See below for the development workflow.
 ## 🚀 Getting Started
 
 ### Prerequisites
-- **Rust:** Install via [rustup](https://rustup.rs/) (stable channel)
-- **Git:** For version control
-- **libtorch:** PyTorch C++ library (will be needed for Phase 1, Week 3)
-  ```bash
-  # On macOS with Homebrew
-  brew install pytorch
+- **Rust nightly:** Install via [rustup](https://rustup.rs/); the
+  workspace pins a nightly toolchain in `rust-toolchain.toml`.
+- **Git:** For version control.
 
-  # Or download from PyTorch website
-  # https://pytorch.org/get-started/locally/
-  ```
-- **CUDA Toolkit:** (Optional, for GPU support)
+No external system libraries are required — the default `training`
+feature uses Burn's pure-Rust NdArray backend. Optional GPU backends
+(wgpu, cuda) are documented in `docs/BURN_BACKENDS.md`.
   ```bash
   # On Ubuntu
   sudo apt install nvidia-cuda-toolkit

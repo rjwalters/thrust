@@ -9,9 +9,10 @@
 //!    priority sampling and importance-sampling correction weights (Schaul et
 //!    al. 2015).
 //!
-//! Both store transitions as flat CPU-side `Vec`s rather than
-//! `tch::Tensor`s so the buffer stays WASM-compatible if it ever needs
-//! to be exposed there.
+//! Both store transitions as flat CPU-side `Vec`s rather than Burn tensors
+//! so the buffer stays WASM-compatible if it ever needs to be exposed
+//! there. Tensor materialization happens via `to_burn_tensors` on the
+//! batch types when the trainer pushes them to a device.
 //!
 //! # Quick example (uniform)
 //!
@@ -25,8 +26,9 @@
 //! let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 //! if buf.is_ready(/* min_size */ 1) {
 //!     let batch = sample(&buf, 64, &mut rng);
-//!     let (obs, act, rew, next_obs, done) = batch.to_tensors(tch::Device::Cpu);
-//!     // ... feed (obs, act, rew, next_obs, done) into the DQN trainer ...
+//!     let device = Default::default();
+//!     let t = batch.to_burn_tensors::<MyBackend>(&device);
+//!     // ... feed t.* into the DQN trainer ...
 //! }
 //! ```
 //!
@@ -42,19 +44,16 @@
 //! let mut rng = rand::rngs::StdRng::seed_from_u64(0);
 //! if buf.is_ready(1) {
 //!     let batch = buf.sample(64, /* β */ 0.4, &mut rng);
-//!     let (obs, act, rew, next_obs, done, is_w) = batch.to_tensors(tch::Device::Cpu);
+//!     let device = Default::default();
+//!     let t = batch.to_burn_tensors::<MyBackend>(&device);
 //!     // ... compute weighted Smooth-L1 loss, backprop ...
 //!     // ... then write the new TD-error magnitudes back:
 //!     // buf.update_priorities(&batch.indices, &new_td_errors);
 //! }
 //! ```
 
-#[cfg(feature = "training-burn")]
-pub use prioritized::PrioritizedBurnTensors;
-pub use prioritized::{PrioritizedBatch, PrioritizedReplayBuffer};
-#[cfg(feature = "training-burn")]
-pub use sampling::ReplayBurnTensors;
-pub use sampling::{ReplayBatch, sample};
+pub use prioritized::{PrioritizedBatch, PrioritizedBurnTensors, PrioritizedReplayBuffer};
+pub use sampling::{ReplayBatch, ReplayBurnTensors, sample};
 pub use storage::ReplayBuffer;
 pub use sum_tree::SumTree;
 

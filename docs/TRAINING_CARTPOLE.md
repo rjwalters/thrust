@@ -232,27 +232,16 @@ Training Steps    Avg Episode Length    Notes
 
 ### Run CartPole Training
 
-```bash
-# CPU training (slow)
-cargo run --example train_cartpole_modern --release
-
-# GPU training (fast)
-# See docs/GPU_SETUP.md for GPU configuration
-ssh your-gpu-server 'cd thrust && \
-  source venv/bin/activate && \
-  export LIBTORCH_USE_PYTORCH=1 && \
-  cargo +nightly run --example train_cartpole_modern --release'
-```
-
-Expected training time:
-- **CPU**: ~2-3 hours for 5M steps
-- **GPU (NVIDIA L4)**: ~20-30 minutes for 5M steps
-
-### Run Hyperparameter Optimization
-
-```bash
-cargo run --example optimize_cartpole --release -- --trials 12
-```
+> **NOTE**: As of phase 5 of the Burn migration (#82), the standalone
+> CartPole / Snake / Pong trainer examples have been removed from the
+> tree in favour of `train_simple_bandit` (the canonical Burn-backed
+> end-to-end PPO loop). The numerical recipe below still applies — the
+> CartPole PPO trainer can be re-built on top of the surviving
+> `crate::train::ppo::PPOTrainerBurn` and `crate::policy::mlp::MlpBurnPolicy`
+> with the same hyperparameters.
+>
+> See [BURN_BACKENDS.md](BURN_BACKENDS.md) for backend selection (CPU
+> NdArray vs wgpu vs CUDA).
 
 This will:
 1. Run 12 Bayesian optimization trials

@@ -1,9 +1,12 @@
 //! # Thrust
 //!
-//! High-performance reinforcement learning in Rust + CUDA
+//! High-performance reinforcement learning in Rust.
 //!
-//! Thrust is a modern RL library that combines Rust's performance and safety
-//! with PyTorch's proven neural network capabilities (via tch-rs).
+//! Thrust is a modern RL library built on top of the [Burn](https://burn.dev)
+//! tensor framework. After phase 5 of the Burn migration (#65), Burn is the
+//! only tensor backend in the workspace; the previous `tch`/libtorch path
+//! has been removed in favour of Burn's multi-backend stack (CPU NdArray,
+//! WebGPU, CUDA, ROCm, Metal, Vulkan).
 //!
 //! ## Quick Start
 //!
@@ -24,25 +27,17 @@ pub mod env;
 /// feature
 pub mod policy;
 
-/// Experience buffers and replay management (requires training feature)
+/// Experience buffers and replay management (requires training feature).
 ///
-/// Gated on either backend (tch `training` or burn `training-burn`) —
-/// the storage layer is plain `Vec<f32>`/`Vec<i64>` regardless of which
-/// tensor framework the trainer ultimately uses. The Burn migration
-/// (#65) keeps the two tensor-emitting surfaces in this module behind
-/// disjoint cfgs so that `--features training-burn` can lean on the
-/// existing buffers without dragging in tch.
-#[cfg(any(feature = "training", feature = "training-burn"))]
+/// The storage layer is plain `Vec<f32>`/`Vec<i64>` regardless of which
+/// tensor backend the trainer ultimately uses; tensor materialization
+/// happens via `to_burn_tensors` on the batch types when the trainer
+/// calls into Burn.
+#[cfg(feature = "training")]
 pub mod buffer;
 
-/// Training algorithms (PPO, etc.).
-///
-/// The PPO and DQN trainers themselves still require the `training` feature
-/// (tch backend), but the backend-agnostic optimizer abstraction added in
-/// phase 2b of the Burn migration (#92) is exposed under either feature so
-/// that `--features training-burn` can re-use the trait scaffold without
-/// dragging in tch.
-#[cfg(any(feature = "training", feature = "training-burn"))]
+/// Training algorithms (PPO, DQN).
+#[cfg(feature = "training")]
 pub mod train;
 
 /// Utility functions and helpers
@@ -51,17 +46,9 @@ pub mod utils;
 /// Pure Rust inference for WASM compilation
 pub mod inference;
 
-/// Multi-agent training infrastructure (requires training feature)
-#[cfg(feature = "training")]
-pub mod multi_agent;
-
 /// WebAssembly bindings for browser visualization
 #[cfg(feature = "wasm")]
 pub mod wasm;
-
-/// Hyperparameter optimization infrastructure
-#[cfg(feature = "training")]
-pub mod optimize;
 
 /// Prelude module for convenient imports
 ///

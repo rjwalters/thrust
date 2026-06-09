@@ -145,8 +145,8 @@ fn smoke_step_through_episode_with_versioned_scenario() {
     // Acceptance criterion (smoke): a versioned-ID-constructed env runs an
     // entire episode end to end without panicking. This is the "Thrust PPO
     // trainer could plug in here" surface — we don't pull in the PPO
-    // trainer itself (libtorch is gated behind the `training` feature),
-    // but we exercise every API a trainer would touch.
+    // trainer itself (it's gated behind the `training` feature), but we
+    // exercise every API a trainer would touch.
     let mut env =
         BucketBrigadeMaEnv::from_scenario_id("minimal_specialization-v1", None, Some(7)).unwrap();
     let num_agents = env.num_agents();

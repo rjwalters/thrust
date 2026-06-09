@@ -28,10 +28,10 @@ jobs:
         # and cannot be reformatted from this repo.
         run: cargo fmt -- --check
 
-  # Cheap "does it parse" check without libtorch.
-  # `--no-default-features` drops the `training` feature (and thus `tch`).
-  check_no_tch:
-    name: Check (no libtorch)
+  # Cheap "does it parse" check without the training stack.
+  # `--no-default-features` drops the `training` feature (and thus `burn`).
+  check_no_training:
+    name: Check (no training)
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,58 +45,33 @@ jobs:
       - name: cargo check --no-default-features
         run: cargo check --no-default-features
 
-  # Real test job with libtorch on Linux. Uses scripts/setup-libtorch.sh to
-  # install PyTorch into a venv, then runs `cargo test --features training`.
-  test_linux_libtorch:
-    name: Tests (Linux + libtorch)
+  # Real test job with the default Burn `NdArray` backend on Linux. Pure
+  # Rust — no external system libraries required.
+  test_linux:
+    name: Tests (Linux + Burn NdArray)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install libtorch via scripts/setup-libtorch.sh
-        run: ./scripts/setup-libtorch.sh
       - name: cargo test --features training
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          source .envrc.libtorch
-          cargo test --features training
+        run: cargo test --features training
 
-  # Real test job with libtorch on macOS. Uses the same setup script. This is
-  # the exact regression target for issue #8 -- if it fails with a
-  # `dyld: Library not loaded:` error, the macOS recipe is broken.
-  test_macos_libtorch:
-    name: Tests (macOS + libtorch)
+  # Same on macOS, to catch any platform-specific Burn issues early.
+  test_macos:
+    name: Tests (macOS + Burn NdArray)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install libtorch via scripts/setup-libtorch.sh
-        run: ./scripts/setup-libtorch.sh
       - name: cargo check --features training
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          source .envrc.libtorch
-          cargo check --features training
+        run: cargo check --features training
       # Run tests as a separate step so a hang doesn't mask the check result.
-      # If the macOS runner can't host libtorch, switch this to `cargo check`.
       - name: cargo test --features training
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          source .envrc.libtorch
-          cargo test --features training
+        run: cargo test --features training
 
   # Documentation
   docs:
@@ -107,17 +82,8 @@ jobs:
         with:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@nightly
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install libtorch via scripts/setup-libtorch.sh
-        run: ./scripts/setup-libtorch.sh
       - name: cargo doc --no-deps --all-features
-        run: |
-          set -euo pipefail
-          # shellcheck disable=SC1091
-          source .envrc.libtorch
-          RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
   # Security audit
   security_audit:

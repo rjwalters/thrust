@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 authors = ["Robb Walters <agent-4@spheresemi.com>"]
 license = "MIT OR Apache-2.0"
-description = "High-performance reinforcement learning in Rust with PyTorch (tch-rs), CUDA, and WASM inference"
+description = "High-performance reinforcement learning in Rust with the Burn tensor backend"
 repository = "https://github.com/rjwalters/thrust"
 homepage = "https://rjwalters.github.io/thrust/"
 documentation = "https://docs.rs/thrust-rl"
@@ -14,11 +14,6 @@ keywords = ["reinforcement", "machine-learning", "rl", "ppo", "dqn"]
 # https://crates.io/category_slugs
 categories = ["science", "algorithms", "game-development", "simulation"]
 readme = "README.md"
-# Build script defeats GNU ld's --as-needed for libtorch_cuda on Linux.
-# See build.rs for the rationale (in short: without it, the binary silently
-# falls back to CPU even on a CUDA-equipped box). No-op on macOS/Windows
-# and on CPU-only feature builds.
-build = "build.rs"
 # Restrict the published tarball to the files actually needed to build the
 # crate. This keeps the tarball small (well under the 10 MB crates.io
 # limit) by excluding tracked model checkpoints, the web demo, the
@@ -49,7 +44,6 @@ exclude = [
     ".loom/**",
     ".claude/**",
     ".github/**",
-    "libtorch/**",
     # Project planning docs that aren't consumed by `cargo doc`.
     "WASM_ROADMAP.md",
     "MULTI_AGENT_DESIGN.md",
@@ -61,16 +55,14 @@ exclude = [
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# PyTorch bindings for neural networks (optional for WASM builds)
-# Using tch-rs 0.22 with PyTorch 2.9 (requires nightly Rust + edition 2024)
-tch = { version = "0.22", optional = true }
-
-# Burn 0.21 — pure-Rust tensor framework, scout migration target (issue #78).
-# Opt-in via the `training-burn` feature, mirrors the dependency stance used
-# by sister project geode-fem (see ../geode-fem/Cargo.toml workspace block):
+# Burn 0.21 — pure-Rust tensor framework. After phase 5 of the migration
+# (#82), Burn is the only tensor backend in the workspace; the old
+# `tch`/libtorch path is gone. Mirrors the dependency stance used by sister
+# project geode-fem (see ../geode-fem/Cargo.toml workspace block):
 # `default-features = false` keeps the dep small; backends (ndarray, wgpu,
-# cuda) are layered on as separate features. For the phase-1 scout we only
-# need `ndarray` (CPU) plus `autodiff` so the optimizer can compute grads.
+# cuda) are layered on as separate features. The default `training` feature
+# only pulls in `ndarray` (CPU) + `autodiff`; opt-in features below add
+# GPU backends.
 burn = { version = "0.21", default-features = false, features = ["std", "ndarray", "autodiff"], optional = true }
 
 # Async runtime for vectorization (not available in WASM)
@@ -127,13 +119,17 @@ console_error_panic_hook = { version = "0.1", optional = true }
 
 [features]
 default = ["training"]
-training = ["tch", "tokio", "rayon", "tracing", "tracing-subscriber", "crossbeam-channel", "chrono"]  # Include PyTorch and async deps for training
-# Burn-backend scout (issue #78, phase 1 of the broader Burn migration).
-# This feature is independent of `training` — the two paths must compose
-# (`--features training,training-burn` should also compile). The scout
-# only pulls in the deps the bandit trainer needs (rayon for EnvPool,
-# tracing for logging).
-training-burn = ["dep:burn", "rayon", "tracing", "tracing-subscriber"]
+# `training` enables the Burn-backed training stack: tensor ops, autodiff,
+# the buffer surfaces, the PPO/DQN trainers, and the policy networks.
+# Defaults to Burn's pure-Rust NdArray backend so a fresh checkout builds
+# without any external system libraries. GPU backends are opt-in via
+# additional feature flags below.
+training = ["dep:burn", "tokio", "rayon", "tracing", "tracing-subscriber", "crossbeam-channel", "chrono"]
+# Burn wgpu backend — cross-platform GPU (Vulkan/Metal/DX12/WebGPU).
+# Compose with `training`, e.g. `--features "training,wgpu"`.
+wgpu = ["burn?/wgpu"]
+# Burn CUDA backend — Linux/NVIDIA only. Compose with `training`.
+cuda = ["burn?/cuda"]
 wasm = ["wasm-bindgen", "web-sys", "js-sys", "console_error_panic_hook"]  # Pure Rust for WASM
 # Bucket Brigade env adapter for the Slepian-Wolf MARL experiments. Pulls
 # in the bucket-brigade-core crate as a pure-Rust dep --- does *not*
@@ -170,85 +166,10 @@ codegen-units = 1
 [profile.bench]
 inherits = "release"
 
-# CartPole examples
-[[example]]
-name = "train_cartpole_modern"
-path = "examples/games/cartpole/train_cartpole_modern.rs"
-required-features = ["training"]
-
-[[example]]
-name = "train_cartpole_dqn"
-path = "examples/games/cartpole/train_cartpole_dqn.rs"
-required-features = ["training"]
-
-[[example]]
-name = "optimize_cartpole"
-path = "examples/games/cartpole/optimize_cartpole.rs"
-required-features = ["training"]
-
-# Snake examples
-[[example]]
-name = "train_snake_multi_v2"
-path = "examples/games/snake/train_snake_multi_v2.rs"
-required-features = ["training"]
-
-[[example]]
-name = "optimize_snake"
-path = "examples/games/snake/optimize_snake.rs"
-required-features = ["training"]
-
-[[example]]
-name = "export_snake_model"
-path = "examples/games/snake/export_snake_model.rs"
-required-features = ["training"]
-
-# Pong examples
-[[example]]
-name = "train_pong"
-path = "examples/games/pong/train_pong.rs"
-required-features = ["training"]
-
-[[example]]
-name = "train_pong_self_play"
-path = "examples/games/pong/train_pong_self_play.rs"
-required-features = ["training"]
-
-# Bandit examples
+# Bandit examples — Burn-backed SimpleBandit PPO trainer (originally the
+# phase-1 scout trainer; promoted to the canonical bandit example in
+# phase 5 when the tch sibling was removed).
 [[example]]
 name = "train_simple_bandit"
 path = "examples/games/bandit/train_simple_bandit.rs"
-required-features = ["training"]
-
-# Burn-backend scout (issue #78). Sibling of the tch trainer above —
-# the two are deliberately separate trainers, so phases 2–4 of the
-# migration can be sized off the diff between them.
-[[example]]
-name = "train_simple_bandit_burn"
-path = "examples/games/bandit/train_simple_bandit_burn.rs"
-required-features = ["training-burn"]
-
-[[example]]
-name = "test_inference"
-path = "examples/games/cartpole/test_inference.rs"
-required-features = ["training"]
-
-[[example]]
-name = "test_json_inference"
-path = "examples/games/cartpole/test_json_inference.rs"
-required-features = ["training"]
-
-# Bucket Brigade example (Slepian-Wolf MARL). Single binary that toggles
-# the centralized-critic path via a `--centralized-critic` CLI flag; see
-# the module docs in `examples/games/bucket_brigade/train_p3.rs`.
-[[example]]
-name = "train_p3"
-path = "examples/games/bucket_brigade/train_p3.rs"
-required-features = ["training", "env-bucket-brigade"]
-
-# Diagnostics --- verifies that the CUDA link fix from build.rs is working.
-# Run with `./scripts/gpu-train.sh test_cuda` or directly via cargo on a
-# CUDA-equipped Linux box. On macOS this still builds but will report `Cpu`.
-[[example]]
-name = "test_cuda"
-path = "examples/test_cuda.rs"
 required-features = ["training"]

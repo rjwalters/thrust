@@ -305,28 +305,16 @@ Training Steps    Mean Reward    Notes
 
 ### Run Snake Training
 
-```bash
-# CPU training (very slow for CNN)
-cargo run --example train_snake_multi_v2 --release
-
-# GPU training (recommended)
-# See docs/GPU_SETUP.md for GPU configuration
-ssh your-gpu-server 'cd thrust && \
-  source venv/bin/activate && \
-  export LIBTORCH_USE_PYTORCH=1 && \
-  cargo +nightly run --example train_snake_multi_v2 --release'
-```
-
-Expected training time:
-- **CPU**: ~10+ hours for 1M steps (not recommended)
-- **GPU (NVIDIA L4)**: ~2-3 hours for 1M steps
-
-### Monitor Training Progress
-
-```bash
-# On remote GPU server
-ssh your-gpu-server 'cd thrust && tail -f training_*.log'
-```
+> **NOTE**: As of phase 5 of the Burn migration (#82), the standalone
+> Snake trainer examples have been removed from the tree in favour of
+> `train_simple_bandit` (the canonical Burn-backed end-to-end PPO loop).
+> The numerical recipe below still applies — the Snake CNN trainer can
+> be re-built on top of the surviving `crate::train::ppo::PPOTrainerBurn`
+> and `crate::policy::snake_cnn::SnakeCnnBurnPolicy` with the same
+> hyperparameters.
+>
+> See [BURN_BACKENDS.md](BURN_BACKENDS.md) for backend selection (CPU
+> NdArray vs wgpu vs CUDA).
 
 Look for:
 - Increasing mean reward (should reach +5 by 1M steps)

@@ -1,65 +1,25 @@
-//! Deep Q-Network (DQN) algorithm.
+//! DQN trainer (Burn backend).
 //!
-//! This module implements DQN for discrete-action environments, with the
-//! Double-DQN target as the default and optional Polyak (soft) target
-//! updates. The trainer maintains an online Q-network, a target
-//! Q-network synced either by hard copy every `target_update_interval`
-//! env steps or by a per-step Polyak blend (when
-//! [`DQNConfig::soft_update_tau`] is `Some`), and a fixed-capacity FIFO
-//! replay buffer ([`crate::buffer::replay::ReplayBuffer`]).
+//! After phase 5 of the Burn migration (#82), Burn is the only tensor
+//! backend in the workspace. The historical `train::dqn_burn` parallel
+//! sibling has been collapsed back into `train::dqn`. See the parallel
+//! `crate::train::ppo` module for the same rationale.
 //!
-//! # Algorithm Overview
+//! # Contents
 //!
-//! ```text
-//! Loop forever:
-//!   1. Observe s, select a ~ ε-greedy(Q_online(s, ·))
-//!   2. Step env → (r, s', done); push (s, a, r, s', done) to replay buffer
-//!   3. If buffer.is_ready(min_buffer_size):
-//!        sample minibatch B from buffer
-//!        a* = argmax_a' Q_online(s', a')                 ← Double-DQN
-//!        y  = r + γ · (1 - done) · Q_target(s', a*)
-//!        loss = Huber(Q_online(s, a), y)
-//!        backprop, clip-grad-norm, optimizer step
-//!   4. Target sync:
-//!        if soft_update_tau = Some(τ):
-//!          θ_target ← τ · θ_online + (1 − τ) · θ_target  ← every step
-//!        else:
-//!          if env_step % target_update_interval == 0:
-//!            θ_target ← θ_online                         ← hard copy
-//! ```
-//!
-//! # Scope
-//!
-//! - **Included**: Double-DQN target (always on), optional Polyak / soft target
-//!   updates (off by default).
-//! - **Follow-ups**: dueling heads, prioritized replay, n-step returns, and
-//!   CNN-based variants (Snake/Pong).
-//!
-//! # References
-//!
-//! - Mnih et al., *Human-level control through deep reinforcement learning*
-//!   ([Nature 2015](https://www.nature.com/articles/nature14236)).
-//! - van Hasselt, Guez, Silver, *Deep Reinforcement Learning with Double
-//!   Q-learning* ([AAAI 2016](https://arxiv.org/abs/1509.06461)).
-//! - Lillicrap et al., *Continuous control with deep reinforcement
-//!   learning* — origin of the Polyak target-update trick for DRL
-//!   ([ICLR 2016](https://arxiv.org/abs/1509.02971)).
-//! - [OpenAI Spinning Up: DQN](https://spinningup.openai.com/en/latest/algorithms/dqn.html)
+//! - [`config`] — `DQNConfig` hyperparameters / builder API.
+//! - [`loss`] — backend-generic DQN / Double-DQN loss math.
+//! - [`trainer`] — `DQNTrainerBurn<B, Q, O>` that owns the online Q-network
+//!   module (Burn's optimizer-consumes-module ownership model) and exposes a
+//!   `train_step` that runs Smooth-L1 loss / gradient-step logic.
 
-// `DQNConfig` is backend-agnostic. Tensor-typed loss helpers and the
-// `DQNTrainer` are tch-only; the parallel Burn-backend module lives at
-// [`crate::train::dqn_burn`].
+pub mod config;
+pub mod loss;
+pub mod trainer;
+
 pub use config::DQNConfig;
-#[cfg(feature = "training")]
 pub use loss::{
     compute_dqn_loss, compute_dqn_loss_double, compute_loss, compute_td_target,
-    compute_td_target_double, gather_action_q,
+    compute_td_target_double, gather_action_q, huber_per_sample,
 };
-#[cfg(feature = "training")]
-pub use trainer::{DQNStepStats, DQNTrainer};
-
-mod config;
-#[cfg(feature = "training")]
-mod loss;
-#[cfg(feature = "training")]
-mod trainer;
+pub use trainer::{DQNStepStatsBurn, DQNTrainerBurn};

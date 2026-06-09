@@ -1,63 +1,24 @@
 # Training Scripts
 
-## GPU Training Workflow
+After phase 5 of the Burn migration (#82), the libtorch-flavoured training
+scripts have been removed. Training now runs as a direct `cargo run`
+against the Burn backend; no external system libraries are required.
 
-### Setup (one-time on GPU machine)
-```bash
-# On rwalters-sandbox-2
-cd ~/thrust
-git pull
-# Ensure venv with PyTorch and Rust are set up
-```
-
-### Running Training on GPU
+## Quick start (CPU)
 
 ```bash
-# SSH to GPU machine
-ssh rwalters-sandbox-2
-
-# Pull latest code
-cd ~/thrust && git pull
-
-# Run training (this will use GPU automatically)
-./scripts/gpu-train.sh train_cartpole_modern
-
-# Check status
-./scripts/gpu-status.sh
-
-# Build without running
-./scripts/gpu-build.sh --release
+cargo run --release --example train_simple_bandit
 ```
 
-### Local Training (CPU)
+## GPU backends
+
+Burn ships several GPU backends behind feature flags. They compose with
+the default `training` feature:
 
 ```bash
-# Run on local Mac with CPU
-./scripts/train.sh train_cartpole_modern
+# wgpu (cross-platform: Vulkan / Metal / DX12 / WebGPU)
+cargo run --release --features "training,wgpu" --example train_simple_bandit
 
-# Run tests
-./scripts/test.sh
-
-# Run full CI checks
-./scripts/check.sh
+# CUDA (Linux + NVIDIA)
+cargo run --release --features "training,cuda" --example train_simple_bandit
 ```
-
-## Available Scripts
-
-### GPU Scripts (run ON the remote machine)
-- `gpu-train.sh <example>` - Run training example on GPU
-- `gpu-build.sh [--release]` - Build project on GPU
-- `gpu-status.sh` - Check GPU usage and training progress
-
-### Local Scripts (run on your local machine)
-- `train.sh <example>` - Run training locally
-- `test.sh` - Run tests locally
-- `check.sh` - Run full CI (fmt, clippy, tests)
-
-### Remote Helper Scripts (deprecated - use git workflow instead)
-- `remote-*.sh` - Old scripts that rsync code (prefer git workflow)
-
-## Training Examples
-
-- `train_cartpole_modern` - Canonical CartPole PPO trainer
-- `train_cartpole_dqn` - Canonical CartPole DQN trainer
