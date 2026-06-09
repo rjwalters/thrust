@@ -40,6 +40,14 @@ pub mod buffer;
 #[cfg(feature = "training")]
 pub mod train;
 
+/// Multi-agent training infrastructure (Burn backend).
+///
+/// Synchronized joint trainer plus the multi-agent environment trait and
+/// cross-thread message payloads. Restored on top of the Burn stack in
+/// issue #100 after PR #98 removed the pre-Burn tch-coupled module.
+#[cfg(feature = "training")]
+pub mod multi_agent;
+
 /// Utility functions and helpers
 pub mod utils;
 
