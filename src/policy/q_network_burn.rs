@@ -29,7 +29,8 @@
 //! target = target.load_record(snapshot.into_record());
 //! ```
 //!
-//! This is exposed as [`crate::policy::q_network_burn::QNetworkBurn::copy_params_from`]
+//! This is exposed as
+//! [`crate::policy::q_network_burn::QNetworkBurn::copy_params_from`]
 //! so the Burn DQN trainer (phase 5) can drop in the same
 //! `target.copy_params_from(&online)` call site shape the tch trainer uses.
 
