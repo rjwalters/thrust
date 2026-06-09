@@ -49,3 +49,11 @@ node_modules/
 .loom/*.log
 .loom/*.sock
 .loom/logs/
+
+# direnv configs (incl. variants like .envrc.libtorch from pre-Burn era)
+.envrc
+.envrc.*
+
+# Python venvs (used pre-Burn for libtorch sourcing)
+venv/
+.venv/
