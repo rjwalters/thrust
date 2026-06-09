@@ -1,14 +1,15 @@
 //! Snake CNN inference for WASM
 //!
-//! Pure Rust implementation of Snake CNN forward pass without PyTorch
-//! dependencies
+//! Pure Rust implementation of Snake CNN forward pass. Stays off the Burn
+//! tensor stack used on the training side so the WASM bundle stays small;
+//! see `crate::inference` module docs and `WASM_ROADMAP.md`.
 
 use serde::{Deserialize, Serialize};
 
 /// A serializable CNN model for Snake inference
 ///
 /// This struct contains all the weights and biases needed to run
-/// CNN inference without any PyTorch dependencies.
+/// CNN inference in pure Rust (no Burn/tensor-stack dependency).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnakeCNNInference {
     /// Grid width

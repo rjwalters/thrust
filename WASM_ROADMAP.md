@@ -2,6 +2,30 @@
 
 This document outlines the plan for creating WebAssembly-based visualizations of trained RL agents.
 
+## Backend status (post Burn migration)
+
+After the Burn migration (#65, phases 1–5), the training-side tensor stack
+is **Burn** (NdArray default; optional `wgpu`/`cuda`). The WASM-side
+inference path is deliberately **not** on Burn: it stays in the pure-Rust
+hand-rolled `src/inference/` + `src/policy/{inference,universal_inference}.rs`
+modules. Phase 6 of #65 (unifying WASM inference under Burn's WebGPU
+backend) was evaluated and **deferred indefinitely** — see #83 closure for
+the rationale. In short:
+
+- The pure-Rust inference path is small, deterministic, dependency-free,
+  and meets the existing performance targets (<1ms forward pass).
+- Burn's `wgpu` backend on `wasm32-unknown-unknown` is pre-1.0 and the
+  bundle-size impact would very likely exceed the 2x hard gate the #83
+  issue body specifies.
+- The two-stack maintenance burden (Burn for training, pure Rust for
+  WASM inference) is the cheaper option until Burn's WASM story matures.
+
+The references to "PyTorch / tch / libtorch" further down in this document
+describe the historical pre-Burn architecture and are kept for context;
+**replace any of those mentions with "Burn (NdArray / wgpu / cuda)" when
+adapting these recipes**. The export format described below is the
+JSON-based portable format that survived the migration intact.
+
 ## Vision
 
 Compile Rust inference code to WASM and run trained policies in the browser with interactive visualizations. This allows:
