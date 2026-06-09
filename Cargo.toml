@@ -173,3 +173,28 @@ inherits = "release"
 name = "train_simple_bandit"
 path = "examples/games/bandit/train_simple_bandit.rs"
 required-features = ["training"]
+
+# Canonical CartPole trainers on the Burn stack. Resurrected from the
+# pre-Burn deletion (PR #98) per issue #101. See each example's module
+# doc for the algorithm + hyperparameters.
+[[example]]
+name = "train_cartpole_modern"
+path = "examples/games/cartpole/train_cartpole_modern.rs"
+required-features = ["training"]
+
+[[example]]
+name = "train_cartpole_dqn"
+path = "examples/games/cartpole/train_cartpole_dqn.rs"
+required-features = ["training"]
+
+# Multi-agent / self-play trainers resurrected from the pre-Burn
+# deletion (PR #98) per issue #101.
+[[example]]
+name = "train_snake_multi_v2"
+path = "examples/games/snake/train_snake_multi_v2.rs"
+required-features = ["training"]
+
+[[example]]
+name = "train_pong_self_play"
+path = "examples/games/pong/train_pong_self_play.rs"
+required-features = ["training"]
