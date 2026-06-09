@@ -1,8 +1,14 @@
 //! Pure Rust inference module for WASM compatibility
 //!
 //! This module provides a lightweight neural network inference engine
-//! that can be compiled to WebAssembly. It avoids dependencies on
-//! libtorch/tch-rs, implementing only forward pass for trained models.
+//! that can be compiled to WebAssembly. It deliberately avoids the Burn
+//! tensor stack used on the training side (see `src/train/`, `src/policy/`)
+//! so the WASM bundle stays small — Burn's WebGPU backend has a
+//! non-trivial WASM bundle-size cost on a pre-1.0 backend. See
+//! `WASM_ROADMAP.md` and Burn migration epic #65 (phase 6 closure) for
+//! the rationale.
+//!
+//! Forward pass only — no autodiff, no training.
 
 pub mod nn;
 pub mod snake;

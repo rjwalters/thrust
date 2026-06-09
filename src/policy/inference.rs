@@ -1,7 +1,10 @@
 //! Inference-only model format for WASM deployment
 //!
 //! This module provides a pure Rust implementation of neural network inference
-//! that doesn't depend on PyTorch/LibTorch, making it suitable for WebAssembly.
+//! that stays off the training-side Burn tensor stack so it can compile to
+//! WebAssembly with a minimal bundle size. The training side (PPO/DQN) runs
+//! on Burn; weights are exported as JSON and consumed here for browser
+//! inference. See `crate::inference` module docs and `WASM_ROADMAP.md`.
 
 use std::collections::HashMap;
 
@@ -11,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// A serializable CNN model for Snake inference
 ///
 /// This struct contains all the weights and biases needed to run
-/// CNN inference without any PyTorch dependencies.
+/// CNN inference in pure Rust (no Burn/tensor-stack dependency).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SnakeCNNInference {
     /// Grid width
@@ -275,7 +278,7 @@ pub struct TrainingMetadata {
 /// A serializable MLP model for inference
 ///
 /// This struct contains all the weights and biases needed to run
-/// inference without any PyTorch dependencies.
+/// inference in pure Rust (no Burn/tensor-stack dependency).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InferenceModel {
     /// Input dimension
