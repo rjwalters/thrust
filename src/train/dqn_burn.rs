@@ -10,8 +10,8 @@
 //!   math.
 //! - [`crate::train::dqn_burn::trainer`] — `DQNTrainerBurn<B, Q, O>` that owns
 //!   the online Q-network module (Burn's optimizer-consumes-module ownership
-//!   model) and exposes a `train_step` that runs Smooth-L1 loss /
-//!   gradient-step logic.
+//!   model) and exposes a `train_step` that runs Smooth-L1 loss / gradient-step
+//!   logic.
 //!
 //! # Why a separate module
 //!
