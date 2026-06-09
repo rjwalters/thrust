@@ -2,7 +2,19 @@
 //!
 //! This module contains the core loss computation functions used
 //! in PPO training including policy loss, value loss, and entropy loss.
+//!
+//! # Backend gating
+//!
+//! All tensor-typed helpers in this file (`compute_policy_loss`,
+//! `compute_value_loss`, `compute_entropy_loss`, `compute_gae`) are
+//! tch-backend specific and gated on `feature = "training"`. The
+//! backend-agnostic helpers (`generate_minibatch_indices`) sit outside
+//! the gate so the Burn-side trainer
+//! ([`crate::train::ppo_burn::trainer::PPOTrainerBurn`]) can share
+//! them. See [`crate::train::ppo_burn::loss`] for the Burn-backend
+//! parallels.
 
+#[cfg(feature = "training")]
 use tch::{Kind, Tensor};
 
 /// Compute PPO policy loss with clipping
@@ -14,6 +26,7 @@ use tch::{Kind, Tensor};
 /// * `old_log_probs` - Log probabilities of actions under old policy
 /// * `advantages` - Computed advantages
 /// * `clip_range` - PPO clipping parameter (epsilon)
+#[cfg(feature = "training")]
 pub fn compute_policy_loss(
     log_probs: &Tensor,
     old_log_probs: &Tensor,
@@ -68,6 +81,7 @@ pub fn compute_policy_loss(
 /// * `returns` - Computed returns (targets)
 /// * `clip_range_vf` - Value function clipping parameter (use `f64::INFINITY`
 ///   to disable clipping)
+#[cfg(feature = "training")]
 pub fn compute_value_loss(
     values: &Tensor,
     old_values: &Tensor,
@@ -105,6 +119,7 @@ pub fn compute_value_loss(
 ///
 /// # Arguments
 /// * `entropy` - Entropy tensor from policy distribution
+#[cfg(feature = "training")]
 pub fn compute_entropy_loss(entropy: &Tensor) -> Tensor {
     -entropy.mean(Kind::Float)
 }
@@ -142,6 +157,7 @@ pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<
 ///
 /// # Returns
 /// (advantages, returns) tensors
+#[cfg(feature = "training")]
 pub fn compute_gae(
     rewards: &Tensor,
     values: &Tensor,
@@ -182,6 +198,7 @@ pub fn compute_gae(
 }
 
 /// Compute GAE for a single environment
+#[cfg(feature = "training")]
 fn compute_gae_single_env(
     rewards: &Tensor,
     values: &Tensor,
@@ -227,7 +244,7 @@ fn compute_gae_single_env(
     (Tensor::from_slice(&advantages), Tensor::from_slice(&returns))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "training"))]
 mod tests {
     use tch::Tensor;
 

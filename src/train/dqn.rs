@@ -46,13 +46,20 @@
 //!   ([ICLR 2016](https://arxiv.org/abs/1509.02971)).
 //! - [OpenAI Spinning Up: DQN](https://spinningup.openai.com/en/latest/algorithms/dqn.html)
 
+// `DQNConfig` is backend-agnostic. Tensor-typed loss helpers and the
+// `DQNTrainer` are tch-only; the parallel Burn-backend module lives at
+// [`crate::train::dqn_burn`].
 pub use config::DQNConfig;
+#[cfg(feature = "training")]
 pub use loss::{
     compute_dqn_loss, compute_dqn_loss_double, compute_loss, compute_td_target,
     compute_td_target_double, gather_action_q,
 };
+#[cfg(feature = "training")]
 pub use trainer::{DQNStepStats, DQNTrainer};
 
 mod config;
+#[cfg(feature = "training")]
 mod loss;
+#[cfg(feature = "training")]
 mod trainer;

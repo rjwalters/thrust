@@ -3,19 +3,41 @@
 //! Defines the message formats for communication between:
 //! - GameSimulator → PolicyLearner: Experience data
 //! - PolicyLearner → GameSimulator: Policy updates
-
-use tch::Tensor;
+//!
+//! # Backend-agnostic storage (phase 3 of the Burn migration, #80)
+//!
+//! Prior to phase 3 the `Experience` struct stored `tch::Tensor`
+//! observations directly. That tied every channel-shaped message to
+//! the tch backend even though the multi_agent simulator/learner do
+//! not need autograd on these tensors — they always immediately
+//! convert to `Vec<f32>` host data before pushing into the replay
+//! buffer.
+//!
+//! Phase 3 inlines that conversion: `Experience::observation` /
+//! `next_observation` are now `Vec<f32>` host primitives. The
+//! tch-using simulator builds them with `Vec::<f32>::try_from(&tensor)`
+//! at the boundary (was: send the tensor, receive-and-convert on the
+//! other side); the receiver consumes them directly. This:
+//!
+//! 1. Makes `messages.rs` backend-agnostic (no `tch::Tensor` fields).
+//! 2. Removes a redundant host→tch→host round-trip on every message.
+//! 3. Sets up phase 4 to swap `MlpPolicy` for `MlpBurnPolicy` in the
+//!    simulator without touching the message protocol.
 
 use super::population::AgentId;
 
-/// Experience tuple sent from simulator to learner
-#[derive(Debug)]
+/// Experience tuple sent from simulator to learner.
+///
+/// Observations are stored as `Vec<f32>` host primitives so the
+/// message protocol is backend-agnostic; see the module-level note
+/// for the rationale.
+#[derive(Debug, Clone)]
 pub struct Experience {
     /// Agent that generated this experience
     pub agent_id: AgentId,
 
-    /// Observation tensor `[obs_dim]`
-    pub observation: Tensor,
+    /// Observation, flattened to `[obs_dim]` f32. Backend-neutral.
+    pub observation: Vec<f32>,
 
     /// Action taken
     pub action: i64,
@@ -23,8 +45,8 @@ pub struct Experience {
     /// Reward received
     pub reward: f32,
 
-    /// Next observation tensor `[obs_dim]`
-    pub next_observation: Tensor,
+    /// Next observation, flattened to `[obs_dim]` f32.
+    pub next_observation: Vec<f32>,
 
     /// Whether episode terminated
     pub terminated: bool,
@@ -40,13 +62,18 @@ pub struct Experience {
 }
 
 impl Experience {
-    /// Create a new experience tuple
+    /// Create a new experience tuple.
+    ///
+    /// Observations are `Vec<f32>` host buffers; callers using tch
+    /// should convert at the boundary with
+    /// `Vec::<f32>::try_from(&tensor)`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         agent_id: AgentId,
-        observation: Tensor,
+        observation: Vec<f32>,
         action: i64,
         reward: f32,
-        next_observation: Tensor,
+        next_observation: Vec<f32>,
         terminated: bool,
         truncated: bool,
         value: f32,
@@ -158,17 +185,15 @@ pub enum ControlMessage {
 
 #[cfg(test)]
 mod tests {
-    use tch::Kind;
-
     use super::*;
+
+    fn obs(seed: usize) -> Vec<f32> {
+        (0..4).map(|i| (seed + i) as f32 * 0.1).collect()
+    }
 
     #[test]
     fn test_experience_creation() {
-        let obs = Tensor::randn([4], (Kind::Float, tch::Device::Cpu));
-        let next_obs = Tensor::randn([4], (Kind::Float, tch::Device::Cpu));
-
-        let exp = Experience::new(0, obs, 1, 1.0, next_obs, false, false, 0.5, -0.69);
-
+        let exp = Experience::new(0, obs(0), 1, 1.0, obs(1), false, false, 0.5, -0.69);
         assert_eq!(exp.agent_id, 0);
         assert_eq!(exp.action, 1);
         assert_eq!(exp.reward, 1.0);
@@ -177,33 +202,9 @@ mod tests {
 
     #[test]
     fn test_experience_done() {
-        let obs = Tensor::randn([4], (Kind::Float, tch::Device::Cpu));
-        let next_obs = Tensor::randn([4], (Kind::Float, tch::Device::Cpu));
-
-        let exp_term = Experience::new(
-            0,
-            obs.shallow_clone(),
-            1,
-            1.0,
-            next_obs.shallow_clone(),
-            true,
-            false,
-            0.5,
-            -0.69,
-        );
-        let exp_trunc = Experience::new(
-            0,
-            obs.shallow_clone(),
-            1,
-            1.0,
-            next_obs.shallow_clone(),
-            false,
-            true,
-            0.5,
-            -0.69,
-        );
-        let exp_both = Experience::new(0, obs, 1, 1.0, next_obs, true, true, 0.5, -0.69);
-
+        let exp_term = Experience::new(0, obs(0), 1, 1.0, obs(1), true, false, 0.5, -0.69);
+        let exp_trunc = Experience::new(0, obs(0), 1, 1.0, obs(1), false, true, 0.5, -0.69);
+        let exp_both = Experience::new(0, obs(0), 1, 1.0, obs(1), true, true, 0.5, -0.69);
         assert!(exp_term.is_done());
         assert!(exp_trunc.is_done());
         assert!(exp_both.is_done());
