@@ -308,12 +308,21 @@ fn select_rows_1d<B: AutodiffBackend>(
 }
 
 /// Select `indices` rows from a rank-1 int tensor.
+///
+/// NOTE: We can't call `to_vec::<i64>()` directly here because Burn's
+/// integer dtype is backend-dependent — `NdArray` uses `i64`, but `Wgpu`
+/// uses `i32`. `to_vec` requires the requested `E` to match the stored
+/// dtype exactly, so on wgpu it returns `DataError::TypeMismatch` and
+/// `unwrap_or_default()` silently yields an empty vector, triggering an
+/// out-of-bounds panic. Using `.iter::<i64>()` instead lets Burn handle
+/// the per-element cast, so the host buffer is always populated.
 fn select_rows_int<B: AutodiffBackend>(
     tensor: Tensor<B, 1, Int>,
     indices: &[usize],
     device: &B::Device,
 ) -> Tensor<B, 1, Int> {
-    let host: Vec<i64> = tensor.into_data().to_vec().unwrap_or_default();
+    let data = tensor.into_data();
+    let host: Vec<i64> = data.iter::<i64>().collect();
     let out: Vec<i64> = indices.iter().map(|&i| host[i]).collect();
     Tensor::<B, 1, Int>::from_data(burn::tensor::TensorData::new(out, [indices.len()]), device)
 }
