@@ -235,6 +235,18 @@ impl<B: Backend> MlpBurnPolicy<B> {
         }
     }
 
+    /// Action-head output dimensionality (number of discrete actions).
+    ///
+    /// Reads the `policy_head` weight tensor's shape — Burn's
+    /// [`burn::nn::Linear`] stores `weight: Param<Tensor<B, 2>>` with
+    /// shape `[d_input, d_output]`, so `d_output` is the action
+    /// cardinality. Used by the multi-agent joint trainer's
+    /// [`crate::multi_agent::joint::JointPolicy::action_dims_joint`] impl
+    /// to size the rollout action buffer without consuming RNG draws.
+    pub fn policy_head_action_dim(&self) -> usize {
+        self.policy_head.weight.val().dims()[1]
+    }
+
     /// Sample one action per row from the policy's categorical
     /// distribution and return `(actions_host, log_probs_host,
     /// values_host)` as plain `Vec`s.

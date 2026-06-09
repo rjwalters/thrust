@@ -125,6 +125,88 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
         self.action_heads.len()
     }
 
+    /// Per-dimension action cardinalities (one entry per head).
+    ///
+    /// Returns the same vector that was passed to
+    /// [`MultiDiscreteMlpBurnPolicy::with_config`] /
+    /// [`MultiDiscreteMlpBurnPolicy::new`]. Reads each action head's
+    /// `weight` tensor shape — Burn's [`burn::nn::Linear`] stores `weight:
+    /// Param<Tensor<B, 2>>` with shape `[d_input, d_output]`, so `d_output`
+    /// is the per-dim cardinality. Used by the multi-agent joint trainer's
+    /// [`crate::multi_agent::joint::JointPolicy::action_dims_joint`] impl to
+    /// size the rollout action buffer.
+    pub fn action_dim_cardinalities(&self) -> Vec<usize> {
+        self.action_heads.iter().map(|h| h.weight.val().dims()[1]).collect()
+    }
+
+    /// Sample one action per row per dim from the per-dim categorical
+    /// distributions and return `(actions_host, log_probs_host,
+    /// values_host)` as plain `Vec`s.
+    ///
+    /// Mirrors [`crate::policy::mlp::MlpBurnPolicy::get_action_host`] —
+    /// the trainer-side rollout loop does not need gradient flow through
+    /// the sampled action (only the eventual
+    /// [`MultiDiscreteMlpBurnPolicy::evaluate_actions`] call on the stored
+    /// transitions matters for the PPO surrogate). We therefore do the
+    /// categorical draw on the host with `rand`, sidestepping Burn
+    /// 0.21's lack of a first-class `multinomial` op.
+    ///
+    /// Layout:
+    /// - `actions[row * num_dims + d]` is the action for dim `d` of row `row`.
+    ///   Length is `batch * num_dims`.
+    /// - `log_probs[row]` is the joint log-probability summed across dims.
+    /// - `values[row]` is the value estimate.
+    pub fn get_action_host(&self, obs: Tensor<B, 2>) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        use rand::Rng;
+        let (logits_per_dim, value) = self.forward(obs);
+        let num_dims = logits_per_dim.len();
+        assert!(num_dims > 0, "at least one action dim");
+
+        // Pre-extract host-side probs & log-probs for every head once. We
+        // can sample dim-by-dim cheaply from there.
+        let mut probs_per_dim: Vec<(usize, Vec<f32>, Vec<f32>)> = Vec::with_capacity(num_dims);
+        let mut batch_opt: Option<usize> = None;
+        for logits in logits_per_dim.into_iter() {
+            let dims = logits.dims();
+            let batch = dims[0];
+            let n_actions = dims[1];
+            batch_opt.get_or_insert(batch);
+            let probs = activation::softmax(logits.clone(), 1);
+            let log_probs = activation::log_softmax(logits, 1);
+            let probs_flat: Vec<f32> = probs.into_data().to_vec().expect("probs to_vec");
+            let log_probs_flat: Vec<f32> =
+                log_probs.into_data().to_vec().expect("log_probs to_vec");
+            probs_per_dim.push((n_actions, probs_flat, log_probs_flat));
+        }
+        let batch = batch_opt.unwrap_or(0);
+        let values_host: Vec<f32> = value.into_data().to_vec().expect("values to_vec");
+
+        let mut rng = rand::rng();
+        let mut actions = vec![0_i64; batch * num_dims];
+        let mut log_probs = vec![0.0_f32; batch];
+
+        for row in 0..batch {
+            let mut joint_lp = 0.0_f32;
+            for (d, (n_actions, probs_flat, log_probs_flat)) in probs_per_dim.iter().enumerate() {
+                let u: f32 = rng.random();
+                let mut cum = 0.0;
+                let mut chosen = (*n_actions - 1) as i64;
+                for j in 0..*n_actions {
+                    cum += probs_flat[row * n_actions + j];
+                    if u < cum {
+                        chosen = j as i64;
+                        break;
+                    }
+                }
+                actions[row * num_dims + d] = chosen;
+                joint_lp += log_probs_flat[row * n_actions + chosen as usize];
+            }
+            log_probs[row] = joint_lp;
+        }
+
+        (actions, log_probs, values_host)
+    }
+
     /// Evaluate given actions: per-step summed log-prob, per-step mean
     /// entropy (across dims), and value.
     ///
