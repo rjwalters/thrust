@@ -21,14 +21,23 @@
 //! - [Proximal Policy Optimization Algorithms](https://arxiv.org/abs/1707.06347)
 //! - [OpenAI Spinning Up: PPO](https://spinningup.openai.com/en/latest/algorithms/ppo.html)
 
-// Re-export main components
+// Re-export main components. `PPOConfig`, `TrainingStats`,
+// `AggregatedStats`, and `generate_minibatch_indices` are
+// backend-agnostic (they do not touch `tch::Tensor`) and are
+// available under either `training` (tch) or `training-burn`. The
+// tch-specific bits (`compute_gae`, `compute_policy_loss`,
+// `compute_value_loss`, `PPOTrainer`) stay gated on `training`.
 pub use config::PPOConfig;
-pub use loss::{compute_gae, compute_policy_loss, compute_value_loss, generate_minibatch_indices};
+pub use loss::generate_minibatch_indices;
+#[cfg(feature = "training")]
+pub use loss::{compute_entropy_loss, compute_gae, compute_policy_loss, compute_value_loss};
 pub use stats::{AggregatedStats, TrainingStats};
+#[cfg(feature = "training")]
 pub use trainer::PPOTrainer;
 
 // Submodules
 mod config;
 mod loss;
 mod stats;
+#[cfg(feature = "training")]
 mod trainer;

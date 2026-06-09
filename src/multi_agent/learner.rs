@@ -228,11 +228,11 @@ impl PolicyLearner {
     /// `obs_dim`. The last-inserted experience snapshot (used for
     /// the GAE bootstrap) is updated.
     fn ingest_experience(&mut self, exp: Experience) -> Result<()> {
-        // Tensors may live on GPU; move to CPU before extracting to Vec.
-        let obs_cpu = exp.observation.to_device(tch::Device::Cpu);
-        let obs_vec: Vec<f32> = Vec::<f32>::try_from(&obs_cpu).map_err(|e| {
-            anyhow::anyhow!("Failed to convert observation tensor to Vec<f32>: {e}")
-        })?;
+        // Phase 3 (#80) of the Burn migration moves message-protocol
+        // observations from `tch::Tensor` to `Vec<f32>` host buffers;
+        // see the module-level note in `multi_agent::messages`. No
+        // host↔tch conversion is needed here anymore.
+        let obs_vec = exp.observation;
 
         if obs_vec.len() != self.config.obs_dim {
             return Err(anyhow::anyhow!(
@@ -242,10 +242,7 @@ impl PolicyLearner {
             ));
         }
 
-        let next_obs_cpu = exp.next_observation.to_device(tch::Device::Cpu);
-        let next_obs_vec: Vec<f32> = Vec::<f32>::try_from(&next_obs_cpu).map_err(|e| {
-            anyhow::anyhow!("Failed to convert next_observation tensor to Vec<f32>: {e}")
-        })?;
+        let next_obs_vec = exp.next_observation;
 
         // Single-env learner: env_id is always 0. If/when multi-env per
         // learner support is added, this should be threaded through.
@@ -461,8 +458,6 @@ impl From<LearnerConfig> for crate::train::ppo::PPOConfig {
 
 #[cfg(test)]
 mod tests {
-    use tch::Kind;
-
     use super::*;
 
     #[test]
@@ -525,11 +520,12 @@ mod tests {
                 .expect("learner construction should succeed");
 
         // Push a small batch of experiences with the last one terminal.
+        // Observations are `Vec<f32>` host buffers (phase 3 of the
+        // Burn migration, #80).
         let n_exp = 6;
         for i in 0..n_exp {
-            let obs = Tensor::ones([obs_dim as i64], (Kind::Float, tch::Device::Cpu));
-            let next_obs =
-                Tensor::ones([obs_dim as i64], (Kind::Float, tch::Device::Cpu)) * (i as f64 + 1.0);
+            let obs: Vec<f32> = vec![1.0; obs_dim];
+            let next_obs: Vec<f32> = vec![(i as f32) + 1.0; obs_dim];
             let terminated = i == n_exp - 1;
             let exp = Experience::new(
                 0,
@@ -633,8 +629,8 @@ mod tests {
         let n_exp = 10usize;
         let sentinel_log_prob: f32 = -0.69;
         for i in 0..n_exp {
-            let obs = Tensor::ones([obs_dim as i64], (Kind::Float, tch::Device::Cpu));
-            let next_obs = Tensor::ones([obs_dim as i64], (Kind::Float, tch::Device::Cpu));
+            let obs: Vec<f32> = vec![1.0; obs_dim];
+            let next_obs: Vec<f32> = vec![1.0; obs_dim];
             let terminated = i == n_exp - 1;
             let exp = Experience::new(
                 0,

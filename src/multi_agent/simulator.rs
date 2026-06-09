@@ -178,17 +178,20 @@ where
                 let actions_md: Vec<Vec<i64>> = actions.iter().map(|&a| vec![a]).collect();
                 let result = env.step_multi(&actions_md);
 
-                // Send experiences to learners
+                // Send experiences to learners. Observations cross the
+                // channel as `Vec<f32>` host buffers (phase 3 of the
+                // Burn migration, #80) — backend-agnostic message
+                // protocol, no tensor round-trip on the wire.
                 for (i, &agent_id) in agent_ids.iter().enumerate() {
-                    let obs_tensor = Self::obs_to_tensor(&observations[i], device)?;
-                    let next_obs_tensor = Self::obs_to_tensor(&result.observations[i], device)?;
+                    let obs_vec = observations[i].clone();
+                    let next_obs_vec = result.observations[i].clone();
 
                     let exp = Experience::new(
                         agent_id,
-                        obs_tensor,
+                        obs_vec,
                         actions[i],
                         result.rewards[i],
-                        next_obs_tensor,
+                        next_obs_vec,
                         result.terminated[i],
                         result.truncated[i],
                         values[i],
