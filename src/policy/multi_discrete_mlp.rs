@@ -143,7 +143,30 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
     /// distributions and return `(actions_host, log_probs_host,
     /// values_host)` as plain `Vec`s.
     ///
-    /// Mirrors [`crate::policy::mlp::MlpBurnPolicy::get_action_host`] —
+    /// Thin backwards-compat wrapper around
+    /// [`MultiDiscreteMlpBurnPolicy::get_action_host_seeded`] that
+    /// constructs a thread-local RNG. **Not deterministic across
+    /// calls** — use
+    /// [`get_action_host_seeded`](Self::get_action_host_seeded) and
+    /// pass a seeded [`rand::rngs::StdRng`] when reproducibility is
+    /// required (PSRO/NFSP/joint trainer rollouts call the seeded form
+    /// via the [`crate::multi_agent::joint::JointPolicy`] trait so that
+    /// `PsroConfig::seed` / `NfspConfig::seed` produce bit-identical
+    /// rollouts; see issue #114).
+    pub fn get_action_host(&self, obs: Tensor<B, 2>) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        use rand::SeedableRng;
+        // Seed from OS entropy so the wrapper remains stochastic for
+        // non-deterministic callers (same behavior pre-#114, routed
+        // through `StdRng`).
+        let mut rng = rand::rngs::StdRng::from_os_rng();
+        self.get_action_host_seeded(obs, &mut rng)
+    }
+
+    /// Same contract as [`get_action_host`](Self::get_action_host) but
+    /// the host-side categorical draws consume `rng` instead of the
+    /// thread-local generator.
+    ///
+    /// Mirrors [`crate::policy::mlp::MlpBurnPolicy::get_action_host_seeded`] —
     /// the trainer-side rollout loop does not need gradient flow through
     /// the sampled action (only the eventual
     /// [`MultiDiscreteMlpBurnPolicy::evaluate_actions`] call on the stored
@@ -156,7 +179,17 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
     ///   Length is `batch * num_dims`.
     /// - `log_probs[row]` is the joint log-probability summed across dims.
     /// - `values[row]` is the value estimate.
-    pub fn get_action_host(&self, obs: Tensor<B, 2>) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+    ///
+    /// Bit-exactness contract: two calls with the same `obs`, same
+    /// policy state, and same-seeded `rng` (`StdRng::seed_from_u64`)
+    /// produce element-wise identical `(actions, log_probs, values)`.
+    /// The per-row outer loop and per-dim inner loop consume RNG draws
+    /// in a fixed `row major → dim major` order.
+    pub fn get_action_host_seeded(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut rand::rngs::StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
         use rand::Rng;
         let (logits_per_dim, value) = self.forward(obs);
         let num_dims = logits_per_dim.len();
@@ -181,7 +214,6 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
         let batch = batch_opt.unwrap_or(0);
         let values_host: Vec<f32> = value.into_data().to_vec().expect("values to_vec");
 
-        let mut rng = rand::rng();
         let mut actions = vec![0_i64; batch * num_dims];
         let mut log_probs = vec![0.0_f32; batch];
 
@@ -313,5 +345,41 @@ mod tests {
         let device = Default::default();
         let policy = MultiDiscreteMlpBurnPolicy::<B>::new(4, vec![10, 2, 5], 32, &device);
         assert_eq!(policy.num_action_dims(), 3);
+    }
+
+    /// Bit-exact reproducibility of
+    /// [`MultiDiscreteMlpBurnPolicy::get_action_host_seeded`] across
+    /// same-seeded `StdRng` invocations.
+    ///
+    /// Mirror of the unit test in `src/policy/mlp.rs` — the
+    /// multi-discrete path consumes one RNG draw per (row, dim) pair
+    /// in `row major → dim major` order, so two calls with the same
+    /// observation and same-seeded RNG must produce element-wise
+    /// identical `(actions, log_probs, values)`.
+    #[test]
+    fn test_get_action_host_seeded_is_bit_exact() {
+        use rand::{SeedableRng, rngs::StdRng};
+
+        let device = Default::default();
+        let policy = MultiDiscreteMlpBurnPolicy::<B>::new(4, vec![3, 4], 16, &device);
+
+        // 3-row batch, 2 action dims.
+        let obs_data: Vec<f32> = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2];
+        let obs_a = Tensor::<B, 2>::from_data(
+            burn::tensor::TensorData::new(obs_data.clone(), [3, 4]),
+            &device,
+        );
+        let obs_b =
+            Tensor::<B, 2>::from_data(burn::tensor::TensorData::new(obs_data, [3, 4]), &device);
+
+        let mut rng_a = StdRng::seed_from_u64(123);
+        let mut rng_b = StdRng::seed_from_u64(123);
+        let (a_a, lp_a, v_a) = policy.get_action_host_seeded(obs_a, &mut rng_a);
+        let (a_b, lp_b, v_b) = policy.get_action_host_seeded(obs_b, &mut rng_b);
+        // 3 rows × 2 dims = 6 action ints.
+        assert_eq!(a_a.len(), 6, "row-major (row, dim) layout = 3*2 entries");
+        assert_eq!(a_a, a_b, "same-seed actions must be bit-identical");
+        assert_eq!(lp_a, lp_b, "same-seed log_probs must be bit-identical");
+        assert_eq!(v_a, v_b, "same-seed values must be bit-identical");
     }
 }

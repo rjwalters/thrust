@@ -76,9 +76,11 @@ use crate::train::{
 ///
 /// The trait pins exactly the surface the trainer needs:
 ///
-/// - **`get_action_host`** — rollout-time sampling. Returns `(actions_per_dim,
-///   log_probs, values)` on the host so the trainer can build the rollout
-///   buffer without tying it to a particular backend tensor.
+/// - **`get_action_host_seeded`** — rollout-time sampling. Returns
+///   `(actions_per_dim, log_probs, values)` on the host so the trainer can
+///   build the rollout buffer without tying it to a particular backend tensor.
+///   Takes the trainer-owned `StdRng` so `PsroConfig::seed` /
+///   `NfspConfig::seed` produce bit-identical rollouts (issue #114).
 /// - **`evaluate_actions`** — re-evaluate the current policy on previously
 ///   sampled actions to compute updated log-probs / entropy / value for the PPO
 ///   loss; this is the only place autograd-bearing tensors are produced.
@@ -86,7 +88,8 @@ use crate::train::{
 /// - **`action_dims`** — per-dim action cardinalities, used to size action
 ///   buffers without invoking the policy.
 pub trait JointPolicy<B: AutodiffBackend>: AutodiffModule<B> + Clone {
-    /// Sample actions for a single rollout step.
+    /// Sample actions for a single rollout step using a caller-supplied
+    /// seeded RNG.
     ///
     /// `obs` carries one row per environment in the rollout batch. Returns
     /// host-side `(actions, log_probs, values)` where:
@@ -96,7 +99,18 @@ pub trait JointPolicy<B: AutodiffBackend>: AutodiffModule<B> + Clone {
     ///   `obs.dims()\[0\] * num_dims`.
     /// - `log_probs[row]` is the joint log-probability summed across dims.
     /// - `values[row]` is the value estimate.
-    fn get_action_host(&self, obs: Tensor<B, 2>) -> (Vec<i64>, Vec<f32>, Vec<f32>);
+    ///
+    /// Bit-exactness: two calls with the same `obs`, same policy state,
+    /// and same-seeded `rng` produce element-wise identical outputs —
+    /// the load-bearing guarantee that `PsroConfig::seed` /
+    /// `NfspConfig::seed` rely on after issue #114 completed plumbing
+    /// the trainer-owned `StdRng` through the rollout-time action
+    /// sampler.
+    fn get_action_host_seeded(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>);
 
     /// Re-evaluate the policy on previously-sampled actions.
     ///
@@ -140,8 +154,12 @@ impl<B: AutodiffBackend> JointPolicy<B> for crate::policy::mlp::MlpBurnPolicy<B>
 where
     Self: AutodiffModule<B> + Clone,
 {
-    fn get_action_host(&self, obs: Tensor<B, 2>) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
-        let (actions, log_probs, values) = self.get_action_host(obs);
+    fn get_action_host_seeded(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        let (actions, log_probs, values) = self.get_action_host_seeded(obs, rng);
         // Scalar discrete: actions is already 1-per-row.
         (actions, log_probs, values)
     }
@@ -174,8 +192,12 @@ impl<B: AutodiffBackend> JointPolicy<B>
 where
     Self: AutodiffModule<B> + Clone,
 {
-    fn get_action_host(&self, obs: Tensor<B, 2>) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
-        self.get_action_host(obs)
+    fn get_action_host_seeded(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        self.get_action_host_seeded(obs, rng)
     }
 
     fn evaluate_actions_joint(
@@ -473,10 +495,17 @@ where
     /// iterations: pass agent-0's observation from the most recent
     /// `env.reset_joint()` or step. The trainer updates it in place so
     /// callers can keep the rollout stream stitched across iterations.
+    ///
+    /// `rng` is consumed by each per-step
+    /// [`JointPolicy::get_action_host_seeded`] call. Pass the
+    /// trainer-owned `StdRng` (e.g. `PsroTrainer::self.rng`) for
+    /// `PsroConfig::seed` / `NfspConfig::seed` to produce bit-identical
+    /// rollouts (issue #114).
     pub fn collect_rollout<E: JointEnv>(
         &self,
         env: &mut E,
         last_obs: &mut Vec<f32>,
+        rng: &mut StdRng,
     ) -> JointRollout {
         let num_steps = self.config.rollout_steps;
         let num_agents = self.config.num_agents;
@@ -517,7 +546,7 @@ where
             for (i, slot) in self.policies.iter().enumerate() {
                 let policy = slot.as_ref().expect("policy present at rollout time");
                 let (actions_host, log_probs_host, values_host) =
-                    policy.get_action_host(obs_t.clone());
+                    policy.get_action_host_seeded(obs_t.clone(), rng);
 
                 // Extract per-agent action vector (length = num_action_dims).
                 let row: Vec<i64> = actions_host[..num_action_dims].to_vec();
@@ -1027,8 +1056,8 @@ mod tests {
         let initial = env.reset_joint(None);
         let mut last_obs = initial[0].clone();
 
-        let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
         let mut rng = StdRng::seed_from_u64(0);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
         let stats = trainer
             .update(&rollout, &mut rng, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
                 None
@@ -1068,7 +1097,8 @@ mod tests {
         let mut env = MockEnv::new(num_agents, obs_dim);
         let initial = env.reset_joint(None);
         let mut last_obs = initial[0].clone();
-        let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
+        let mut rng = StdRng::seed_from_u64(0);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
 
         assert_eq!(rollout.num_steps(), t);
         assert_eq!(rollout.num_agents(), num_agents);
@@ -1115,9 +1145,9 @@ mod tests {
         let mut env = MockEnv::new(num_agents, obs_dim);
         let initial = env.reset_joint(None);
         let mut last_obs = initial[0].clone();
-        let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
-
         let mut rng = StdRng::seed_from_u64(0);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
+
         let stats = trainer
             .update(&rollout, &mut rng, |features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
                 Some((features[0].clone() - features[1].clone()).powf_scalar(2.0_f32).sum())
@@ -1159,14 +1189,14 @@ mod tests {
         let mut env = MockEnv::new(num_agents, obs_dim);
         let initial = env.reset_joint(None);
         let mut last_obs = initial[0].clone();
-        let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
+        let mut rng = StdRng::seed_from_u64(0);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
 
         assert_eq!(rollout.num_action_dims, action_dims.len());
         for a in &rollout.actions {
             assert_eq!(a.len(), 32 * action_dims.len());
         }
 
-        let mut rng = StdRng::seed_from_u64(0);
         let stats = trainer
             .update(&rollout, &mut rng, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
                 None
