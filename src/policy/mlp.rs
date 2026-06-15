@@ -247,6 +247,26 @@ impl<B: Backend> MlpBurnPolicy<B> {
         self.policy_head.weight.val().dims()[1]
     }
 
+    /// Borrow the first shared-trunk linear layer.
+    pub fn fc1(&self) -> &Linear<B> {
+        &self.fc1
+    }
+
+    /// Borrow the second shared-trunk linear layer.
+    pub fn fc2(&self) -> &Linear<B> {
+        &self.fc2
+    }
+
+    /// Borrow the policy (action-logits) head.
+    pub fn policy_head(&self) -> &Linear<B> {
+        &self.policy_head
+    }
+
+    /// Borrow the value (`V(s)`) head.
+    pub fn value_head(&self) -> &Linear<B> {
+        &self.value_head
+    }
+
     /// Sample one action per row from the policy's categorical
     /// distribution and return `(actions_host, log_probs_host,
     /// values_host)` as plain `Vec`s.

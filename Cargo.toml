@@ -198,3 +198,12 @@ required-features = ["training"]
 name = "train_pong_self_play"
 path = "examples/games/pong/train_pong_self_play.rs"
 required-features = ["training"]
+
+# Pong policy evaluation + Burn→InferenceModel exporter. Used to
+# generate `pong_self_play_model.json` from the `train_pong_self_play`
+# binary record and to compare both Pong models head-to-head against
+# the env's built-in rule-based opponent (issue #75 acceptance).
+[[example]]
+name = "eval_pong"
+path = "examples/games/pong/eval_pong.rs"
+required-features = ["training"]
