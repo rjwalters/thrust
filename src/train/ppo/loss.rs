@@ -322,8 +322,7 @@ mod tests {
     /// minibatch order at every gradient step.
     #[test]
     fn test_generate_minibatch_indices_with_rng_is_deterministic() {
-        use rand::SeedableRng;
-        use rand::rngs::StdRng;
+        use rand::{SeedableRng, rngs::StdRng};
 
         let buffer_size = 256;
         let batch_size = 32;
@@ -341,10 +340,7 @@ mod tests {
         // index ordering — i.e. the seed actually controls the shuffle.
         let mut rng_c = StdRng::seed_from_u64(seed.wrapping_add(1));
         let c = generate_minibatch_indices_with_rng(buffer_size, batch_size, &mut rng_c);
-        assert_ne!(
-            a, c,
-            "different seeds should produce different minibatch index orderings"
-        );
+        assert_ne!(a, c, "different seeds should produce different minibatch index orderings");
     }
 
     /// Multi-step determinism check: drawing several rounds of
@@ -354,8 +350,7 @@ mod tests {
     /// inside one PSRO/NFSP iteration.
     #[test]
     fn test_generate_minibatch_indices_with_rng_stays_synchronized() {
-        use rand::SeedableRng;
-        use rand::rngs::StdRng;
+        use rand::{SeedableRng, rngs::StdRng};
 
         let mut rng_a = StdRng::seed_from_u64(7);
         let mut rng_b = StdRng::seed_from_u64(7);

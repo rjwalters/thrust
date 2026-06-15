@@ -60,7 +60,6 @@ use burn::{
     optim::{GradientsParams, Optimizer},
     tensor::{Int, Tensor, backend::AutodiffBackend},
 };
-
 use rand::rngs::StdRng;
 
 use crate::train::{
@@ -909,7 +908,6 @@ mod tests {
         backend::{Autodiff, NdArray, ndarray::NdArrayDevice},
         optim::AdamConfig,
     };
-
     use rand::SeedableRng;
 
     use super::*;
