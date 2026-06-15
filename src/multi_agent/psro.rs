@@ -730,6 +730,7 @@ where
             last_stats = trainer.update_with_active_agents(
                 &rollout,
                 &active_mask,
+                &mut self.rng,
                 |_features: &[burn::tensor::Tensor<B, 2>]| -> Option<burn::tensor::Tensor<B, 1>> {
                     None
                 },
@@ -1169,10 +1170,12 @@ mod tests {
         let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
 
         let active_mask = vec![false, true];
+        let mut rng = StdRng::seed_from_u64(0);
         trainer
             .update_with_active_agents(
                 &rollout,
                 &active_mask,
+                &mut rng,
                 |_features: &[burn::tensor::Tensor<B, 2>]| -> Option<burn::tensor::Tensor<B, 1>> {
                     None
                 },

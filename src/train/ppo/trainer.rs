@@ -45,12 +45,13 @@ use burn::{
     optim::{GradientsParams, Optimizer},
     tensor::{Int, Tensor, backend::AutodiffBackend},
 };
+use rand::{SeedableRng, rngs::StdRng};
 
 use super::{
     config::PPOConfig,
     loss::{
-        compute_entropy_loss, compute_policy_loss, compute_value_loss, generate_minibatch_indices,
-        scalar_f64,
+        compute_entropy_loss, compute_policy_loss, compute_value_loss,
+        generate_minibatch_indices_with_rng, scalar_f64,
     },
     stats::TrainingStats,
 };
@@ -80,6 +81,12 @@ where
     total_steps: usize,
     total_episodes: usize,
     low_entropy_count: usize,
+    /// Seedable RNG for the per-epoch minibatch shuffle. Owned by the
+    /// trainer so the shuffle order is reproducible under
+    /// `config.seed` (issue #109). Previously the shuffle drew from
+    /// the thread-local `rand::rng()`, which defeated any
+    /// upstream seed plumbing (e.g. `PsroConfig::seed`).
+    rng: StdRng,
 }
 
 impl<B, P, O> PPOTrainerBurn<B, P, O>
@@ -91,6 +98,7 @@ where
     /// Build a new Burn PPO trainer.
     pub fn new(config: PPOConfig, policy: P, optimizer: BurnOptimizer<B, P, O>) -> Result<Self> {
         config.validate()?;
+        let rng = StdRng::seed_from_u64(config.seed);
         Ok(Self {
             config,
             policy: Some(policy),
@@ -98,6 +106,7 @@ where
             total_steps: 0,
             total_episodes: 0,
             low_entropy_count: 0,
+            rng,
         })
     }
 
@@ -171,7 +180,13 @@ where
             adv_data.iter().map(|&a| (a - adv_mean_scalar) / (adv_std + 1e-8)).collect();
 
         for _epoch in 0..self.config.n_epochs {
-            let batch_indices = generate_minibatch_indices(batch_size, self.config.batch_size);
+            // Seedable RNG → reproducible minibatch shuffle order
+            // under `config.seed` (issue #109).
+            let batch_indices = generate_minibatch_indices_with_rng(
+                batch_size,
+                self.config.batch_size,
+                &mut self.rng,
+            );
 
             for indices in &batch_indices {
                 let mb_obs = select_rows_2d(observations.clone(), indices, &device);

@@ -173,6 +173,12 @@ pub fn compute_entropy_loss<B: Backend>(entropy: Tensor<B, 1>) -> Tensor<B, 1> {
 /// approximately `batch_size` samples; the last batch is short if
 /// `buffer_size % batch_size != 0`.
 ///
+/// This convenience overload draws shuffle randomness from the
+/// thread-local `rand::rng()`. **Prefer
+/// [`generate_minibatch_indices_with_rng`] when seedable
+/// reproducibility matters** (e.g. PSRO / NFSP inner loops that pipe
+/// a [`rand::rngs::StdRng`] seeded from the trainer config; see issue #109).
+///
 /// # Arguments
 ///
 /// * `buffer_size` - Total number of samples in the buffer.
@@ -183,10 +189,37 @@ pub fn compute_entropy_loss<B: Backend>(entropy: Tensor<B, 1>) -> Tensor<B, 1> {
 /// Vector of vectors, where each inner vector contains indices for one
 /// minibatch.
 pub fn generate_minibatch_indices(buffer_size: usize, batch_size: usize) -> Vec<Vec<usize>> {
+    let mut rng = rand::rng();
+    generate_minibatch_indices_with_rng(buffer_size, batch_size, &mut rng)
+}
+
+/// Generate randomized minibatch indices from a flat rollout buffer
+/// using a caller-supplied RNG.
+///
+/// Identical to [`generate_minibatch_indices`] except the shuffle
+/// randomness is drawn from `rng`. Pass a `StdRng` seeded from your
+/// trainer config to make PPO / PSRO / NFSP inner loops
+/// bit-reproducible (issue #109).
+///
+/// # Arguments
+///
+/// * `buffer_size` - Total number of samples in the buffer.
+/// * `batch_size` - Desired size of each minibatch.
+/// * `rng` - Caller-owned RNG used for the shuffle.
+///
+/// # Returns
+///
+/// Vector of vectors, where each inner vector contains indices for one
+/// minibatch.
+pub fn generate_minibatch_indices_with_rng<R: rand::Rng + ?Sized>(
+    buffer_size: usize,
+    batch_size: usize,
+    rng: &mut R,
+) -> Vec<Vec<usize>> {
     use rand::seq::SliceRandom;
 
     let mut indices: Vec<usize> = (0..buffer_size).collect();
-    indices.shuffle(&mut rand::rng());
+    indices.shuffle(rng);
 
     indices.chunks(batch_size).map(|chunk| chunk.to_vec()).collect()
 }
@@ -275,5 +308,56 @@ mod tests {
         // mean = (0.5 + 1.0 + 0.1) / 3 = 0.5333...; negated = -0.5333...
         assert!(loss_val < 0.0);
         assert!((loss_val - (-0.5333333_f64)).abs() < 1e-4);
+    }
+
+    /// Issue #109 determinism guard: two RNGs constructed with the same
+    /// seed must produce bit-identical minibatch index lists.
+    ///
+    /// This is the load-bearing test for the inner-loop seedable
+    /// shuffle introduced in #109. Both
+    /// `JointMultiAgentTrainer::update_with_active_agents` and
+    /// `PPOTrainerBurn::train_step` ultimately consume this helper,
+    /// so a stable contract here is sufficient to guarantee that
+    /// same-seed PSRO / NFSP / single-agent PPO runs see the same
+    /// minibatch order at every gradient step.
+    #[test]
+    fn test_generate_minibatch_indices_with_rng_is_deterministic() {
+        use rand::{SeedableRng, rngs::StdRng};
+
+        let buffer_size = 256;
+        let batch_size = 32;
+        let seed: u64 = 0xC0FFEE;
+
+        let mut rng_a = StdRng::seed_from_u64(seed);
+        let mut rng_b = StdRng::seed_from_u64(seed);
+
+        let a = generate_minibatch_indices_with_rng(buffer_size, batch_size, &mut rng_a);
+        let b = generate_minibatch_indices_with_rng(buffer_size, batch_size, &mut rng_b);
+
+        assert_eq!(a, b, "same-seed RNG must yield bit-identical minibatch indices");
+
+        // Also check that a *different* seed produces a *different*
+        // index ordering — i.e. the seed actually controls the shuffle.
+        let mut rng_c = StdRng::seed_from_u64(seed.wrapping_add(1));
+        let c = generate_minibatch_indices_with_rng(buffer_size, batch_size, &mut rng_c);
+        assert_ne!(a, c, "different seeds should produce different minibatch index orderings");
+    }
+
+    /// Multi-step determinism check: drawing several rounds of
+    /// minibatch indices from the same RNG state on two parallel
+    /// trainers must stay synchronized. This is the property that
+    /// `update_with_active_agents` relies on across `n_epochs` epochs
+    /// inside one PSRO/NFSP iteration.
+    #[test]
+    fn test_generate_minibatch_indices_with_rng_stays_synchronized() {
+        use rand::{SeedableRng, rngs::StdRng};
+
+        let mut rng_a = StdRng::seed_from_u64(7);
+        let mut rng_b = StdRng::seed_from_u64(7);
+        for epoch in 0..8 {
+            let a = generate_minibatch_indices_with_rng(64, 8, &mut rng_a);
+            let b = generate_minibatch_indices_with_rng(64, 8, &mut rng_b);
+            assert_eq!(a, b, "epoch {epoch}: parallel RNGs diverged");
+        }
     }
 }

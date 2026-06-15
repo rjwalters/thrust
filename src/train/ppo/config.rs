@@ -44,6 +44,15 @@ pub struct PPOConfig {
 
     /// Target KL divergence for early stopping
     pub target_kl: f64,
+
+    /// Seed for the inner-loop RNG used to shuffle minibatch indices.
+    ///
+    /// Plumbed through the trainer so that two trainers built with the
+    /// same `seed` produce bit-identical updates on the same rollout
+    /// (issue #109). The PPO trainer constructs an internal
+    /// `StdRng::seed_from_u64(seed)` at `new()` time and uses it for
+    /// every minibatch shuffle.
+    pub seed: u64,
 }
 
 impl Default for PPOConfig {
@@ -60,6 +69,7 @@ impl Default for PPOConfig {
             ent_coef: 0.01,
             max_grad_norm: 0.5,
             target_kl: 0.01,
+            seed: 0,
         }
     }
 }
@@ -171,6 +181,14 @@ impl PPOConfig {
     /// Set target KL divergence
     pub fn target_kl(mut self, kl: f64) -> Self {
         self.target_kl = kl;
+        self
+    }
+
+    /// Set the seed for the inner-loop RNG used for minibatch shuffling.
+    ///
+    /// See [`PPOConfig::seed`].
+    pub fn seed(mut self, seed: u64) -> Self {
+        self.seed = seed;
         self
     }
 }
