@@ -569,10 +569,54 @@ where
     /// within the minibatch is irrelevant because every loss is a `mean` /
     /// `sum` reduction over the minibatch dim and therefore
     /// permutation-invariant.
-    pub fn update<F>(&mut self, rollout: &JointRollout, mut aux_fn: F) -> Result<JointStats>
+    pub fn update<F>(&mut self, rollout: &JointRollout, aux_fn: F) -> Result<JointStats>
     where
         F: FnMut(&[Tensor<B, 2>]) -> Option<Tensor<B, 1>>,
     {
+        let num_agents = self.config.num_agents;
+        let active = vec![true; num_agents];
+        self.update_with_active_agents(rollout, &active, aux_fn)
+    }
+
+    /// Joint PPO update with per-agent active mask — the freeze-N-1
+    /// primitive used by PSRO's best-response step.
+    ///
+    /// Identical to [`Self::update`] except that frozen agents
+    /// (`active[i] == false`) skip the optimizer step. Their loss is
+    /// still summed into the joint backward so the shared autograd
+    /// graph remains balanced, but their parameters are guaranteed
+    /// unchanged: we put the original policy back in its slot without
+    /// calling `optimizer.step`. Per-agent stats for frozen agents are
+    /// still recorded in the returned [`JointStats`] so callers can
+    /// monitor the mixture's behaviour on the rollout.
+    ///
+    /// # Use case
+    ///
+    /// PSRO's outer loop trains one *best-response* policy at a time
+    /// against a meta-Nash mixture over the rest of the population
+    /// (see [`crate::multi_agent::psro`]). Passing
+    /// `active = [false, ..., true (active idx), ..., false]` here is
+    /// the canonical freeze-N-1 pattern.
+    ///
+    /// # Panics
+    ///
+    /// Returns `Err` if `active.len() != config.num_agents`.
+    pub fn update_with_active_agents<F>(
+        &mut self,
+        rollout: &JointRollout,
+        active: &[bool],
+        mut aux_fn: F,
+    ) -> Result<JointStats>
+    where
+        F: FnMut(&[Tensor<B, 2>]) -> Option<Tensor<B, 1>>,
+    {
+        if active.len() != self.config.num_agents {
+            return Err(anyhow!(
+                "active mask length {} != config.num_agents {}",
+                active.len(),
+                self.config.num_agents
+            ));
+        }
         let device = self.device.clone();
         let num_agents = self.config.num_agents;
         let num_steps = rollout.num_steps();
@@ -714,9 +758,21 @@ where
                 let policy = self.policies[i]
                     .take()
                     .ok_or_else(|| anyhow!("policy {} is None mid-step", i))?;
+                // Drain gradient slice for policy `i` either way; this
+                // keeps the `Gradients` container consistent across all
+                // agents (Burn removes policy `i`'s params on
+                // `from_module`, so we always do the drain).
                 let policy_grads = GradientsParams::from_module(&mut grads, &policy);
-                let lr = self.optimizers[i].learning_rate();
-                let updated = self.optimizers[i].inner_mut().step(lr, policy, policy_grads);
+                let updated = if active[i] {
+                    let lr = self.optimizers[i].learning_rate();
+                    self.optimizers[i].inner_mut().step(lr, policy, policy_grads)
+                } else {
+                    // Frozen agent: drop the gradients and put the policy
+                    // back unchanged. This is the freeze-N-1 invariant
+                    // PSRO's best-response step relies on.
+                    drop(policy_grads);
+                    policy
+                };
                 self.policies[i] = Some(updated);
 
                 stats.policy_loss[i] += policy_loss_hosts[i];
