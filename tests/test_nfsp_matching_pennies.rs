@@ -120,6 +120,14 @@ fn test_nfsp_multi_agent_converges_to_uniform_on_matching_pennies() {
             .expect("matching-pennies marginal should be computable");
         let tv = total_variation(&marginal, &uniform);
         println!("agent {agent} final AVG marginal = {marginal:?} (TV from uniform = {tv:.4})");
+        // Tolerance retained at 0.20 even after #109's inner-shuffler
+        // fix: empirical 10-run sweeps showed 0.15 was flaky (~9/10)
+        // and 0.10 was very flaky (~4/10). The residual non-determinism
+        // is the policy's rollout-time action sampler, which still
+        // uses thread-local `rand::rng()` (`src/policy/mlp.rs:295`).
+        // Once that sampler is seedable, this bound should be re-
+        // examined and tightened to the Curator's original 0.10 bar
+        // (issue #109 follow-up).
         assert!(
             tv <= 0.20,
             "agent {agent} average-policy marginal TV from uniform must be <= 0.20 (got {tv} on {marginal:?})"
@@ -157,6 +165,8 @@ fn test_nfsp_single_agent_marginal_converges_against_symmetric_opponent() {
         .expect("matching-pennies marginal should be computable");
     let tv = total_variation(&marginal, &uniform);
     println!("single-agent (agent 0) AVG marginal = {marginal:?} (TV = {tv:.4})");
+    // Tolerance retained at 0.20 even after #109's inner-shuffler
+    // fix (see the multi-agent test above for the calibration sweep).
     assert!(
         tv <= 0.20,
         "single-agent NFSP average-policy marginal TV from uniform must be <= 0.20 (got {tv})"

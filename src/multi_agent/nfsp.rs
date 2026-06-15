@@ -494,6 +494,7 @@ where
                 let bs = self.br_trainer.update_with_active_agents(
                     &rollout,
                     &active,
+                    &mut self.rng,
                     |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> { None },
                 )?;
                 last_br_stats = Some(bs);

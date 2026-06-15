@@ -61,6 +61,8 @@ use burn::{
     tensor::{Int, Tensor, backend::AutodiffBackend},
 };
 
+use rand::rngs::StdRng;
+
 use crate::train::{
     optimizer::{BackendOptimizer, BurnOptimizer},
     ppo::loss::{compute_policy_loss, compute_value_loss, scalar_f64},
@@ -569,13 +571,18 @@ where
     /// within the minibatch is irrelevant because every loss is a `mean` /
     /// `sum` reduction over the minibatch dim and therefore
     /// permutation-invariant.
-    pub fn update<F>(&mut self, rollout: &JointRollout, aux_fn: F) -> Result<JointStats>
+    pub fn update<F>(
+        &mut self,
+        rollout: &JointRollout,
+        rng: &mut StdRng,
+        aux_fn: F,
+    ) -> Result<JointStats>
     where
         F: FnMut(&[Tensor<B, 2>]) -> Option<Tensor<B, 1>>,
     {
         let num_agents = self.config.num_agents;
         let active = vec![true; num_agents];
-        self.update_with_active_agents(rollout, &active, aux_fn)
+        self.update_with_active_agents(rollout, &active, rng, aux_fn)
     }
 
     /// Joint PPO update with per-agent active mask — the freeze-N-1
@@ -605,6 +612,7 @@ where
         &mut self,
         rollout: &JointRollout,
         active: &[bool],
+        rng: &mut StdRng,
         mut aux_fn: F,
     ) -> Result<JointStats>
     where
@@ -656,10 +664,12 @@ where
         let mb_size = self.config.minibatch_size.min(num_steps);
 
         for _epoch in 0..self.config.n_epochs {
-            // One shuffled minibatch per epoch.
+            // One shuffled minibatch per epoch. The shuffle uses the
+            // caller-supplied RNG so PSRO / NFSP runs are bit-reproducible
+            // under their configured seeds (see issue #109).
             let mut indices: Vec<usize> = (0..num_steps).collect();
             use rand::seq::SliceRandom;
-            indices.shuffle(&mut rand::rng());
+            indices.shuffle(rng);
             indices.truncate(mb_size);
 
             let obs_mb = select_obs(&rollout.observations, rollout.obs_dim, &indices, &device);
@@ -900,6 +910,8 @@ mod tests {
         optim::AdamConfig,
     };
 
+    use rand::SeedableRng;
+
     use super::*;
     use crate::{
         policy::{mlp::MlpBurnPolicy, multi_discrete_mlp::MultiDiscreteMlpBurnPolicy},
@@ -1018,8 +1030,11 @@ mod tests {
         let mut last_obs = initial[0].clone();
 
         let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
+        let mut rng = StdRng::seed_from_u64(0);
         let stats = trainer
-            .update(&rollout, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> { None })
+            .update(&rollout, &mut rng, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
+                None
+            })
             .expect("update should not error");
 
         assert!(stats.total_loss.is_finite(), "total_loss must be finite");
@@ -1104,8 +1119,9 @@ mod tests {
         let mut last_obs = initial[0].clone();
         let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
 
+        let mut rng = StdRng::seed_from_u64(0);
         let stats = trainer
-            .update(&rollout, |features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
+            .update(&rollout, &mut rng, |features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
                 Some((features[0].clone() - features[1].clone()).powf_scalar(2.0_f32).sum())
             })
             .expect("update should not error");
@@ -1152,8 +1168,11 @@ mod tests {
             assert_eq!(a.len(), 32 * action_dims.len());
         }
 
+        let mut rng = StdRng::seed_from_u64(0);
         let stats = trainer
-            .update(&rollout, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> { None })
+            .update(&rollout, &mut rng, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
+                None
+            })
             .expect("update should not error");
         assert!(stats.total_loss.is_finite());
     }
