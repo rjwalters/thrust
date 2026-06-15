@@ -18,15 +18,31 @@
 //! # Usage
 //!
 //! ```bash
+//! # CPU (default — NdArray backend):
 //! cargo run --example train_pong_self_play --features training --release
+//!
+//! # GPU (wgpu — Vulkan/Metal/DX12/WebGPU):
+//! cargo run --example train_pong_self_play --features "training,wgpu" --release
 //! ```
 //!
 //! `TOTAL_TIMESTEPS=200000` overrides the default budget.
+//!
+//! # Artifacts
+//!
+//! Final policy is saved at the end of training to:
+//! - `pong_self_play_model.json` (PrettyJSON, human-readable)
+//! - `pong_self_play_model.bin` (Burn binary, smaller / for code-load)
+//!
+//! Intermediate checkpoints are written every `CHECKPOINT_INTERVAL_UPDATES`
+//! PPO updates to `pong_self_play_checkpoint_<env_steps>steps.bin` so a
+//! crashed multi-hour run is recoverable to the last cadence.
 
 use anyhow::Result;
 use burn::{
-    backend::{Autodiff, NdArray, ndarray::NdArrayDevice},
+    backend::Autodiff,
+    module::Module,
     optim::AdamConfig,
+    record::{BinFileRecorder, FullPrecisionSettings, PrettyJsonFileRecorder},
     tensor::{Int, Tensor, TensorData},
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -42,7 +58,20 @@ use thrust_rl::{
     },
 };
 
-type B = Autodiff<NdArray<f32>>;
+// Concrete backend stack — selected at compile time via Cargo features.
+// `--features "training,wgpu"` swaps the CPU NdArray default for Burn's
+// cross-platform GPU backend (Vulkan / Metal / DX12 / WebGPU). See issue
+// #102 for the GPU validation run.
+#[cfg(not(feature = "wgpu"))]
+type InnerBackend = burn::backend::NdArray<f32>;
+#[cfg(feature = "wgpu")]
+type InnerBackend = burn::backend::Wgpu<f32, i32>;
+type B = Autodiff<InnerBackend>;
+
+#[cfg(not(feature = "wgpu"))]
+const BACKEND_LABEL: &str = "NdArray<f32> + Autodiff (CPU)";
+#[cfg(feature = "wgpu")]
+const BACKEND_LABEL: &str = "Wgpu<f32, i32> + Autodiff (GPU: Vulkan/Metal/DX12/WebGPU)";
 
 const NUM_ENVS: usize = 8;
 const NUM_STEPS: usize = 128;
@@ -53,6 +82,12 @@ const POOL_MAX: usize = 4;
 const SNAPSHOT_INTERVAL: usize = 5;
 const GAMMA: f32 = 0.99;
 const GAE_LAMBDA: f32 = 0.95;
+/// PPO updates between intermediate checkpoint writes. At
+/// NUM_ENVS=8, NUM_STEPS=128 this is ~1.0M env_steps per checkpoint
+/// (so a 20M-step overnight run produces ~20 checkpoints).
+const CHECKPOINT_INTERVAL_UPDATES: usize = 1_000;
+const MODEL_NAME: &str = "pong_self_play_model";
+const CHECKPOINT_PREFIX: &str = "pong_self_play_checkpoint";
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
@@ -62,7 +97,7 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_TIMESTEPS);
 
-    tracing::info!("Starting Pong self-play PPO training (Burn backend)");
+    tracing::info!("Starting Pong self-play PPO training (Burn backend: {})", BACKEND_LABEL);
     let training_start = std::time::Instant::now();
 
     let probe = Pong::new();
@@ -80,7 +115,7 @@ fn main() -> Result<()> {
     tracing::info!("  num_steps       = {}", NUM_STEPS);
     tracing::info!("  total_timesteps = {}", total_timesteps);
 
-    let device: NdArrayDevice = Default::default();
+    let device: burn::tensor::Device<InnerBackend> = Default::default();
 
     let policy_config = MlpBurnConfig {
         num_layers: 2,
@@ -249,6 +284,22 @@ fn main() -> Result<()> {
             );
         }
 
+        // --- Intermediate checkpoint -------------------------------
+        if (update + 1) % CHECKPOINT_INTERVAL_UPDATES == 0 {
+            let ckpt_path = format!("{CHECKPOINT_PREFIX}_{total_env_steps}steps");
+            let recorder = BinFileRecorder::<FullPrecisionSettings>::new();
+            trainer
+                .policy()
+                .clone()
+                .save_file(&ckpt_path, &recorder)
+                .map_err(|e| anyhow::anyhow!("checkpoint write failed: {e}"))?;
+            tracing::info!(
+                "  checkpoint written: {}.bin (env_steps={})",
+                ckpt_path,
+                total_env_steps
+            );
+        }
+
         let recent_avg = if !episode_returns.is_empty() {
             let n = episode_returns.len();
             let slice = &episode_returns[n.saturating_sub(50)..];
@@ -286,6 +337,24 @@ fn main() -> Result<()> {
         pool.len(),
         training_start.elapsed().as_secs_f64(),
     );
+
+    // --- Final model save ------------------------------------------
+    // JSON is the portable, human-readable target consumed by the
+    // web demo (`web/public/pong_self_play_model.json`); the .bin is
+    // the compact form for fast Rust-side reload.
+    let json_recorder = PrettyJsonFileRecorder::<FullPrecisionSettings>::new();
+    trainer
+        .policy()
+        .clone()
+        .save_file(MODEL_NAME, &json_recorder)
+        .map_err(|e| anyhow::anyhow!("final JSON save failed: {e}"))?;
+    let bin_recorder = BinFileRecorder::<FullPrecisionSettings>::new();
+    trainer
+        .policy()
+        .clone()
+        .save_file(MODEL_NAME, &bin_recorder)
+        .map_err(|e| anyhow::anyhow!("final BIN save failed: {e}"))?;
+    tracing::info!("Saved final model: {MODEL_NAME}.json + {MODEL_NAME}.bin");
 
     Ok(())
 }
