@@ -177,7 +177,7 @@ pub fn compute_entropy_loss<B: Backend>(entropy: Tensor<B, 1>) -> Tensor<B, 1> {
 /// thread-local `rand::rng()`. **Prefer
 /// [`generate_minibatch_indices_with_rng`] when seedable
 /// reproducibility matters** (e.g. PSRO / NFSP inner loops that pipe
-/// a [`StdRng`] seeded from the trainer config; see issue #109).
+/// a [`rand::rngs::StdRng`] seeded from the trainer config; see issue #109).
 ///
 /// # Arguments
 ///
