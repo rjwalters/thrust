@@ -52,6 +52,8 @@ pub mod environment;
 pub mod joint;
 /// Cross-thread message payloads.
 pub mod messages;
+/// Neural Fictitious Self-Play (NFSP) trainer (issue #106).
+pub mod nfsp;
 /// Policy-Space Response Oracles (PSRO) meta-game trainer (issue #107).
 pub mod psro;
 
@@ -61,6 +63,7 @@ pub use joint::{
     JointTrainerConfig,
 };
 pub use messages::{AgentId, ControlMessage, Experience, PolicyUpdate, TrainingStats};
+pub use nfsp::{NfspConfig, NfspIterationStats, NfspStats, NfspTrainer, ReservoirBuffer};
 pub use psro::{
     FictitiousPlayMetaSolver, MetaSolver, PayoffCache, PsroConfig, PsroIterationStats, PsroStats,
     PsroTrainer, ReplicatorDynamicsMetaSolver, UniformMetaSolver,
