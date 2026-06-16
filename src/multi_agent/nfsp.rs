@@ -377,8 +377,16 @@ where
     avg_policies: Vec<Option<P>>,
     /// Per-agent average-policy optimizer.
     avg_optimizers: Vec<BurnOptimizer<B, P, O>>,
-    /// Per-agent reservoir buffer of `(obs, action)` pairs.
-    reservoirs: Vec<ReservoirBuffer<(Vec<f32>, i64)>>,
+    /// Per-agent reservoir buffer of `(obs, action_vec)` pairs.
+    ///
+    /// `action_vec` is the per-step joint action with one entry per
+    /// action dim — `Vec<i64>` of length `num_action_dims`. For
+    /// single-discrete policies (`MlpBurnPolicy`) this is a length-1 vec
+    /// (equivalent to the pre-#127 scalar form); for multi-discrete
+    /// policies (`MultiDiscreteMlpBurnPolicy` — e.g. bucket-brigade
+    /// `[10, 2, 2]`) it carries one entry per factored head, matching
+    /// what `evaluate_actions_joint` expects (`[mb, num_action_dims]`).
+    reservoirs: Vec<ReservoirBuffer<(Vec<f32>, Vec<i64>)>>,
     /// Internal RNG (η-flips, AP minibatch sampling).
     rng: StdRng,
     /// Cumulative BR pushes across all agents (diagnostic).
@@ -486,7 +494,7 @@ where
     }
 
     /// Borrow agent `i`'s reservoir buffer.
-    pub fn reservoir(&self, i: usize) -> &ReservoirBuffer<(Vec<f32>, i64)> {
+    pub fn reservoir(&self, i: usize) -> &ReservoirBuffer<(Vec<f32>, Vec<i64>)> {
         &self.reservoirs[i]
     }
 
@@ -706,7 +714,17 @@ where
                     // 0's — so partial-observability envs (PR #118
                     // refactor) record the correct supervised target for
                     // the behavior-cloning update.
-                    self.reservoirs[i].push((agent_obs.clone(), row[0]));
+                    //
+                    // Push the full per-dim action vector (length
+                    // `num_action_dims`). For single-discrete policies
+                    // this is a length-1 vec; for multi-discrete
+                    // factored policies (e.g. bucket-brigade
+                    // `[10, 2, 2]`) it preserves the per-head action so
+                    // the supervised CE step in
+                    // `train_average_policies` can feed
+                    // `evaluate_actions_joint` a properly-shaped
+                    // `[mb, num_action_dims]` int tensor (issue #127).
+                    self.reservoirs[i].push((agent_obs.clone(), row.clone()));
                     self.cumulative_br_pushes += 1;
                     row
                 } else {
@@ -789,6 +807,14 @@ where
             if self.reservoirs[i].is_empty() {
                 continue;
             }
+            // Source-of-truth: probe `num_action_dims` from the BR
+            // policy for agent `i`. PR #103 / issue #127: the AP policy
+            // shares the same factored-action shape as the BR policy,
+            // and `evaluate_actions_joint` expects actions of shape
+            // `[mb, num_action_dims]` for both `MlpBurnPolicy`
+            // (length-1 columns) and `MultiDiscreteMlpBurnPolicy`
+            // (length-`num_action_dims` columns).
+            let num_action_dims = self.br_trainer.policy(i).action_dims_joint().len();
             let mut sum_loss = 0.0_f64;
             let mut n_steps_done = 0usize;
             for _ in 0..steps {
@@ -798,31 +824,58 @@ where
                 }
                 let obs_dim = batch[0].0.len();
                 let mb = batch.len();
-                // Flatten obs into [mb, obs_dim], actions into [mb].
+                // Flatten obs into [mb, obs_dim], actions into
+                // [mb, num_action_dims]. Each batch row's action vec
+                // must already have length `num_action_dims` — that
+                // invariant is established at push-time in
+                // `collect_anticipatory_rollout` (#127).
                 let mut obs_flat = Vec::with_capacity(mb * obs_dim);
-                let mut acts = Vec::with_capacity(mb);
+                let mut acts_flat = Vec::with_capacity(mb * num_action_dims);
                 for (o, a) in &batch {
+                    debug_assert_eq!(
+                        a.len(),
+                        num_action_dims,
+                        "reservoir action vec length {} != num_action_dims {} for agent {}",
+                        a.len(),
+                        num_action_dims,
+                        i
+                    );
                     obs_flat.extend_from_slice(o);
-                    acts.push(*a);
+                    acts_flat.extend_from_slice(a);
                 }
                 let obs_t = Tensor::<B, 2>::from_data(
                     TensorData::new(obs_flat, [mb, obs_dim]),
                     &self.device,
                 );
-                let acts_t: Tensor<B, 1, Int> =
-                    Tensor::<B, 1, Int>::from_data(TensorData::new(acts, [mb]), &self.device);
+                // Build the action tensor directly at shape
+                // `[mb, num_action_dims]` — no `unsqueeze_dim` step.
+                // For single-discrete (`MlpBurnPolicy`,
+                // `num_action_dims = 1`) this matches the prior
+                // shape exactly (the JointPolicy impl squeezes the
+                // trailing dim away). For multi-discrete
+                // (`MultiDiscreteMlpBurnPolicy`) this is required for
+                // the per-dim `slice([0..mb, i..i+1])` reads inside
+                // `evaluate_actions` to land in-bounds.
+                let acts_t: Tensor<B, 2, Int> = Tensor::<B, 2, Int>::from_data(
+                    TensorData::new(acts_flat, [mb, num_action_dims]),
+                    &self.device,
+                );
                 // Cross-entropy: -mean( log_softmax(logits)[gather(actions)] )
                 let policy = self.avg_policies[i]
                     .take()
                     .ok_or_else(|| anyhow!("AP policy {} is None mid-update", i))?;
-                let acts_2d = acts_t.unsqueeze_dim::<2>(1);
                 // We don't have a direct logits method on the
                 // JointPolicy trait — but for both
                 // `MlpBurnPolicy` and `MultiDiscreteMlpBurnPolicy` the
                 // evaluate_actions_joint path returns log-probs over
                 // the *taken* actions, which is exactly what
-                // cross-entropy needs. CE loss is the negative mean.
-                let (log_probs_taken, _, _) = policy.evaluate_actions_joint(obs_t, acts_2d);
+                // cross-entropy needs. For multi-discrete the returned
+                // log-prob is already the sum-across-dims (see
+                // `MultiDiscreteMlpBurnPolicy::evaluate_actions`), so
+                // `-mean(log_probs_taken)` IS the sum-of-per-head
+                // cross-entropy of a conditionally-independent factored
+                // distribution. No new `supervised_loss` method needed.
+                let (log_probs_taken, _, _) = policy.evaluate_actions_joint(obs_t, acts_t);
                 // Loss = -mean(log_probs_taken) → minimize.
                 let loss = log_probs_taken.neg().mean();
                 let loss_value = scalar_f64_avg_policy(loss.clone());
@@ -1329,9 +1382,11 @@ mod tests {
         )
         .expect("NfspTrainer::new should succeed");
 
-        // Seed reservoir 0 with a fixed dataset: all `(obs=[0.0], action=0)`.
+        // Seed reservoir 0 with a fixed dataset: all `(obs=[0.0], action=[0])`.
+        // Single-discrete callers wrap their scalar action in a length-1
+        // vec — the post-#127 reservoir contract.
         for _ in 0..64 {
-            trainer.reservoirs[0].push((vec![0.0_f32], 0));
+            trainer.reservoirs[0].push((vec![0.0_f32], vec![0]));
         }
         // Stage the supervised step manually a few times by setting
         // `avg_policy_train_steps_per_iteration` and calling the

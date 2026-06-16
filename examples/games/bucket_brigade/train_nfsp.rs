@@ -1,7 +1,7 @@
 //! NFSP bucket-brigade trainer on the no-convergence cells.
 //!
 //! Long-form training driver wired against `NfspTrainer` +
-//! `MlpBurnPolicy` (single-discrete) for the workshop-paper
+//! `MultiDiscreteMlpBurnPolicy` for the workshop-paper
 //! no-convergence regime. Default cell is canonical
 //! `(β=0.5, κ=0.1, c=0.5)`; override via `CELL=beta01|beta05|beta09`.
 //!
@@ -11,24 +11,17 @@
 //! Sibling of `examples/games/bucket_brigade/train_psro.rs`. PR 4/4
 //! of issue #117's bucket-brigade integration chain (closes #115).
 //!
-//! # Why a Cartesian-product single-discrete adapter
+//! # Factored multi-discrete policy (post-#127)
 //!
-//! `MultiDiscreteMlpBurnPolicy` is the natural fit for bucket-brigade's
-//! factored `[house, mode, signal]` action space — and PSRO uses that
-//! shape directly (see `train_psro.rs`). However, the post-#106 NFSP
-//! trainer's per-agent reservoir stores `(Vec<f32>, i64)` — a single
-//! scalar action — and its supervised AP-update path reshapes that
-//! scalar as a `[mb, 1]` int tensor before calling
-//! `policy.evaluate_actions_joint`. For a multi-discrete policy with
-//! `action_dims = [10, 2, 2]`, that shape causes a Burn `Squeeze` panic
-//! at the second per-dim slice.
-//!
-//! Until #127 (multi-discrete reservoirs) lands, this example
-//! Cartesian-product-flattens the action space into `Discrete(40)`
-//! (`= NUM_HOUSES * 2 * 2`) via the `SingleDiscreteBucketBrigade`
-//! wrapper — exactly the same shape `tests/test_nfsp_bucket_brigade.rs`
-//! (PR #126) uses. Once #127 ships, this example should switch back to
-//! the factored policy, matching the `train_psro.rs` shape.
+//! Per issue #127, NFSP's per-agent reservoir now stores
+//! `(Vec<f32>, Vec<i64>)` with one action entry per factored dim, and
+//! the supervised AP-update step builds an `[mb, num_action_dims]` int
+//! tensor before calling `policy.evaluate_actions_joint`. That lets
+//! this example drive bucket-brigade's factored
+//! `[house, mode, signal]` action space natively, matching the shape
+//! `train_psro.rs` already uses. Pre-#127 this example went through a
+//! Cartesian-product `Discrete(40)` wrapper (`= NUM_HOUSES * 2 * 2`) +
+//! `MlpBurnPolicy`; that workaround is removed.
 //!
 //! # Usage
 //!
@@ -74,10 +67,10 @@ use burn::{
 use thrust_rl::{
     env::games::bucket_brigade::{BucketBrigadeMaEnv, NUM_HOUSES, registry},
     multi_agent::{
-        JointEnv, JointStepResult, JointTrainerConfig, NfspConfig, NfspTrainer,
-        bucket_brigade_metrics::gap_closed,
+        JointTrainerConfig, NfspConfig, NfspTrainer, bucket_brigade_metrics::gap_closed,
+        joint::JointEnv,
     },
-    policy::mlp::MlpBurnPolicy,
+    policy::multi_discrete_mlp::MultiDiscreteMlpBurnPolicy,
     train::optimizer::BurnOptimizer,
 };
 
@@ -98,14 +91,14 @@ const SEED: u64 = 42;
 const DEFAULT_TOTAL_ITERATIONS: usize = 50;
 const DEFAULT_ROLLOUT_STEPS: usize = 2048;
 const DEFAULT_CELL: &str = "beta05";
-/// Cartesian-product cardinality `NUM_HOUSES * 2 (mode) * 2 (signal)`.
-/// Wrapping into a single-discrete dim lets us use `MlpBurnPolicy`
-/// instead of `MultiDiscreteMlpBurnPolicy`, sidestepping the NFSP
-/// multi-discrete reservoir gap (#127).
-const FLAT_ACTION_DIM: usize = NUM_HOUSES * 2 * 2;
 /// Length of the post-iteration deterministic eval rollout used to log
 /// running per-step team estimates.
 const EVAL_STEPS: usize = 200;
+
+/// Per-agent factored action cardinalities `[house, mode, signal]`.
+fn action_dims() -> Vec<usize> {
+    vec![NUM_HOUSES, 2, 2]
+}
 
 fn cell_params(cell: &str) -> (f32, f32, f32) {
     match cell {
@@ -125,57 +118,11 @@ fn make_cell_env(beta: f32, kappa: f32, cost: f32, seed: Option<u64>) -> BucketB
     BucketBrigadeMaEnv::new(scenario, NUM_AGENTS, seed)
 }
 
-/// Cartesian-product single-discrete adapter over [`BucketBrigadeMaEnv`].
-///
-/// Each per-agent action is a single scalar in `0..FLAT_ACTION_DIM`
-/// (`= NUM_HOUSES * 2 * 2 = 40`); the adapter decodes it as
-/// `house = a / 4`, `mode = (a / 2) % 2`, `signal = a % 2` and forwards
-/// the factored `[house, mode, signal]` triple to
-/// [`BucketBrigadeMaEnv::step_joint`]. Mirrors the wrapper inlined in
-/// `tests/test_nfsp_bucket_brigade.rs` (PR #126); kept inline here per
-/// the Curator's "examples self-contained at slight cost of duplication"
-/// guidance.
-struct SingleDiscreteBucketBrigade {
-    inner: BucketBrigadeMaEnv,
-}
-
-impl SingleDiscreteBucketBrigade {
-    fn new(inner: BucketBrigadeMaEnv) -> Self {
-        Self { inner }
-    }
-}
-
-impl JointEnv for SingleDiscreteBucketBrigade {
-    fn reset_joint(&mut self, seed: Option<u64>) -> Vec<Vec<f32>> {
-        self.inner.reset_joint(seed)
-    }
-
-    fn step_joint(&mut self, actions: &[Vec<i64>]) -> JointStepResult {
-        let factored: Vec<Vec<i64>> = actions
-            .iter()
-            .map(|a| {
-                assert_eq!(
-                    a.len(),
-                    1,
-                    "single-discrete adapter expects length-1 actions, got {}",
-                    a.len()
-                );
-                let v = a[0];
-                let signal = v % 2;
-                let mode = (v / 2) % 2;
-                let house = (v / 4) % NUM_HOUSES as i64;
-                vec![house, mode, signal]
-            })
-            .collect();
-        self.inner.step_joint(&factored)
-    }
-}
-
 /// Deterministic eval rollout on a fresh env using the supplied
 /// policies (one per agent). Returns mean per-step team reward over
 /// `EVAL_STEPS` steps.
 fn eval_per_step_team_reward(
-    policies: &[MlpBurnPolicy<B>],
+    policies: &[MultiDiscreteMlpBurnPolicy<B>],
     device: &burn::tensor::Device<InnerBackend>,
     obs_dim: usize,
     beta: f32,
@@ -184,8 +131,7 @@ fn eval_per_step_team_reward(
     seed_xor: u64,
 ) -> f32 {
     use rand::SeedableRng;
-    let mut env =
-        SingleDiscreteBucketBrigade::new(make_cell_env(beta, kappa, cost, Some(SEED ^ seed_xor)));
+    let mut env = make_cell_env(beta, kappa, cost, Some(SEED ^ seed_xor));
     let mut last_obs = env.reset_joint(Some(SEED ^ seed_xor));
     let mut total_team_reward: f32 = 0.0;
     let mut steps: usize = 0;
@@ -231,7 +177,10 @@ fn main() -> Result<()> {
     tracing::info!("  rollout_steps    = {rollout_steps}");
     tracing::info!("  num_agents       = {NUM_AGENTS}");
     tracing::info!("  hidden_dim       = {HIDDEN_DIM}");
-    tracing::info!("  flat_action_dim  = {FLAT_ACTION_DIM} (Cartesian-product wrapper; #127)");
+    tracing::info!(
+        "  action_dims      = {:?} (factored multi-discrete, native shape)",
+        action_dims()
+    );
 
     let device: burn::tensor::Device<InnerBackend> = Default::default();
 
@@ -259,20 +208,19 @@ fn main() -> Result<()> {
     };
 
     let policy_factory = move |dev: &burn::tensor::Device<InnerBackend>| {
-        MlpBurnPolicy::<B>::new(obs_dim, FLAT_ACTION_DIM, HIDDEN_DIM, dev)
+        MultiDiscreteMlpBurnPolicy::<B>::new(obs_dim, action_dims(), HIDDEN_DIM, dev)
     };
     let optimizer_factory = || {
         let inner = AdamConfig::new().init();
         BurnOptimizer::new(inner, 3e-4)
     };
-    let env_factory =
-        move || SingleDiscreteBucketBrigade::new(make_cell_env(beta, kappa, cost, Some(SEED)));
+    let env_factory = move || make_cell_env(beta, kappa, cost, Some(SEED));
 
     let mut trainer = NfspTrainer::<
         B,
-        MlpBurnPolicy<B>,
-        burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MlpBurnPolicy<B>, B>,
-        SingleDiscreteBucketBrigade,
+        MultiDiscreteMlpBurnPolicy<B>,
+        burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MultiDiscreteMlpBurnPolicy<B>, B>,
+        BucketBrigadeMaEnv,
         _,
         _,
         _,
@@ -324,9 +272,9 @@ fn main() -> Result<()> {
     let bin_recorder = BinFileRecorder::<FullPrecisionSettings>::new();
     let json_recorder = PrettyJsonFileRecorder::<FullPrecisionSettings>::new();
 
-    let final_brs: Vec<MlpBurnPolicy<B>> =
+    let final_brs: Vec<MultiDiscreteMlpBurnPolicy<B>> =
         (0..NUM_AGENTS).map(|i| trainer.br_policy(i).clone()).collect();
-    let final_aps: Vec<MlpBurnPolicy<B>> =
+    let final_aps: Vec<MultiDiscreteMlpBurnPolicy<B>> =
         (0..NUM_AGENTS).map(|i| trainer.avg_policy(i).clone()).collect();
 
     for (i, br) in final_brs.iter().enumerate() {
