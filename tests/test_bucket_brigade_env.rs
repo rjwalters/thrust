@@ -15,10 +15,10 @@ use thrust_rl::env::games::bucket_brigade::{
     ACTION_DIMS, BucketBrigadeMaEnv, NUM_HOUSES, SCENARIO_INFO_LEN,
 };
 
-/// 10 (houses) + 4 (signals) + 4 (locations) + 12 (last_actions: 3*4)
-///   + 4 (round1_signals) + 12 (scenario_info) = 46
+/// 1 (agent_id_norm) + 10 (houses) + 4 (signals) + 4 (locations)
+///   + 12 (last_actions: 3*4) + 4 (round1_signals) + 12 (scenario_info) = 47
 fn expected_obs_dim_default_4_agents() -> usize {
-    NUM_HOUSES + 4 + 4 + ACTION_DIMS * 4 + 4 + SCENARIO_INFO_LEN
+    1 + NUM_HOUSES + 4 + 4 + ACTION_DIMS * 4 + 4 + SCENARIO_INFO_LEN
 }
 
 #[test]
@@ -96,11 +96,11 @@ fn reset_recovers_after_done() {
     // After reset(), get_observation should return a fresh layout.
     let obs = env.reset(None);
     assert_eq!(obs.len(), 4);
-    // The first observation field block is the houses array; after reset it
-    // can be all-zero or contain initial-fire BURNING (=1) entries, but
-    // never RUINED (=2).
+    // The observation starts with one normalized `agent_id` scalar, then
+    // the houses array; after reset the houses can be all-zero or contain
+    // initial-fire BURNING (=1) entries, but never RUINED (=2).
     for o in &obs {
-        for (i, &h) in o[..NUM_HOUSES].iter().enumerate() {
+        for (i, &h) in o[1..1 + NUM_HOUSES].iter().enumerate() {
             assert!(h == 0.0 || h == 1.0, "house {i} = {h} after reset (must be SAFE or BURNING)",);
         }
     }
@@ -138,6 +138,42 @@ fn from_scenario_id_unknown_returns_error() {
         Ok(_) => panic!("expected unknown scenario ID to error"),
         Err(err) => assert!(err.contains("totally_made_up-v1"), "unexpected error: {err}"),
     }
+}
+
+#[test]
+fn per_agent_observations_differ_by_agent_id() {
+    // Load-bearing regression guard: per-agent flat observations must
+    // differ on the leading `agent_id_norm` scalar so trainers like NFSP
+    // can learn agent-specialized policies. Without this fix every per-
+    // agent observation would be bit-identical (all the surfaced engine
+    // fields are global state).
+    let mut env =
+        BucketBrigadeMaEnv::from_scenario_id("minimal_specialization-v1", None, Some(42)).unwrap();
+    let obs = env.reset(Some(42));
+    assert_eq!(obs.len(), 4);
+    // All four agents' observations must be distinct.
+    for i in 0..obs.len() {
+        for j in (i + 1)..obs.len() {
+            assert_ne!(
+                obs[i], obs[j],
+                "agent {i} and agent {j} obs must differ on agent_id_norm scalar"
+            );
+        }
+    }
+    // Leading scalar must be the normalized agent_id (0.0 .. 1.0 with
+    // step 1/(N-1) for N=4).
+    assert_eq!(obs[0][0], 0.0, "agent 0 normalized id should be 0.0");
+    assert!(
+        (obs[1][0] - 1.0 / 3.0).abs() < 1e-6,
+        "agent 1 normalized id should be ~0.333, got {}",
+        obs[1][0]
+    );
+    assert!(
+        (obs[2][0] - 2.0 / 3.0).abs() < 1e-6,
+        "agent 2 normalized id should be ~0.667, got {}",
+        obs[2][0]
+    );
+    assert_eq!(obs[3][0], 1.0, "agent 3 normalized id should be 1.0");
 }
 
 #[test]

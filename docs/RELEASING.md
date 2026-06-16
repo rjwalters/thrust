@@ -86,6 +86,66 @@ git commit -m "chore: bump version to vX.Y.Z"
 (`Cargo.lock` is `.gitignore`d in this repo, so only `Cargo.toml`
 will appear in the commit. That's expected.)
 
+## Step 2.5: Disable the `env-bucket-brigade` feature for publish
+
+`bucket-brigade-core` lives in the `envs/bucket-brigade/` git submodule
+and has not been published to crates.io. `cargo publish` refuses to
+publish any package with a path-only dependency (even an optional one),
+so the `env-bucket-brigade` feature and its backing dependency must be
+commented out **before** the publish (and the `unexpected_cfgs` lint
+shim re-added) so that `cargo publish --dry-run` in Step 3 already
+mirrors what crates.io will see.
+
+Apply the following three edits to `Cargo.toml` and commit them as a
+release-only chore commit:
+
+1. Re-comment the dep line in `[dependencies]`:
+
+   ```toml
+   # bucket-brigade-core = { path = "envs/bucket-brigade/bucket-brigade-core", default-features = false, optional = true }
+   ```
+
+2. Re-comment the feature in `[features]`:
+
+   ```toml
+   # env-bucket-brigade = ["bucket-brigade-core"]
+   ```
+
+3. Re-add the `[lints.rust]` shim so that `cargo doc -- -D warnings`
+   does not trip on the `#[cfg(feature = "env-bucket-brigade")]` gates
+   sprinkled across `src/env/games/{mod.rs,bucket_brigade/}` and
+   `tests/test_bucket_brigade_env.rs`:
+
+   ```toml
+   # Tell rustc that `env-bucket-brigade` is a *known-but-disabled* feature
+   # name, so the `#[cfg(feature = "env-bucket-brigade")]` gates don't
+   # trigger `unexpected_cfgs` (denied via `-D warnings` in CI's `cargo
+   # doc` job). Once the feature is re-enabled in [features] above, this
+   # stanza can be removed --- cargo derives the cfg automatically.
+   [lints.rust]
+   unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("env-bucket-brigade"))'] }
+   ```
+
+Commit:
+
+```bash
+git add Cargo.toml
+git commit -m "chore: disable env-bucket-brigade feature for vX.Y.Z publish"
+```
+
+**After** Step 6 (`cargo publish` succeeds), revert these three edits
+on `main` so that local builds, CI, and the `env-bucket-brigade`
+feature continue to work between releases:
+
+```bash
+# Re-uncomment the dep, re-uncomment the feature, drop the lint shim.
+git revert <SHA of the chore: disable env-bucket-brigade commit>
+git push origin main
+```
+
+(Or apply the inverse three edits by hand and commit as
+`chore: re-enable env-bucket-brigade after vX.Y.Z publish`.)
+
 ## Step 3: Validate the publish
 
 Run `cargo publish --dry-run` to make sure the manifest is publishable

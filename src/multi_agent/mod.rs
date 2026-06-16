@@ -46,6 +46,9 @@
 //! its synthetic-env smoke test; those follow-ups are explicitly out of
 //! scope for the first port.
 
+/// Bucket-brigade-specific scoring metrics (`gap_closed`).
+#[cfg(feature = "env-bucket-brigade")]
+pub mod bucket_brigade_metrics;
 /// Multi-agent environment trait.
 pub mod environment;
 /// Synchronized joint multi-agent PPO trainer.
