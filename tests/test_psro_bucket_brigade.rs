@@ -98,9 +98,9 @@
 //!
 //! # Out of scope (deferred)
 //!
-//! - Tightening the `gap_closed_cell >= 0` strong bar — blocked on either
-//!   (a) increasing PSRO's training budget for this test, or (b) driving
-//!   the strong assertion against a longer/heavier integration test.
+//! - Tightening the `gap_closed_cell >= 0` strong bar — blocked on either (a)
+//!   increasing PSRO's training budget for this test, or (b) driving the strong
+//!   assertion against a longer/heavier integration test.
 //! - The full 37-cell trainability sweep — separate research thread per #115's
 //!   body.
 //! - α-rank payoff-rescaling refinements — surface as a follow-up if the
