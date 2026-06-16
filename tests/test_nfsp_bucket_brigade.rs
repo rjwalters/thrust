@@ -31,40 +31,23 @@
 //! `gap_closed_cell(_, Beta05) >= 0` assertion: any policy that does at
 //! least as well as uniform-random on this cell will satisfy it.
 //!
-//! # Why a Cartesian-product single-discrete adapter
+//! # Factored multi-discrete policy (post-#127)
 //!
-//! `MultiDiscreteMlpBurnPolicy` is the natural fit for bucket-brigade's
-//! factored `[house, mode, signal]` action space. However, the post-#106
-//! NFSP trainer's per-agent reservoir stores `(Vec<f32>, i64)` — a
-//! single scalar action — and its supervised AP-update path reshapes
-//! that scalar as a `[mb, 1]` int tensor before calling
-//! `policy.evaluate_actions_joint`. For a multi-discrete policy with
-//! `action_dims = [10, 2, 2]`, that shape causes a Burn `Squeeze` panic
-//! at the second per-dim slice. Closing that gap (multi-discrete
-//! reservoirs and per-dim AP updates) is a non-trivial extension to
-//! `NfspTrainer` that is out of scope for #120, which is supposed to
-//! deliver the *integration* (env adapter + metric + test wiring), not
-//! a trainer feature.
-//!
-//! The test therefore uses [`SingleDiscreteBucketBrigade`] — a local
-//! wrapper that Cartesian-product-flattens the bucket-brigade action
-//! space into a single-discrete `Discrete(40)` (`= NUM_HOUSES * 2 *
-//! 2`). The wrapper takes a scalar action per agent and decodes it
-//! into the factored `[house, mode, signal]` shape the underlying
-//! [`BucketBrigadeMaEnv`] expects, matching the
-//! `BucketBrigadeMaEnv::step` single-agent fallback at
-//! `src/env/games/bucket_brigade/env.rs:249–266`. This lets us drive
-//! the canonical cell through NFSP today, at the cost of a larger
-//! flat action space (40 vs the factored [10, 2, 2]); since this is a
-//! smoke-grade convergence check the cost is acceptable. Once NFSP
-//! grows multi-discrete reservoirs, this test should switch back to
-//! the factored policy.
+//! Per #127, NFSP's per-agent reservoir now stores `(Vec<f32>, Vec<i64>)`
+//! with one action entry per factored dim, and the supervised AP-update
+//! step builds an `[mb, num_action_dims]` int tensor before calling
+//! `policy.evaluate_actions_joint`. That lets us drive bucket-brigade's
+//! factored `[house, mode, signal]` action space through NFSP using
+//! [`MultiDiscreteMlpBurnPolicy`] directly — the same shape PSRO uses
+//! (see `train_psro.rs`). Pre-#127 this test went through a
+//! Cartesian-product `Discrete(40)` wrapper (`= NUM_HOUSES * 2 * 2`) +
+//! `MlpBurnPolicy`; that workaround is removed.
 //!
 //! # Cost gating
 //!
 //! Estimated wall-clock is ~10 seconds in release mode on the Burn
 //! NdArray (CPU) backend (4 NFSP outer iterations × 512 rollout steps ×
-//! 4 agents on a 47-d obs × `Discrete(40)` action space). The training
+//! 4 agents on a 47-d obs × `[10, 2, 2]` action space). The training
 //! budget is intentionally minimal because the cell is `no_convergence`
 //! by design (see the body of
 //! `test_nfsp_beats_ppo_on_canonical_no_convergence_cell` for the
@@ -83,9 +66,6 @@
 //! - PSRO wiring for the same cell — PR 4 / #121.
 //! - The full 3-cell `(no_convergence, mixed, converged)` sweep — #121.
 //! - `examples/games/bucket_brigade/train_*.rs` — #121.
-//! - NFSP multi-discrete reservoirs and per-dim AP updates — needs its own
-//!   follow-up issue (see "Why a Cartesian-product single-discrete adapter"
-//!   above).
 
 #![cfg(all(feature = "training", feature = "env-bucket-brigade"))]
 
@@ -97,11 +77,12 @@ use burn::{
 use thrust_rl::{
     env::games::bucket_brigade::{BucketBrigadeMaEnv, NUM_HOUSES, registry},
     multi_agent::{
-        JointEnv, JointStepResult, JointTrainerConfig, NfspConfig, NfspTrainer,
+        JointTrainerConfig, NfspConfig, NfspTrainer,
         bucket_brigade_baselines::BucketBrigadeCell,
         bucket_brigade_metrics::{gap_closed, gap_closed_cell},
+        joint::JointEnv,
     },
-    policy::mlp::MlpBurnPolicy,
+    policy::multi_discrete_mlp::MultiDiscreteMlpBurnPolicy,
     train::optimizer::BurnOptimizer,
 };
 
@@ -109,11 +90,6 @@ type B = Autodiff<NdArray<f32>>;
 
 const SEED: u64 = 42;
 const NUM_AGENTS: usize = 4;
-/// Cartesian-product cardinality `NUM_HOUSES * 2 (mode) * 2 (signal)`.
-/// Wrapping into a single-discrete dim lets us use `MlpBurnPolicy`
-/// instead of `MultiDiscreteMlpBurnPolicy`, which sidesteps the NFSP
-/// multi-discrete reservoir gap (see module docstring).
-const FLAT_ACTION_DIM: usize = NUM_HOUSES * 2 * 2;
 /// Number of NFSP outer iterations. Issue body nominally specified 12;
 /// we use 4 here because the cell is `no_convergence` by design and
 /// extra iterations do not change the test's outcome (we're smoke-
@@ -127,6 +103,15 @@ const ROLLOUT_STEPS: usize = 512;
 /// estimate `per_step_team`. The Python `analyze_291.py` uses K=200;
 /// we mirror that here.
 const EVAL_STEPS: usize = 200;
+/// Hidden dim of the multi-discrete MLP trunk.
+const HIDDEN_DIM: usize = 64;
+
+/// Per-agent factored action cardinalities `[house, mode, signal]`. Mirrors
+/// the bucket-brigade native multi-discrete shape (see
+/// `BucketBrigadeMaEnv::step` at `src/env/games/bucket_brigade/env.rs`).
+fn action_dims() -> Vec<usize> {
+    vec![NUM_HOUSES, 2, 2]
+}
 
 /// Build a fresh canonical-cell env. The base scenario is
 /// `minimal_specialization-v1`; we override the three phase-diagram
@@ -144,64 +129,21 @@ fn make_canonical_env(seed: Option<u64>) -> BucketBrigadeMaEnv {
     BucketBrigadeMaEnv::new(scenario, NUM_AGENTS, seed)
 }
 
-/// Cartesian-product single-discrete adapter over [`BucketBrigadeMaEnv`].
-///
-/// Each per-agent action is a single scalar in `0..FLAT_ACTION_DIM`
-/// (`= NUM_HOUSES * 2 * 2 = 40`); the adapter decodes it as
-/// `house = a / 4`, `mode = (a / 2) % 2`, `signal = a % 2` and forwards
-/// the factored `[house, mode, signal]` triple to
-/// [`BucketBrigadeMaEnv::step_joint`]. Mirrors the single-agent
-/// fallback decoding at `src/env/games/bucket_brigade/env.rs:249–266`.
-struct SingleDiscreteBucketBrigade {
-    inner: BucketBrigadeMaEnv,
-}
-
-impl SingleDiscreteBucketBrigade {
-    fn new(inner: BucketBrigadeMaEnv) -> Self {
-        Self { inner }
-    }
-}
-
-impl JointEnv for SingleDiscreteBucketBrigade {
-    fn reset_joint(&mut self, seed: Option<u64>) -> Vec<Vec<f32>> {
-        self.inner.reset_joint(seed)
-    }
-
-    fn step_joint(&mut self, actions: &[Vec<i64>]) -> JointStepResult {
-        let factored: Vec<Vec<i64>> = actions
-            .iter()
-            .map(|a| {
-                assert_eq!(
-                    a.len(),
-                    1,
-                    "single-discrete adapter expects length-1 actions, got {}",
-                    a.len()
-                );
-                let v = a[0];
-                let signal = v % 2;
-                let mode = (v / 2) % 2;
-                let house = (v / 4) % NUM_HOUSES as i64;
-                vec![house, mode, signal]
-            })
-            .collect();
-        self.inner.step_joint(&factored)
-    }
-}
-
 /// Deterministic post-training evaluation rollout: drives the trained
 /// BR policies on a fresh env for `EVAL_STEPS` steps and returns the
 /// mean per-step team reward (sum of per-agent rewards averaged over
 /// steps).
 fn eval_per_step_team_reward<F>(policies: F, device: &NdArrayDevice, obs_dim: usize) -> f32
 where
-    F: Fn(usize) -> MlpBurnPolicy<B>,
+    F: Fn(usize) -> MultiDiscreteMlpBurnPolicy<B>,
 {
     use rand::SeedableRng;
-    let mut env = SingleDiscreteBucketBrigade::new(make_canonical_env(Some(SEED ^ 0xEE1)));
+    let mut env = make_canonical_env(Some(SEED ^ 0xEE1));
     let mut last_obs = env.reset_joint(Some(SEED ^ 0xEE1));
     let mut total_team_reward: f32 = 0.0;
     let mut steps: usize = 0;
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED ^ 0xEE2);
+    let num_action_dims = action_dims().len();
 
     for _ in 0..EVAL_STEPS {
         // Build per-agent actions by querying each agent's BR policy on
@@ -216,7 +158,7 @@ where
             let obs_tensor =
                 Tensor::<B, 2>::from_data(TensorData::new(obs_row.clone(), [1, obs_dim]), device);
             let (acts, _, _) = policies(i).get_action_host_seeded(obs_tensor, &mut rng);
-            assert_eq!(acts.len(), 1);
+            assert_eq!(acts.len(), num_action_dims);
             joint_actions.push(acts);
         }
         let result = env.step_joint(&joint_actions);
@@ -237,13 +179,14 @@ where
 /// convergence assertion below.
 fn random_policy_per_step_team(seed_xor: u64) -> f32 {
     use rand::{Rng, SeedableRng};
-    let mut env = SingleDiscreteBucketBrigade::new(make_canonical_env(Some(SEED ^ seed_xor)));
+    let mut env = make_canonical_env(Some(SEED ^ seed_xor));
     let _ = env.reset_joint(Some(SEED ^ seed_xor));
     let mut rng = rand::rngs::StdRng::seed_from_u64(SEED ^ seed_xor.wrapping_add(1));
     let mut total_team_reward: f32 = 0.0;
+    let dims = action_dims();
     for _ in 0..EVAL_STEPS {
         let actions: Vec<Vec<i64>> = (0..NUM_AGENTS)
-            .map(|_| vec![rng.random_range(0..FLAT_ACTION_DIM as i64)])
+            .map(|_| dims.iter().map(|&d| rng.random_range(0..d as i64)).collect::<Vec<i64>>())
             .collect();
         let res = env.step_joint(&actions);
         total_team_reward += res.rewards.iter().sum::<f32>();
@@ -317,8 +260,10 @@ fn test_nfsp_beats_ppo_on_canonical_no_convergence_cell() {
     let probe_env = make_canonical_env(Some(SEED));
     let obs_dim = probe_env.obs_dim();
     println!(
-        "bucket-brigade canonical cell: obs_dim = {}, flat_action_dim = {}, num_agents = {}",
-        obs_dim, FLAT_ACTION_DIM, NUM_AGENTS
+        "bucket-brigade canonical cell: obs_dim = {}, action_dims = {:?}, num_agents = {}",
+        obs_dim,
+        action_dims(),
+        NUM_AGENTS
     );
 
     let nfsp_config = NfspConfig {
@@ -339,19 +284,20 @@ fn test_nfsp_beats_ppo_on_canonical_no_convergence_cell() {
         ..Default::default()
     };
 
-    let policy_factory =
-        move |dev: &NdArrayDevice| MlpBurnPolicy::<B>::new(obs_dim, FLAT_ACTION_DIM, 64, dev);
+    let policy_factory = move |dev: &NdArrayDevice| {
+        MultiDiscreteMlpBurnPolicy::<B>::new(obs_dim, action_dims(), HIDDEN_DIM, dev)
+    };
     let optimizer_factory = || {
         let inner = AdamConfig::new().init();
         BurnOptimizer::new(inner, 3e-4)
     };
-    let env_factory = || SingleDiscreteBucketBrigade::new(make_canonical_env(Some(SEED)));
+    let env_factory = || make_canonical_env(Some(SEED));
 
     let mut trainer = NfspTrainer::<
         B,
-        MlpBurnPolicy<B>,
-        burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MlpBurnPolicy<B>, B>,
-        SingleDiscreteBucketBrigade,
+        MultiDiscreteMlpBurnPolicy<B>,
+        burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MultiDiscreteMlpBurnPolicy<B>, B>,
+        BucketBrigadeMaEnv,
         _,
         _,
         _,
@@ -370,7 +316,7 @@ fn test_nfsp_beats_ppo_on_canonical_no_convergence_cell() {
 
     // Post-training evaluation. We clone each BR policy out of the
     // trainer and drive a fresh env for `EVAL_STEPS` steps.
-    let cloned_brs: Vec<MlpBurnPolicy<B>> =
+    let cloned_brs: Vec<MultiDiscreteMlpBurnPolicy<B>> =
         (0..NUM_AGENTS).map(|i| trainer.br_policy(i).clone()).collect();
     let per_step_team = eval_per_step_team_reward(|i| cloned_brs[i].clone(), &device, obs_dim);
     let gc_cell = gap_closed_cell(per_step_team, BucketBrigadeCell::Beta05);
