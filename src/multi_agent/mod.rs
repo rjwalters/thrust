@@ -65,6 +65,6 @@ pub use joint::{
 pub use messages::{AgentId, ControlMessage, Experience, PolicyUpdate, TrainingStats};
 pub use nfsp::{NfspConfig, NfspIterationStats, NfspStats, NfspTrainer, ReservoirBuffer};
 pub use psro::{
-    FictitiousPlayMetaSolver, MetaSolver, PayoffCache, PsroConfig, PsroIterationStats, PsroStats,
-    PsroTrainer, ReplicatorDynamicsMetaSolver, UniformMetaSolver,
+    AlphaRankMetaSolver, FictitiousPlayMetaSolver, MetaSolver, PayoffCache, PsroConfig,
+    PsroIterationStats, PsroStats, PsroTrainer, ReplicatorDynamicsMetaSolver, UniformMetaSolver,
 };
