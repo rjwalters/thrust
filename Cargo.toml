@@ -197,3 +197,18 @@ required-features = ["training"]
 name = "eval_pong"
 path = "examples/games/pong/eval_pong.rs"
 required-features = ["training"]
+
+# Bucket Brigade trainers (issue #115 / PR 4 of #117). Both gated
+# behind `env-bucket-brigade` (which is itself feature-gated off in
+# the published crate -- see the `[features]` block). The examples
+# train PSRO with α-rank and NFSP on the workshop-paper no-convergence
+# cells; per-cell selection via `CELL=beta01|beta05|beta09`.
+[[example]]
+name = "train_psro"
+path = "examples/games/bucket_brigade/train_psro.rs"
+required-features = ["training", "env-bucket-brigade"]
+
+[[example]]
+name = "train_nfsp"
+path = "examples/games/bucket_brigade/train_nfsp.rs"
+required-features = ["training", "env-bucket-brigade"]
