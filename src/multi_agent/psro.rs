@@ -47,14 +47,16 @@
 //! for the full rationale and the deferred Option 1 (port the Python
 //! solver to Rust upstream).
 //!
-//! # Globally-shared observation assumption
+//! # Per-agent observation handling
 //!
 //! PSRO builds on top of
-//! [`crate::multi_agent::joint::JointMultiAgentTrainer`], which assumes
-//! every agent sees the same observation on every step (see
-//! [`JointRollout`]'s doc comment). Matching pennies and the
-//! bucket-brigade adapter both satisfy this; envs with distinct
-//! per-agent views must pre-concatenate before they can be wrapped.
+//! [`crate::multi_agent::joint::JointMultiAgentTrainer`], which records
+//! a *per-agent* observation stream in
+//! [`JointRollout::observations_per_agent`]. Envs with distinct
+//! per-agent views (partial observability, asymmetric information)
+//! drop in without pre-concatenation. Matching pennies returns
+//! identical observations to both agents, which keeps the regression
+//! tests bit-stable through the per-agent refactor (PR #118).
 //!
 //! # Population growth & cost
 //!
@@ -721,8 +723,8 @@ where
         // Run `br_train_steps_per_iteration` rollout/update cycles.
         let active_mask: Vec<bool> = (0..2).map(|i| i == active_agent).collect::<Vec<_>>();
         let mut env = (self.env_factory)();
-        let initial = env.reset_joint(Some(self.config.seed.wrapping_add(active_agent as u64)));
-        let mut last_obs = initial[0].clone();
+        let mut last_obs =
+            env.reset_joint(Some(self.config.seed.wrapping_add(active_agent as u64)));
 
         let mut last_stats = JointStats::zeros(2);
         for _ in 0..self.config.br_train_steps_per_iteration {
@@ -759,22 +761,31 @@ where
         let episodes = self.config.payoff_eval_episodes.max(1);
         for ep in 0..episodes {
             let seed = self.config.seed.wrapping_add(((row * 31 + col) * 53 + ep) as u64);
-            let obs_init = env.reset_joint(Some(seed));
-            let mut last_obs = obs_init[0].clone();
+            // Per-agent observation: each policy sees its own view of
+            // the env. The PR #118 refactor purges the shared-obs
+            // assumption from this evaluator so PR 2's N-player envs
+            // (which expose distinct per-agent views) drop in without
+            // further changes here.
+            let mut last_obs = env.reset_joint(Some(seed));
             let mut ep_return = 0.0_f64;
             // We don't expose rollout length on the env; cap at a
             // generous step bound and rely on the env's own `done` flag.
             for _ in 0..1024 {
-                let obs_t = burn::tensor::Tensor::<B, 2>::from_data(
-                    burn::tensor::TensorData::new(last_obs.clone(), [1, last_obs.len()]),
+                let obs_dim = last_obs[0].len();
+                let obs_t_row = burn::tensor::Tensor::<B, 2>::from_data(
+                    burn::tensor::TensorData::new(last_obs[0].clone(), [1, obs_dim]),
+                    &self.device,
+                );
+                let obs_t_col = burn::tensor::Tensor::<B, 2>::from_data(
+                    burn::tensor::TensorData::new(last_obs[1].clone(), [1, obs_dim]),
                     &self.device,
                 );
                 // Seeded sampling: thread the trainer-owned `StdRng`
                 // through both policies' `get_action_host_seeded` so
                 // `PsroConfig::seed` produces bit-identical
                 // exploitability curves across runs (issue #114).
-                let (a_row_host, _, _) = p_row.get_action_host_seeded(obs_t.clone(), &mut self.rng);
-                let (a_col_host, _, _) = p_col.get_action_host_seeded(obs_t, &mut self.rng);
+                let (a_row_host, _, _) = p_row.get_action_host_seeded(obs_t_row, &mut self.rng);
+                let (a_col_host, _, _) = p_col.get_action_host_seeded(obs_t_col, &mut self.rng);
                 let num_dims_row = p_row.action_dims_joint().len();
                 let num_dims_col = p_col.action_dims_joint().len();
                 let a_row = a_row_host[..num_dims_row].to_vec();
@@ -784,7 +795,8 @@ where
                 if res.done {
                     break;
                 }
-                last_obs = res.observations[0].clone();
+                last_obs[0] = res.observations[0].clone();
+                last_obs[1] = res.observations[1].clone();
             }
             total += ep_return;
         }
@@ -1169,8 +1181,7 @@ mod tests {
         let active_before = read_policy_weight(trainer.policy(1));
 
         let mut env = MatchingPennies::new();
-        let initial = env.reset_joint(None);
-        let mut last_obs = initial[0].clone();
+        let mut last_obs = env.reset_joint(None);
         let mut rng = StdRng::seed_from_u64(0);
         let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
 

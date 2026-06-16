@@ -50,14 +50,17 @@
 //! held-items' distribution uniform across the entire history of
 //! pushes regardless of stream length.
 //!
-//! # Globally-shared observation assumption
+//! # Per-agent observation handling
 //!
 //! NFSP builds on top of
-//! [`crate::multi_agent::joint::JointMultiAgentTrainer`], which assumes
-//! every agent sees the same observation on every step (see
-//! [`JointRollout`]'s doc comment). Matching pennies and the
-//! bucket-brigade adapter both satisfy this; envs with distinct
-//! per-agent views must pre-concatenate before they can be wrapped.
+//! [`crate::multi_agent::joint::JointMultiAgentTrainer`], which records
+//! a *per-agent* observation stream in
+//! [`JointRollout::observations_per_agent`]. Agent `i`'s reservoir
+//! receives agent `i`'s observation (not agent 0's), so partial-
+//! observability envs supervise the AP module on the correct view.
+//! Matching pennies returns identical observations to both agents,
+//! which keeps the regression tests bit-stable through the per-agent
+//! refactor (PR #118).
 //!
 //! # Determinism dependency on #109
 //!
@@ -616,13 +619,15 @@ where
         let mut env = (self.env_factory)();
         let initial_obs = env.reset_joint(Some(self.config.seed));
         let obs_dim = initial_obs[0].len();
-        let mut last_obs = initial_obs[0].clone();
+        // Per-agent persistent observation: agent `i` carries its own view.
+        let mut last_obs: Vec<Vec<f32>> = initial_obs;
         let device = self.device.clone();
 
         // Probe num_action_dims from BR policy 0.
         let num_action_dims: usize = self.br_policy(0).action_dims_joint().len();
 
-        let mut obs_buf = vec![0.0_f32; num_steps * obs_dim];
+        let mut obs_buf_per_agent: Vec<Vec<f32>> =
+            (0..num_agents).map(|_| vec![0.0_f32; num_steps * obs_dim]).collect();
         let mut act_buf: Vec<Vec<i64>> =
             (0..num_agents).map(|_| vec![0_i64; num_steps * num_action_dims]).collect();
         let mut lp_buf: Vec<Vec<f32>> = (0..num_agents).map(|_| vec![0.0_f32; num_steps]).collect();
@@ -634,13 +639,17 @@ where
 
         for t in 0..num_steps {
             let start = t * obs_dim;
-            obs_buf[start..start + obs_dim].copy_from_slice(&last_obs);
-
-            let obs_t =
-                Tensor::<B, 2>::from_data(TensorData::new(last_obs.clone(), [1, obs_dim]), &device);
 
             let mut joint_action: Vec<Vec<i64>> = Vec::with_capacity(num_agents);
             for i in 0..num_agents {
+                // Per-agent observation: each agent sees its own view.
+                let agent_obs = last_obs[i].clone();
+                obs_buf_per_agent[i][start..start + obs_dim].copy_from_slice(&agent_obs);
+                let obs_t = Tensor::<B, 2>::from_data(
+                    TensorData::new(agent_obs.clone(), [1, obs_dim]),
+                    &device,
+                );
+
                 // Forward the BR policy unconditionally — we use its
                 // log-prob / value as the rollout-time bookkeeping for
                 // the PPO update regardless of which path provided the
@@ -661,8 +670,12 @@ where
                 let take_br = u < self.config.anticipatory_param;
                 let row: Vec<i64> = if take_br {
                     let row = br_actions[..num_action_dims].to_vec();
-                    // Reservoir push for the BR action only.
-                    self.reservoirs[i].push((last_obs.clone(), row[0]));
+                    // Reservoir push for the BR action only. Agent `i`'s
+                    // reservoir gets agent `i`'s observation — not agent
+                    // 0's — so partial-observability envs (PR #118
+                    // refactor) record the correct supervised target for
+                    // the behavior-cloning update.
+                    self.reservoirs[i].push((agent_obs.clone(), row[0]));
                     self.cumulative_br_pushes += 1;
                     row
                 } else {
@@ -671,7 +684,7 @@ where
                     // `self.rng` through the seeded sampler.
                     let ap_policy_i = self.avg_policy(i).clone();
                     let (ap_actions, _, _) =
-                        ap_policy_i.get_action_host_seeded(obs_t.clone(), &mut self.rng);
+                        ap_policy_i.get_action_host_seeded(obs_t, &mut self.rng);
                     ap_actions[..num_action_dims].to_vec()
                 };
 
@@ -695,7 +708,7 @@ where
 
             let result = env.step_joint(&joint_action);
             // Index-based scan: mirrors `JointMultiAgentTrainer::collect_rollout`'s
-            // per-agent reward fan-out at `joint.rs:533`.
+            // per-agent reward fan-out.
             #[allow(clippy::needless_range_loop)]
             for i in 0..num_agents {
                 rew_buf[i][t] = result.rewards[i];
@@ -704,15 +717,15 @@ where
 
             if result.done {
                 let fresh = env.reset_joint(None);
-                last_obs = fresh[0].clone();
+                last_obs[..num_agents].clone_from_slice(&fresh[..num_agents]);
             } else {
-                last_obs = result.observations[0].clone();
+                last_obs[..num_agents].clone_from_slice(&result.observations[..num_agents]);
             }
             self.cumulative_rollout_steps += 1;
         }
 
         Ok(JointRollout {
-            observations: obs_buf,
+            observations_per_agent: obs_buf_per_agent,
             obs_dim,
             actions: act_buf,
             num_action_dims,
