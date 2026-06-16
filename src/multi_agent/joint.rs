@@ -313,17 +313,20 @@ impl Default for JointTrainerConfig {
 
 /// Synchronized rollout buffer (host-side).
 ///
-/// Every agent sees the *same* observation on every step — the trainer
-/// assumes a globally-shared observation; environments with distinct
-/// per-agent views should pre-concatenate or use only agent 0's view as
-/// the trainer input. Per-agent actions / log-probs / values / rewards
-/// are stored as parallel host buffers and materialized into Burn
-/// tensors lazily inside [`JointMultiAgentTrainer::update`].
+/// Per-agent observations are stored independently so environments with
+/// distinct per-agent views (e.g. partial observability, asymmetric
+/// information) work without any pre-concatenation. Each agent `i`
+/// records its own observation stream into
+/// `observations_per_agent[i]` (a flat `[T * obs_dim]` buffer).
+/// Per-agent actions / log-probs / values / rewards are stored as
+/// parallel host buffers and materialized into Burn tensors lazily
+/// inside [`JointMultiAgentTrainer::update`].
 #[derive(Debug, Clone)]
 pub struct JointRollout {
-    /// Shared observations: flat `[T * obs_dim]`. Same for every agent.
-    pub observations: Vec<f32>,
-    /// Observation dimensionality.
+    /// Per-agent observations: `Vec<N>[T * obs_dim]`. Each inner buffer
+    /// holds the observation stream for one agent across the rollout.
+    pub observations_per_agent: Vec<Vec<f32>>,
+    /// Observation dimensionality (uniform across agents).
     pub obs_dim: usize,
     /// Per-agent actions: `Vec<N>[T * num_action_dims]`. `num_action_dims`
     /// is 1 for scalar discrete, `num_dims` for multi-discrete.
@@ -491,10 +494,12 @@ where
     /// Drive a [`JointEnv`] for `config.rollout_steps` and return the
     /// synchronized rollout buffer.
     ///
-    /// `last_obs` is the persistent "next observation" handed in across
-    /// iterations: pass agent-0's observation from the most recent
-    /// `env.reset_joint()` or step. The trainer updates it in place so
-    /// callers can keep the rollout stream stitched across iterations.
+    /// `last_obs` is the persistent "next observation per agent" handed
+    /// in across iterations: pass the per-agent observations from the
+    /// most recent `env.reset_joint()` or step (i.e. the env's full
+    /// `Vec<Vec<f32>>` shape, length = `num_agents`). The trainer
+    /// updates it in place so callers can keep the rollout stream
+    /// stitched across iterations.
     ///
     /// `rng` is consumed by each per-step
     /// [`JointPolicy::get_action_host_seeded`] call. Pass the
@@ -504,12 +509,19 @@ where
     pub fn collect_rollout<E: JointEnv>(
         &self,
         env: &mut E,
-        last_obs: &mut Vec<f32>,
+        last_obs: &mut [Vec<f32>],
         rng: &mut StdRng,
     ) -> JointRollout {
         let num_steps = self.config.rollout_steps;
         let num_agents = self.config.num_agents;
-        let obs_dim = last_obs.len();
+        assert_eq!(
+            last_obs.len(),
+            num_agents,
+            "collect_rollout: last_obs length ({}) must equal num_agents ({})",
+            last_obs.len(),
+            num_agents,
+        );
+        let obs_dim = last_obs[0].len();
         let device = self.device.clone();
 
         // Probe per-dim action layout from agent 0's policy (shape-only — no
@@ -522,7 +534,8 @@ where
             .action_dims_joint()
             .len();
 
-        let mut obs_buf = vec![0.0_f32; num_steps * obs_dim];
+        let mut obs_buf_per_agent: Vec<Vec<f32>> =
+            (0..num_agents).map(|_| vec![0.0_f32; num_steps * obs_dim]).collect();
         let mut act_buf: Vec<Vec<i64>> =
             (0..num_agents).map(|_| vec![0_i64; num_steps * num_action_dims]).collect();
         let mut lp_buf: Vec<Vec<f32>> = (0..num_agents).map(|_| vec![0.0_f32; num_steps]).collect();
@@ -534,19 +547,22 @@ where
 
         for t in 0..num_steps {
             let start = t * obs_dim;
-            obs_buf[start..start + obs_dim].copy_from_slice(last_obs);
-
-            // Build the rollout-time observation tensor (single-row batch).
-            let obs_t = Tensor::<B, 2>::from_data(
-                burn::tensor::TensorData::new(last_obs.clone(), [1, obs_dim]),
-                &device,
-            );
 
             let mut joint_action: Vec<Vec<i64>> = Vec::with_capacity(num_agents);
             for (i, slot) in self.policies.iter().enumerate() {
                 let policy = slot.as_ref().expect("policy present at rollout time");
+
+                // Per-agent observation: record into the agent-i buffer and
+                // build a single-row obs tensor for the agent-i policy.
+                let agent_obs = &last_obs[i];
+                obs_buf_per_agent[i][start..start + obs_dim].copy_from_slice(agent_obs);
+                let obs_t = Tensor::<B, 2>::from_data(
+                    burn::tensor::TensorData::new(agent_obs.clone(), [1, obs_dim]),
+                    &device,
+                );
+
                 let (actions_host, log_probs_host, values_host) =
-                    policy.get_action_host_seeded(obs_t.clone(), rng);
+                    policy.get_action_host_seeded(obs_t, rng);
 
                 // Extract per-agent action vector (length = num_action_dims).
                 let row: Vec<i64> = actions_host[..num_action_dims].to_vec();
@@ -559,21 +575,21 @@ where
             }
 
             let result = env.step_joint(&joint_action);
-            for i in 0..num_agents {
-                rew_buf[i][t] = result.rewards[i];
+            for (i, rew) in rew_buf.iter_mut().enumerate().take(num_agents) {
+                rew[t] = result.rewards[i];
             }
             done_buf[t] = if result.done { 1.0 } else { 0.0 };
 
             if result.done {
                 let fresh = env.reset_joint(None);
-                *last_obs = fresh[0].clone();
+                last_obs[..num_agents].clone_from_slice(&fresh[..num_agents]);
             } else {
-                *last_obs = result.observations[0].clone();
+                last_obs[..num_agents].clone_from_slice(&result.observations[..num_agents]);
             }
         }
 
         JointRollout {
-            observations: obs_buf,
+            observations_per_agent: obs_buf_per_agent,
             obs_dim,
             actions: act_buf,
             num_action_dims,
@@ -700,7 +716,18 @@ where
             indices.shuffle(rng);
             indices.truncate(mb_size);
 
-            let obs_mb = select_obs(&rollout.observations, rollout.obs_dim, &indices, &device);
+            // Per-agent obs minibatches: agent `i` reads from its own
+            // observation buffer at `rollout.observations_per_agent[i]`.
+            let obs_mb_per_agent: Vec<Tensor<B, 2>> = (0..num_agents)
+                .map(|i| {
+                    select_obs(
+                        &rollout.observations_per_agent[i],
+                        rollout.obs_dim,
+                        &indices,
+                        &device,
+                    )
+                })
+                .collect();
 
             // Per-agent forward + per-agent loss accumulation.
             //
@@ -725,6 +752,7 @@ where
                     .as_ref()
                     .ok_or_else(|| anyhow!("policy {} is None mid-update", i))?;
 
+                let obs_mb_i = obs_mb_per_agent[i].clone();
                 let actions_mb =
                     select_actions(&rollout.actions[i], rollout.num_action_dims, &indices, &device);
                 let old_lp_mb = select_f32_row(&rollout.log_probs[i], &indices, &device);
@@ -733,8 +761,8 @@ where
                 let old_v_mb = select_f32_row(&rollout.values[i], &indices, &device);
 
                 let (new_lp, entropy, values_mb) =
-                    policy.evaluate_actions_joint(obs_mb.clone(), actions_mb);
-                let feat = policy.encoder_features_joint(obs_mb.clone());
+                    policy.evaluate_actions_joint(obs_mb_i.clone(), actions_mb);
+                let feat = policy.encoder_features_joint(obs_mb_i);
 
                 let (policy_loss, clip_frac, kl) =
                     compute_policy_loss(new_lp, old_lp_mb, adv_mb, self.config.clip_range);
@@ -1053,8 +1081,7 @@ mod tests {
             JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
 
         let mut env = MockEnv::new(num_agents, obs_dim);
-        let initial = env.reset_joint(None);
-        let mut last_obs = initial[0].clone();
+        let mut last_obs = env.reset_joint(None);
 
         let mut rng = StdRng::seed_from_u64(0);
         let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
@@ -1095,8 +1122,7 @@ mod tests {
         let trainer = JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
 
         let mut env = MockEnv::new(num_agents, obs_dim);
-        let initial = env.reset_joint(None);
-        let mut last_obs = initial[0].clone();
+        let mut last_obs = env.reset_joint(None);
         let mut rng = StdRng::seed_from_u64(0);
         let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
 
@@ -1104,6 +1130,10 @@ mod tests {
         assert_eq!(rollout.num_agents(), num_agents);
         assert_eq!(rollout.obs_dim, obs_dim);
         assert_eq!(rollout.num_action_dims, 1);
+        assert_eq!(rollout.observations_per_agent.len(), num_agents);
+        for buf in &rollout.observations_per_agent {
+            assert_eq!(buf.len(), t * obs_dim);
+        }
         for a in &rollout.actions {
             assert_eq!(a.len(), t);
         }
@@ -1143,8 +1173,7 @@ mod tests {
             JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
 
         let mut env = MockEnv::new(num_agents, obs_dim);
-        let initial = env.reset_joint(None);
-        let mut last_obs = initial[0].clone();
+        let mut last_obs = env.reset_joint(None);
         let mut rng = StdRng::seed_from_u64(0);
         let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
 
@@ -1187,8 +1216,7 @@ mod tests {
             JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
 
         let mut env = MockEnv::new(num_agents, obs_dim);
-        let initial = env.reset_joint(None);
-        let mut last_obs = initial[0].clone();
+        let mut last_obs = env.reset_joint(None);
         let mut rng = StdRng::seed_from_u64(0);
         let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
 
@@ -1203,5 +1231,96 @@ mod tests {
             })
             .expect("update should not error");
         assert!(stats.total_loss.is_finite());
+    }
+
+    /// Env that returns *distinct* per-agent observations every step:
+    /// agent `i` always sees a one-hot vector with the `i`-th slot set.
+    /// Used as the load-bearing regression assertion that the trainer
+    /// reads agent `i`'s observation for agent `i` (and not agent 0's
+    /// view for everyone) after the per-agent obs refactor.
+    struct PerAgentObsMockEnv {
+        num_agents: usize,
+        obs_dim: usize,
+    }
+
+    impl PerAgentObsMockEnv {
+        fn new(num_agents: usize, obs_dim: usize) -> Self {
+            assert!(obs_dim >= num_agents, "obs_dim must be >= num_agents for one-hot encoding");
+            Self { num_agents, obs_dim }
+        }
+
+        fn per_agent_obs(&self) -> Vec<Vec<f32>> {
+            (0..self.num_agents)
+                .map(|i| {
+                    let mut v = vec![0.0_f32; self.obs_dim];
+                    v[i] = 1.0;
+                    v
+                })
+                .collect()
+        }
+    }
+
+    impl JointEnv for PerAgentObsMockEnv {
+        fn reset_joint(&mut self, _seed: Option<u64>) -> Vec<Vec<f32>> {
+            self.per_agent_obs()
+        }
+
+        fn step_joint(&mut self, _actions: &[Vec<i64>]) -> JointStepResult {
+            JointStepResult {
+                rewards: vec![0.0_f32; self.num_agents],
+                done: false,
+                observations: self.per_agent_obs(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_collect_rollout_reads_per_agent_observations() {
+        // Regression guard for the per-agent observation refactor (PR
+        // #118). The trainer must read agent `i`'s observation for
+        // agent `i` — *not* agent 0's view for everyone. We construct
+        // an env whose `step_joint` returns distinct one-hot
+        // observations per agent and assert that
+        // `rollout.observations_per_agent[i]` at every timestep
+        // contains agent `i`'s one-hot, not agent 0's.
+        let device = Default::default();
+        let num_agents = 3;
+        let obs_dim: usize = 4; // >= num_agents for one-hot encoding
+        let t: usize = 16;
+        let policies = make_mlp_policies(num_agents, obs_dim, 2, 8, &device);
+        let optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 3e-4);
+
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: t,
+            n_epochs: 1,
+            minibatch_size: t,
+            ..Default::default()
+        };
+        let trainer = JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
+
+        let mut env = PerAgentObsMockEnv::new(num_agents, obs_dim);
+        let mut last_obs = env.reset_joint(None);
+        let mut rng = StdRng::seed_from_u64(0);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
+
+        assert_eq!(rollout.observations_per_agent.len(), num_agents);
+        for (i, buf) in rollout.observations_per_agent.iter().enumerate() {
+            assert_eq!(buf.len(), t * obs_dim, "obs buffer for agent {i} has wrong length");
+            // Expected per-step view for agent i: one-hot with slot `i` = 1.0.
+            let mut expected = vec![0.0_f32; obs_dim];
+            expected[i] = 1.0;
+            for step in 0..t {
+                let start = step * obs_dim;
+                let slice = &buf[start..start + obs_dim];
+                assert_eq!(
+                    slice,
+                    expected.as_slice(),
+                    "agent {i} step {step}: observation slice {:?} does not match agent {i}'s view {:?}",
+                    slice,
+                    expected,
+                );
+            }
+        }
     }
 }
