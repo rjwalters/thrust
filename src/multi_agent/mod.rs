@@ -46,6 +46,9 @@
 //! its synthetic-env smoke test; those follow-ups are explicitly out of
 //! scope for the first port.
 
+/// Bucket-brigade reference baseline policies (specialist, cell enum).
+#[cfg(feature = "env-bucket-brigade")]
+pub mod bucket_brigade_baselines;
 /// Bucket-brigade-specific scoring metrics (`gap_closed`).
 #[cfg(feature = "env-bucket-brigade")]
 pub mod bucket_brigade_metrics;
