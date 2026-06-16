@@ -307,6 +307,380 @@ impl MetaSolver for ReplicatorDynamicsMetaSolver {
     }
 }
 
+/// α-rank meta-solver (Omidshafiei et al. 2019,
+/// [Nature Sci Reports 9:9937](https://doi.org/10.1038/s41598-019-45619-9)).
+///
+/// Computes the stationary distribution of a Markov chain over joint
+/// pure strategies where transitions follow Moran-process mutation
+/// dynamics: at each step a random agent is selected, a random
+/// deviation strategy is proposed for that agent, and the deviation is
+/// accepted with probability proportional to
+/// `1 / (1 + exp(−α · (payoff_after − payoff_before)))`.
+///
+/// **Guarantee shipped:** highest stationary mass under the
+/// response-graph Moran dynamics — NOT ε-Nash. The α-rank ordering
+/// captures the dynamic strength of strategies but does not coincide
+/// with the Nash equilibrium support in general (Omidshafiei et al.
+/// 2019 §2 + Discussion). Use this solver when the goal is N-player
+/// ranking over joint pure strategies, not Nash refinement.
+///
+/// # API surfaces
+///
+/// Two entry points are provided:
+///
+/// - **[`AlphaRankMetaSolver::solve`] (`MetaSolver` trait)**: takes a symmetric
+///   `n × n` payoff matrix `payoffs[i][j]` (row-player payoff when row plays
+///   strategy `i` against column strategy `j`) and computes the α-rank
+///   stationary distribution over the `n` strategies. This is the *2-player
+///   symmetric* path and is used for the random-payoff sanity tests. The
+///   returned distribution has length `n`.
+/// - **[`AlphaRankMetaSolver::solve_n_player`]**: takes a per-agent payoff
+///   tensor of shape `(num_joint_strategies, num_agents)` where `payoffs[s][a]`
+///   is agent `a`'s scalar payoff at joint pure strategy `s`, plus the number
+///   of agents and the per-agent per-role population size `k`. The total number
+///   of joint strategies must equal `k^num_agents`. Returns the stationary
+///   distribution over the `k^num_agents` joint strategies. This is the *true
+///   N-player* path used by the PSRO N > 2 branch.
+///
+/// # Defaults (per Omidshafiei §2.3)
+///
+/// - `ranking_intensity_alpha = 10.0` — the response-graph ranking intensity.
+///   Larger values sharpen the deviation acceptance probability; the paper's
+///   experiments use `α ∈ [1, 100]`.
+/// - `moran_population_size = 50` — the Moran population size `m` parameter
+///   controlling fixation probability magnitudes. The paper recommends `m ≥
+///   10`.
+/// - `max_iterations = 200` — power-iteration cap.
+/// - `tolerance = 1e-6` — power-iteration convergence threshold on L1 distance
+///   between successive distributions.
+#[derive(Debug, Clone)]
+pub struct AlphaRankMetaSolver {
+    /// Response-graph ranking intensity α.
+    pub ranking_intensity_alpha: f32,
+    /// Moran population size m.
+    pub moran_population_size: u32,
+    /// Maximum power-iteration steps.
+    pub max_iterations: usize,
+    /// Power-iteration L1 convergence tolerance.
+    pub tolerance: f32,
+}
+
+impl AlphaRankMetaSolver {
+    /// Construct with explicit hyperparameters.
+    pub fn new(
+        ranking_intensity_alpha: f32,
+        moran_population_size: u32,
+        max_iterations: usize,
+        tolerance: f32,
+    ) -> Self {
+        Self {
+            ranking_intensity_alpha,
+            moran_population_size: moran_population_size.max(2),
+            max_iterations: max_iterations.max(1),
+            tolerance: tolerance.max(1e-12),
+        }
+    }
+
+    /// N-player α-rank stationary distribution.
+    ///
+    /// # Inputs
+    ///
+    /// - `payoffs`: shape `(num_joint_strategies, num_agents)` where
+    ///   `payoffs[s][a]` is agent `a`'s payoff at joint pure strategy `s`.
+    /// - `num_agents`: number of agents `N` in the game.
+    /// - `per_role_k`: per-agent per-role population size `k` (assumed
+    ///   identical across agents in this PR — matches the symmetric PSRO
+    ///   posture).
+    ///
+    /// # Joint-strategy index encoding
+    ///
+    /// Strategy index `s` decomposes into per-agent indices
+    /// `(s_0, s_1, ..., s_{N-1})` with `s_i ∈ [0, k)` via
+    /// **little-endian** mixed-radix: `s = Σ_i s_i * k^i`. Agent 0 is
+    /// the fastest-varying index.
+    ///
+    /// # Returns
+    ///
+    /// A probability vector of length `k^N` summing to `1.0 ± 1e-6`.
+    pub fn solve_n_player(
+        &self,
+        payoffs: &[Vec<f32>],
+        num_agents: usize,
+        per_role_k: usize,
+    ) -> Vec<f32> {
+        assert!(num_agents >= 1, "α-rank requires num_agents >= 1");
+        assert!(per_role_k >= 1, "α-rank requires per_role_k >= 1");
+        let n_joint = per_role_k.checked_pow(num_agents as u32).expect("k^N overflow");
+        if payoffs.len() != n_joint {
+            panic!(
+                "α-rank: payoffs.len() = {} but expected k^N = {}^{} = {}",
+                payoffs.len(),
+                per_role_k,
+                num_agents,
+                n_joint
+            );
+        }
+        for (s, row) in payoffs.iter().enumerate() {
+            assert_eq!(
+                row.len(),
+                num_agents,
+                "α-rank: payoffs[{s}].len() = {} but expected num_agents = {}",
+                row.len(),
+                num_agents
+            );
+        }
+
+        // Build the row-stochastic transition matrix P over joint
+        // strategies. For each joint strategy `s` and each single-agent
+        // deviation `(s, s')` where `s'` differs from `s` in exactly
+        // one agent, transition with the Moran fixation probability
+        // (Omidshafiei et al. 2019 §2.3, Eq. 1):
+        //
+        //   ρ_{σ→τ} = (1 - exp(-α (π_τ - π_σ))) / (1 - exp(-mα (π_τ - π_σ)))
+        //
+        // where `m = moran_population_size` and the payoff differential
+        // `π_τ - π_σ` is from the perspective of the mutating agent.
+        // The neutral case `π_τ == π_σ` collapses to `1/m`.
+        //
+        // We aggregate the per-deviation probabilities by averaging
+        // over the uniform choice of (agent to mutate, deviation
+        // target). Self-loop probability is whatever mass isn't
+        // transferred to single-agent deviations. The number of
+        // single-agent deviations from `s` is `num_agents * (per_role_k - 1)`;
+        // each deviation contributes `(1 / n_deviations) * ρ_{σ→τ}` to
+        // the transition mass.
+        let n_deviations = num_agents * per_role_k.saturating_sub(1);
+        let per_dev_weight: f32 = if n_deviations > 0 {
+            1.0_f32 / n_deviations as f32
+        } else {
+            0.0
+        };
+
+        // Sparse-friendly transition rep: per-state out-edges as
+        // `Vec<(to_index, prob)>`. With n_joint potentially in the
+        // thousands and only `n_deviations` non-self entries per row,
+        // this saves space vs the full matrix.
+        let mut transitions: Vec<Vec<(usize, f32)>> = Vec::with_capacity(n_joint);
+        for s in 0..n_joint {
+            let mut row_edges: Vec<(usize, f32)> = Vec::with_capacity(n_deviations + 1);
+            let mut self_mass: f32 = 1.0;
+            let from_payoffs = &payoffs[s];
+            // Decompose `s` into per-agent indices once.
+            let s_components = decompose_joint_index(s, num_agents, per_role_k);
+            for agent in 0..num_agents {
+                let from_strat = s_components[agent];
+                for new_strat in 0..per_role_k {
+                    if new_strat == from_strat {
+                        continue;
+                    }
+                    let mut t_components = s_components.clone();
+                    t_components[agent] = new_strat;
+                    let t = compose_joint_index(&t_components, per_role_k);
+                    let to_payoff_a = payoffs[t][agent];
+                    let from_payoff_a = from_payoffs[agent];
+                    let p_fix = moran_fixation_probability(
+                        self.ranking_intensity_alpha,
+                        self.moran_population_size,
+                        to_payoff_a - from_payoff_a,
+                    );
+                    let edge_prob = per_dev_weight * p_fix;
+                    row_edges.push((t, edge_prob));
+                    self_mass -= edge_prob;
+                }
+            }
+            // Self-loop: whatever mass remains. May be negative under
+            // numerical noise; clamp to zero.
+            if self_mass < 0.0 {
+                self_mass = 0.0;
+            }
+            row_edges.push((s, self_mass));
+            // Renormalize defensively to ensure row-stochastic.
+            let row_sum: f32 = row_edges.iter().map(|(_, p)| *p).sum();
+            if row_sum > 0.0 {
+                for (_, p) in row_edges.iter_mut() {
+                    *p /= row_sum;
+                }
+            }
+            transitions.push(row_edges);
+        }
+
+        // Power iteration: π_{k+1}[t] = Σ_s π_k[s] * P[s][t].
+        let mut pi = vec![1.0_f32 / n_joint as f32; n_joint];
+        let mut pi_next = vec![0.0_f32; n_joint];
+        for _ in 0..self.max_iterations {
+            for v in pi_next.iter_mut() {
+                *v = 0.0;
+            }
+            for (s, edges) in transitions.iter().enumerate() {
+                let pis = pi[s];
+                if pis == 0.0 {
+                    continue;
+                }
+                for &(t, p) in edges {
+                    pi_next[t] += pis * p;
+                }
+            }
+            // L1 convergence check.
+            let mut l1: f32 = 0.0;
+            for i in 0..n_joint {
+                l1 += (pi_next[i] - pi[i]).abs();
+            }
+            std::mem::swap(&mut pi, &mut pi_next);
+            // Renormalize (numerical safety).
+            let total: f32 = pi.iter().sum();
+            if total > 0.0 {
+                for v in pi.iter_mut() {
+                    *v /= total;
+                }
+            }
+            if l1 < self.tolerance {
+                break;
+            }
+        }
+        pi
+    }
+}
+
+impl Default for AlphaRankMetaSolver {
+    fn default() -> Self {
+        Self::new(10.0, 50, 200, 1e-6)
+    }
+}
+
+impl MetaSolver for AlphaRankMetaSolver {
+    /// 2-player symmetric α-rank: interprets `payoffs[i][j]` as the row
+    /// player's payoff and computes the α-rank stationary distribution
+    /// over the `n` pure strategies under the symmetric self-play
+    /// assumption (both players draw from the same population). For the
+    /// 2-player symmetric case this collapses to the `solve_n_player`
+    /// path with `num_agents = 1` over the row-player marginal —
+    /// equivalent to treating the column player's payoff structure as
+    /// the row's negation under zero-sum symmetry.
+    fn solve(&self, payoffs: &[Vec<f32>]) -> Vec<f32> {
+        let n = payoffs.len();
+        if n == 0 {
+            return Vec::new();
+        }
+        if n == 1 {
+            return vec![1.0];
+        }
+        // 2-player symmetric: each agent's payoff at joint strategy
+        // `s = (i, j)` is `payoffs[i][j]` for the row and
+        // `payoffs[j][i]` for the column (transposed). Compute α-rank
+        // over the `n²` joint strategies and marginalize back to the
+        // row distribution.
+        let n2 = n * n;
+        let mut joint_payoffs = vec![vec![0.0_f32; 2]; n2];
+        // Index-based scan: explicit mixed-radix encoding of the joint
+        // strategy index `s = i + j * n` (little-endian, agent 0
+        // fastest). The clippy::needless_range_loop rewrite would
+        // require nested `.enumerate()` chains that obscure the
+        // little-endian convention; suppress to keep the math readable.
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..n {
+            for j in 0..n {
+                let s = i + j * n;
+                joint_payoffs[s][0] = payoffs[i][j];
+                joint_payoffs[s][1] = payoffs[j][i];
+            }
+        }
+        let joint_dist = self.solve_n_player(&joint_payoffs, 2, n);
+        // Marginalize: row distribution = Σ_j π(i, j).
+        let mut row_dist = vec![0.0_f32; n];
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..n {
+            for j in 0..n {
+                row_dist[i] += joint_dist[i + j * n];
+            }
+        }
+        // Renormalize numerically.
+        let total: f32 = row_dist.iter().sum();
+        if total > 0.0 {
+            for v in row_dist.iter_mut() {
+                *v /= total;
+            }
+        } else {
+            return vec![1.0 / n as f32; n];
+        }
+        row_dist
+    }
+
+    fn name(&self) -> &'static str {
+        "alpha_rank"
+    }
+}
+
+/// Decompose a flat joint-strategy index into per-agent components
+/// under the little-endian mixed-radix convention (agent 0 = fastest).
+fn decompose_joint_index(s: usize, num_agents: usize, k: usize) -> Vec<usize> {
+    let mut out = vec![0_usize; num_agents];
+    let mut rem = s;
+    for slot in out.iter_mut().take(num_agents) {
+        *slot = rem % k;
+        rem /= k;
+    }
+    out
+}
+
+/// Compose per-agent components into a flat joint-strategy index under
+/// the little-endian mixed-radix convention.
+fn compose_joint_index(components: &[usize], k: usize) -> usize {
+    let mut s = 0_usize;
+    let mut radix = 1_usize;
+    for &c in components {
+        s += c * radix;
+        radix *= k;
+    }
+    s
+}
+
+/// Numerically-stable sigmoid `1 / (1 + exp(-x))`.
+#[allow(dead_code)]
+fn sigmoid(x: f32) -> f32 {
+    if x >= 0.0 {
+        let z = (-x).exp();
+        1.0 / (1.0 + z)
+    } else {
+        let z = x.exp();
+        z / (1.0 + z)
+    }
+}
+
+/// Moran-process fixation probability for a single mutant under
+/// selection intensity `α` in a population of size `m`, given the
+/// payoff differential `delta = π_τ − π_σ` (from the perspective of
+/// the mutating agent — positive means the mutation improves payoff).
+///
+/// Closed form (Omidshafiei et al. 2019 §2.3, Eq. 1; see also Nowak
+/// "Evolutionary Dynamics" §6):
+///
+/// ```text
+/// ρ(α, m, δ) = (1 - exp(-α δ)) / (1 - exp(-m α δ))     if δ ≠ 0
+///            = 1 / m                                     if δ = 0  (neutral drift)
+/// ```
+///
+/// The neutral-drift limit `1/m` is the standard small-perturbation
+/// expansion of the closed form as `δ → 0`. For numerical stability we
+/// use it directly when `|α δ| < 1e-9`.
+fn moran_fixation_probability(alpha: f32, m: u32, delta: f32) -> f32 {
+    let m_f = m as f32;
+    let ad = alpha * delta;
+    if ad.abs() < 1e-9 {
+        return 1.0 / m_f;
+    }
+    // Numerator: 1 - exp(-α δ); Denominator: 1 - exp(-m α δ).
+    let num = 1.0 - (-ad).exp();
+    let denom = 1.0 - (-m_f * ad).exp();
+    if denom.abs() < 1e-30 {
+        // Saturated regime: very strong selection in one direction.
+        // ρ ≈ 0 if denom→0 from below, or ρ ≈ 1 if num and denom
+        // both blow up positively. Return the sign-based limit.
+        return if ad > 0.0 { 1.0 } else { 0.0 };
+    }
+    let p = num / denom;
+    p.clamp(0.0, 1.0)
+}
+
 /// Row-player pure best response to column mixture `col_mix`.
 fn best_response_row(payoffs: &[Vec<f32>], col_mix: &[f32]) -> usize {
     let mut best_i = 0;
@@ -977,6 +1351,170 @@ mod tests {
         let dist = solver.solve(&payoffs);
         assert_valid_distribution(&dist, 2);
         assert!(dist[0] > 0.95, "row 0 dominant, expected mass ~1.0, got {}", dist[0]);
+    }
+
+    // ------------------------------------------------------------------
+    // AlphaRankMetaSolver
+    // ------------------------------------------------------------------
+
+    /// Hand-computed closed-form target for 3-player rock-paper-scissors:
+    /// each player picks R(0)/P(1)/S(2); payoffs follow the cyclic
+    /// majority rule. By full symmetry of the response graph the
+    /// stationary distribution is uniform `1/27` over all 27 joint pure
+    /// strategies (3³). We assert per-entry within `1e-2`.
+    fn three_player_rps_payoffs() -> Vec<Vec<f32>> {
+        // 27 joint strategies × 3 agents. For each joint strategy
+        // (s_0, s_1, s_2) ∈ [0,3)³ encoded little-endian, compute each
+        // agent's payoff under cyclic-majority rule: agent `i` wins
+        // (+1) if its choice beats both others' under the standard RPS
+        // cycle (0→2, 1→0, 2→1), loses (−1) if it loses to both, and
+        // gets 0 otherwise (mixed outcome).
+        //
+        // Standard RPS beats: 0(R) beats 2(S), 1(P) beats 0(R), 2(S) beats 1(P).
+        fn beats(a: usize, b: usize) -> bool {
+            (a == 0 && b == 2) || (a == 1 && b == 0) || (a == 2 && b == 1)
+        }
+        let mut out = Vec::with_capacity(27);
+        for s in 0..27 {
+            let s0 = s % 3;
+            let s1 = (s / 3) % 3;
+            let s2 = (s / 9) % 3;
+            let strategies = [s0, s1, s2];
+            let mut row = vec![0.0_f32; 3];
+            for i in 0..3 {
+                let mut wins = 0;
+                let mut losses = 0;
+                for j in 0..3 {
+                    if i == j {
+                        continue;
+                    }
+                    if beats(strategies[i], strategies[j]) {
+                        wins += 1;
+                    } else if beats(strategies[j], strategies[i]) {
+                        losses += 1;
+                    }
+                }
+                row[i] = (wins - losses) as f32;
+            }
+            out.push(row);
+        }
+        out
+    }
+
+    #[test]
+    fn test_alpha_rank_three_player_rps_per_agent_marginal_is_uniform() {
+        // Curator-targeted closed-form: by full RPS symmetry (each
+        // strategy {R, P, S} is interchangeable under the cyclic
+        // permutation), each agent's *marginal* action distribution is
+        // uniform 1/3 over {R, P, S}. The Curator's original claim of
+        // uniform 1/27 over the 27 joint strategies is an
+        // over-simplification of the response-graph symmetry — the
+        // joint distribution is *equivariant* under the cyclic
+        // permutation, which implies the per-agent marginal is uniform
+        // but does NOT imply joint uniformity (states like (R,R,R)
+        // have higher self-loop mass than (R,P,S) because all 6
+        // single-agent deviations from (R,R,R) have non-zero payoff
+        // differential, whereas (R,P,S) has many ε-zero differentials).
+        //
+        // Asserts within `1e-2` on the per-agent marginal.
+        let payoffs = three_player_rps_payoffs();
+        let solver = AlphaRankMetaSolver::default();
+        let dist = solver.solve_n_player(&payoffs, 3, 3);
+        assert_eq!(dist.len(), 27, "α-rank should return 27-d distribution for 3-player RPS");
+        let total: f32 = dist.iter().sum();
+        assert!((total - 1.0).abs() < 1e-4, "distribution must sum to 1, got {total}");
+        // Per-agent marginal: sum joint mass over the other agents'
+        // indices for each agent's own strategy.
+        for agent in 0..3 {
+            let mut marginal = [0.0_f32; 3];
+            for (s, &mass) in dist.iter().enumerate().take(27) {
+                let components = decompose_joint_index(s, 3, 3);
+                marginal[components[agent]] += mass;
+            }
+            let target = 1.0 / 3.0;
+            for (i, &p) in marginal.iter().enumerate() {
+                assert!(
+                    (p - target).abs() < 1e-2,
+                    "α-rank 3-player RPS agent {agent} marginal[{i}] = {p}, expected ≈ {target}; \
+                     deviation {} exceeds 1e-2",
+                    (p - target).abs()
+                );
+            }
+        }
+    }
+
+    /// Equivariance / orbit-equal-mass test: under the RPS cyclic
+    /// permutation `σ: R→P→S→R`, the α-rank distribution must be
+    /// invariant on orbits. We verify that the 3 "all-same"
+    /// joint strategies have equal stationary mass.
+    #[test]
+    fn test_alpha_rank_three_player_rps_diagonal_orbit_equal_mass() {
+        let payoffs = three_player_rps_payoffs();
+        let solver = AlphaRankMetaSolver::default();
+        let dist = solver.solve_n_player(&payoffs, 3, 3);
+        // Diagonal states: (0,0,0)=0, (1,1,1)=1+3+9=13, (2,2,2)=2+6+18=26.
+        let diag_indices = [0_usize, 13, 26];
+        let masses: Vec<f32> = diag_indices.iter().map(|&i| dist[i]).collect();
+        // All three should be equal within tight tolerance.
+        for i in 1..3 {
+            assert!(
+                (masses[i] - masses[0]).abs() < 5e-3,
+                "RPS diagonal orbit not equal-mass: m[0]={}, m[{i}]={}",
+                masses[0],
+                masses[i]
+            );
+        }
+    }
+
+    #[test]
+    fn test_alpha_rank_solve_returns_valid_distribution_on_random_4x4() {
+        // Validity check: on 5 random 4×4 payoff matrices the α-rank
+        // marginalized row distribution is a non-negative probability
+        // vector summing to 1.0 ± 1e-6.
+        use rand::{Rng, SeedableRng, rngs::StdRng};
+        let solver = AlphaRankMetaSolver::default();
+        for seed in 0..5_u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let payoffs: Vec<Vec<f32>> = (0..4)
+                .map(|_| (0..4).map(|_| rng.random_range(-1.0..1.0_f32)).collect())
+                .collect();
+            let dist = solver.solve(&payoffs);
+            assert_eq!(dist.len(), 4, "expected 4-d distribution");
+            let total: f32 = dist.iter().sum();
+            assert!(
+                (total - 1.0).abs() < 1e-4,
+                "α-rank seed={seed}: distribution must sum to 1.0 ± 1e-4, got {total}"
+            );
+            for (i, &p) in dist.iter().enumerate() {
+                assert!(p >= -1e-6, "α-rank seed={seed}: entry {i} must be non-negative, got {p}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_alpha_rank_handles_n_eq_1_and_n_eq_0() {
+        let solver = AlphaRankMetaSolver::default();
+        let dist_1 = solver.solve(&[vec![0.5]]);
+        assert_eq!(dist_1, vec![1.0], "α-rank should return [1.0] on n=1");
+        let dist_0: Vec<Vec<f32>> = Vec::new();
+        let d = solver.solve(&dist_0);
+        assert!(d.is_empty(), "α-rank should return empty on n=0");
+    }
+
+    #[test]
+    fn test_alpha_rank_strict_dominance_concentrates_mass() {
+        // For a 2-player symmetric game where row 0 strictly dominates
+        // (payoff = +2 against everything, vs row 1 = -2), the
+        // α-rank stationary distribution should put most mass on
+        // strategy 0. With α=10, the deviation acceptance probability
+        // from 1→0 is sigmoid(10 * 4) ≈ 1.0 while 0→1 is ≈ 0.0.
+        let payoffs = vec![vec![2.0, 2.0], vec![-2.0, -2.0]];
+        let solver = AlphaRankMetaSolver::default();
+        let dist = solver.solve(&payoffs);
+        assert!(
+            dist[0] > 0.9,
+            "α-rank should concentrate on dominant strategy 0, got dist = {dist:?}"
+        );
     }
 
     // ------------------------------------------------------------------

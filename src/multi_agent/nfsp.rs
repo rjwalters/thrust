@@ -1,8 +1,27 @@
 //! Neural Fictitious Self-Play (NFSP) trainer.
 //!
 //! Burn-native implementation of NFSP (Heinrich & Silver 2016,
-//! [arXiv:1603.01121](https://arxiv.org/abs/1603.01121)) for 2-agent
-//! zero-sum games. Tracking issue: #106.
+//! [arXiv:1603.01121](https://arxiv.org/abs/1603.01121)).
+//! The original paper proves ε-Nash convergence in the 2-agent
+//! zero-sum setting (§3 Algorithm 1, Theorem 3). Tracking issue: #106.
+//!
+//! # N-player ("approximate NFSP") caveat
+//!
+//! As of #119, the trainer accepts `joint_config.num_agents > 2`. The
+//! Vitter Algorithm R uniformity invariant on each per-agent reservoir
+//! survives unchanged (the per-agent reservoirs are independent and
+//! Algorithm R's correctness does not depend on the number of agents).
+//! However, the §3 Algorithm 1 **ε-Nash convergence guarantee does
+//! NOT generalize** to N > 2 — Heinrich & Silver §5 explicitly flags
+//! "extending the convergence theory to N-player general-sum games"
+//! as future work. For N > 2 this implementation is therefore best
+//! described as an "approximate NFSP" smoke trainer: the BR/AP
+//! mechanics, η-anticipatory mixing, and reservoir sampling are all
+//! exercised, and empirically the average policy converges on
+//! symmetric mixed-Nash games like
+//! [`crate::env::games::n_player_matching_pennies::NPlayerMatchingPennies`],
+//! but no formal guarantee is shipped beyond the per-agent reservoir
+//! uniformity.
 //!
 //! # Pseudocode (Heinrich & Silver §3 Algorithm 1)
 //!
@@ -305,27 +324,33 @@ pub struct NfspStats {
 // NfspTrainer
 // =======================================================================
 
-/// NFSP outer-loop trainer for 2-agent zero-sum games.
+/// NFSP outer-loop trainer.
 ///
 /// Generic over the Burn backend `B`, policy module `P`, optimizer
 /// type `O`, env `E`, and the user-supplied policy/optimizer/env
 /// factories. The trainer owns:
 ///
-/// - A `JointMultiAgentTrainer` holding the two best-response (BR) policies. BR
+/// - A `JointMultiAgentTrainer` holding the `N` best-response (BR) policies. BR
 ///   updates go through [`JointMultiAgentTrainer::update_with_active_agents`] —
 ///   the freeze-N-1 primitive PSRO also uses.
-/// - Two average-policy (AP) Burn modules and their independent optimizers. AP
+/// - `N` average-policy (AP) Burn modules and their independent optimizers. AP
 ///   updates are plain supervised cross-entropy on reservoir samples.
-/// - Two reservoir buffers (one per agent) carrying `(obs, action)` pairs
+/// - `N` reservoir buffers (one per agent) carrying `(obs, action)` pairs
 ///   harvested from BR-sampled rollout steps.
 /// - An internal `StdRng` (seeded from [`NfspConfig::seed`]) used for
 ///   η-anticipatory coin flips, reservoir eviction, and AP minibatch sampling.
 ///
+/// As of #119, `joint_config.num_agents` may be any value `≥ 2`. The
+/// formal ε-Nash convergence guarantee from Heinrich & Silver 2016 §3
+/// holds only for N = 2 zero-sum games; for N > 2 this trainer ships
+/// the same per-agent BR/AP/reservoir machinery as an "approximate
+/// NFSP" — see the module docstring for the caveat.
+///
 /// # Single-policy-class assumption
 ///
-/// All four policies (two BR + two AP) share the same module type
-/// `P`. For 2-agent symmetric matching-pennies-style games this is
-/// what we want.
+/// All `2N` policies (`N` BR + `N` AP) share the same module type
+/// `P`. For symmetric matching-pennies-style games this is what we
+/// want.
 ///
 /// # See also
 ///
@@ -382,8 +407,11 @@ where
 {
     /// Construct an NFSP trainer with fresh BR and AP policies.
     ///
-    /// `joint_config.num_agents` must equal 2; NFSP in this first cut
-    /// is restricted to 2-agent zero-sum games.
+    /// `joint_config.num_agents` must be `≥ 2`. For N = 2 the trainer
+    /// retains Heinrich & Silver §3's ε-Nash convergence guarantee on
+    /// zero-sum games; for N > 2 it ships as "approximate NFSP" with
+    /// no formal guarantee beyond per-agent reservoir uniformity (see
+    /// the module docstring).
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: NfspConfig,
@@ -393,9 +421,9 @@ where
         optimizer_factory: FO,
         env_factory: FE,
     ) -> Result<Self> {
-        if joint_config.num_agents != 2 {
+        if joint_config.num_agents < 2 {
             return Err(anyhow!(
-                "NfspTrainer requires joint_config.num_agents == 2 (got {})",
+                "NfspTrainer requires joint_config.num_agents >= 2 (got {})",
                 joint_config.num_agents
             ));
         }
@@ -405,19 +433,21 @@ where
                 config.anticipatory_param
             ));
         }
-        let br_policies: Vec<P> = (0..2).map(|_| policy_factory(&device)).collect();
+        let num_agents = joint_config.num_agents;
+        let br_policies: Vec<P> = (0..num_agents).map(|_| policy_factory(&device)).collect();
         let br_optimizers: Vec<BurnOptimizer<B, P, O>> =
-            (0..2).map(|_| optimizer_factory()).collect();
+            (0..num_agents).map(|_| optimizer_factory()).collect();
         let br_trainer = JointMultiAgentTrainer::<B, P, O>::new(
             br_policies,
             br_optimizers,
             joint_config.clone(),
             device.clone(),
         )?;
-        let avg_policies: Vec<Option<P>> = (0..2).map(|_| Some(policy_factory(&device))).collect();
+        let avg_policies: Vec<Option<P>> =
+            (0..num_agents).map(|_| Some(policy_factory(&device))).collect();
         let avg_optimizers: Vec<BurnOptimizer<B, P, O>> =
-            (0..2).map(|_| optimizer_factory()).collect();
-        let reservoirs = (0..2)
+            (0..num_agents).map(|_| optimizer_factory()).collect();
+        let reservoirs = (0..num_agents)
             .map(|i| {
                 // Seed each reservoir from a derivation of the master
                 // seed so they're decorrelated but reproducible.
@@ -493,7 +523,7 @@ where
                 // Algorithm 1 runs the BR updates jointly per
                 // iteration; this also matches PSRO's freeze-N-1 path
                 // when N = 2 and both agents are "active".
-                let active = vec![true; 2];
+                let active = vec![true; self.joint_config.num_agents];
                 let bs = self.br_trainer.update_with_active_agents(
                     &rollout,
                     &active,
@@ -509,9 +539,10 @@ where
             // Diagnostics: action marginals for the matching-pennies
             // constant observation `[0.0]`. We emit these
             // unconditionally; non-constant-obs envs can ignore.
-            let mut br_marginals: Vec<Option<Vec<f32>>> = Vec::with_capacity(2);
-            let mut avg_marginals: Vec<Option<Vec<f32>>> = Vec::with_capacity(2);
-            for i in 0..2 {
+            let num_agents = self.joint_config.num_agents;
+            let mut br_marginals: Vec<Option<Vec<f32>>> = Vec::with_capacity(num_agents);
+            let mut avg_marginals: Vec<Option<Vec<f32>>> = Vec::with_capacity(num_agents);
+            for i in 0..num_agents {
                 // Clone the policy references to release the `&self`
                 // borrow on `self.br_policy(i)` / `self.avg_policy(i)`
                 // before `action_marginal_for` mutably borrows
@@ -615,7 +646,7 @@ where
     fn collect_anticipatory_rollout(&mut self) -> Result<crate::multi_agent::joint::JointRollout> {
         use crate::multi_agent::joint::JointRollout;
         let num_steps = self.joint_config.rollout_steps;
-        let num_agents = 2usize;
+        let num_agents = self.joint_config.num_agents;
         let mut env = (self.env_factory)();
         let initial_obs = env.reset_joint(Some(self.config.seed));
         let obs_dim = initial_obs[0].len();
@@ -741,7 +772,7 @@ where
     /// Returns per-agent mean loss across all the supervised steps
     /// (`None` if no steps were taken for that agent).
     fn train_average_policies(&mut self) -> Result<Vec<Option<f64>>> {
-        let num_agents = 2usize;
+        let num_agents = self.joint_config.num_agents;
         let mut losses: Vec<Option<f64>> = vec![None; num_agents];
         let steps = self.config.avg_policy_train_steps_per_iteration;
         if steps == 0 {
@@ -1081,10 +1112,11 @@ mod tests {
     }
 
     #[test]
-    fn test_nfsp_construction_rejects_non_two_agent_config() {
+    fn test_nfsp_construction_rejects_num_agents_less_than_two() {
         let device: NdArrayDevice = Default::default();
         let nfsp_config = NfspConfig::default();
-        let joint_config = JointTrainerConfig { num_agents: 3, ..Default::default() };
+        // num_agents = 1 — below the trainer's minimum, must be rejected.
+        let joint_config = JointTrainerConfig { num_agents: 1, ..Default::default() };
         let res = NfspTrainer::<
             B,
             MlpBurnPolicy<B>,
@@ -1101,7 +1133,45 @@ mod tests {
             || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
             MatchingPennies::new,
         );
-        assert!(res.is_err(), "NFSP should reject num_agents != 2");
+        assert!(res.is_err(), "NFSP should reject num_agents < 2");
+    }
+
+    #[test]
+    fn test_nfsp_construction_accepts_n_player_config() {
+        // Post-#119: num_agents > 2 is no longer rejected. Verify the
+        // trainer constructs with N=4 and the right number of
+        // reservoirs/AP policies.
+        use crate::env::games::n_player_matching_pennies::NPlayerMatchingPennies;
+        let device: NdArrayDevice = Default::default();
+        let nfsp_config = NfspConfig::default();
+        let joint_config = JointTrainerConfig { num_agents: 4, ..Default::default() };
+        let trainer = NfspTrainer::<
+            B,
+            MlpBurnPolicy<B>,
+            burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MlpBurnPolicy<B>, B>,
+            NPlayerMatchingPennies,
+            _,
+            _,
+            _,
+        >::new(
+            nfsp_config,
+            joint_config,
+            device,
+            |dev: &NdArrayDevice| {
+                MlpBurnPolicy::<B>::new(
+                    NPlayerMatchingPennies::OBS_DIM,
+                    NPlayerMatchingPennies::ACTION_DIM,
+                    8,
+                    dev,
+                )
+            },
+            || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
+            || NPlayerMatchingPennies::new(4),
+        )
+        .expect("NFSP should accept num_agents = 4");
+        for i in 0..4 {
+            assert_eq!(trainer.reservoir(i).len(), 0, "agent {i} reservoir starts empty");
+        }
     }
 
     #[test]

@@ -13,11 +13,17 @@
 //! - MatchingPennies (feature `training`): 2-agent zero-sum smoke env
 //!   implementing `JointEnv` for the multi-agent + PSRO trainers; canonical
 //!   testbed for mixed-equilibrium learners (issue #107).
+//! - NPlayerMatchingPennies (feature `training`): N-player "majority game"
+//!   generalization. Each agent's reward is `+1` if its action matches the
+//!   strict majority of *other* agents' actions, `-1` if against, `0` on tie
+//!   (odd N only). Smoke env for N-player PSRO/NFSP testing (issue #119).
 
 pub mod cartpole;
 pub mod continuous_lqr;
 #[cfg(feature = "training")]
 pub mod matching_pennies;
+#[cfg(feature = "training")]
+pub mod n_player_matching_pennies;
 pub mod pong;
 pub mod simple_bandit;
 pub mod snake;
@@ -32,6 +38,8 @@ pub use cartpole::CartPole;
 pub use continuous_lqr::ContinuousLqr;
 #[cfg(feature = "training")]
 pub use matching_pennies::MatchingPennies;
+#[cfg(feature = "training")]
+pub use n_player_matching_pennies::NPlayerMatchingPennies;
 pub use pong::Pong;
 pub use simple_bandit::SimpleBandit;
 pub use snake::SnakeEnv;
