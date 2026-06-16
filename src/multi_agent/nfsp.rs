@@ -509,8 +509,14 @@ where
             let mut br_marginals: Vec<Option<Vec<f32>>> = Vec::with_capacity(2);
             let mut avg_marginals: Vec<Option<Vec<f32>>> = Vec::with_capacity(2);
             for i in 0..2 {
-                br_marginals.push(self.action_marginal_for(self.br_policy(i)));
-                avg_marginals.push(self.action_marginal_for(self.avg_policy(i)));
+                // Clone the policy references to release the `&self`
+                // borrow on `self.br_policy(i)` / `self.avg_policy(i)`
+                // before `action_marginal_for` mutably borrows
+                // `self.rng` for the seeded probe loop (#114).
+                let br_policy_i = self.br_policy(i).clone();
+                let avg_policy_i = self.avg_policy(i).clone();
+                br_marginals.push(self.action_marginal_for(&br_policy_i));
+                avg_marginals.push(self.action_marginal_for(&avg_policy_i));
             }
 
             let iter_stats = NfspIterationStats {
@@ -540,7 +546,16 @@ where
     /// is unsupported (e.g. multi-dim multi-discrete). Used as a
     /// diagnostic on matching-pennies and as the load-bearing
     /// convergence assertion in `tests/test_nfsp_matching_pennies.rs`.
-    pub fn action_marginal_for(&self, policy: &P) -> Option<Vec<f32>> {
+    ///
+    /// Takes `&mut self` because the 128-probe sampling loop consumes
+    /// the trainer-owned `StdRng` via
+    /// [`JointPolicy::get_action_host_seeded`]. This makes the
+    /// diagnostic reproducible under `NfspConfig::seed` (issue #114).
+    /// Callers that hold a `&P` from [`Self::avg_policy`] / [`Self::br_policy`]
+    /// must `.clone()` the policy before calling this method to avoid a
+    /// `&self` / `&mut self` aliasing conflict — the policy clone is
+    /// cheap (Burn modules are `Clone` by design).
+    pub fn action_marginal_for(&mut self, policy: &P) -> Option<Vec<f32>> {
         let dims = policy.action_dims_joint();
         if dims.len() != 1 {
             return None;
@@ -562,14 +577,14 @@ where
         // `JointPolicy` for `MlpBurnPolicy` and
         // `MultiDiscreteMlpBurnPolicy` both implement the standard
         // policy-head structure; we don't have a direct `logits()`
-        // method on the trait, so we sample `get_action_host`
+        // method on the trait, so we sample `get_action_host_seeded`
         // repeatedly and take the empirical marginal as the diagnostic.
         // For a single-row constant observation this is correct in
         // expectation; it's a host-side probe with no autograd cost.
         let probes = 128usize;
         let mut counts = vec![0u32; action_dim];
         for _ in 0..probes {
-            let (acts, _, _) = policy.get_action_host(obs.clone());
+            let (acts, _, _) = policy.get_action_host_seeded(obs.clone(), &mut self.rng);
             if let Some(&a) = acts.first() {
                 let idx = a as usize;
                 if idx < action_dim {
@@ -632,8 +647,14 @@ where
                 // sampled action. This matches Heinrich & Silver §3
                 // Algorithm 1: the BR is the PPO learner and uses its
                 // own log-prob targets.
+                //
+                // Clone the BR policy out of `self.br_trainer` so we
+                // can release that borrow before passing `&mut self.rng`
+                // to the seeded sampler. Burn modules are cheap to
+                // clone (parameters live behind `Arc`).
+                let br_policy_i = self.br_trainer.policy(i).clone();
                 let (br_actions, br_log_probs, br_values) =
-                    self.br_trainer.policy(i).get_action_host(obs_t.clone());
+                    br_policy_i.get_action_host_seeded(obs_t.clone(), &mut self.rng);
 
                 // η-coin: BR (push to reservoir) vs AP (do NOT push).
                 let u: f32 = self.rng.random();
@@ -645,7 +666,12 @@ where
                     self.cumulative_br_pushes += 1;
                     row
                 } else {
-                    let (ap_actions, _, _) = self.avg_policy(i).get_action_host(obs_t.clone());
+                    // Same clone pattern: release the `&self` borrow on
+                    // `self.avg_policy(i)` before mutably borrowing
+                    // `self.rng` through the seeded sampler.
+                    let ap_policy_i = self.avg_policy(i).clone();
+                    let (ap_actions, _, _) =
+                        ap_policy_i.get_action_host_seeded(obs_t.clone(), &mut self.rng);
                     ap_actions[..num_action_dims].to_vec()
                 };
 

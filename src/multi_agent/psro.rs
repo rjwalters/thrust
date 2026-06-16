@@ -726,7 +726,7 @@ where
 
         let mut last_stats = JointStats::zeros(2);
         for _ in 0..self.config.br_train_steps_per_iteration {
-            let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
+            let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut self.rng);
             last_stats = trainer.update_with_active_agents(
                 &rollout,
                 &active_mask,
@@ -769,8 +769,12 @@ where
                     burn::tensor::TensorData::new(last_obs.clone(), [1, last_obs.len()]),
                     &self.device,
                 );
-                let (a_row_host, _, _) = p_row.get_action_host(obs_t.clone());
-                let (a_col_host, _, _) = p_col.get_action_host(obs_t);
+                // Seeded sampling: thread the trainer-owned `StdRng`
+                // through both policies' `get_action_host_seeded` so
+                // `PsroConfig::seed` produces bit-identical
+                // exploitability curves across runs (issue #114).
+                let (a_row_host, _, _) = p_row.get_action_host_seeded(obs_t.clone(), &mut self.rng);
+                let (a_col_host, _, _) = p_col.get_action_host_seeded(obs_t, &mut self.rng);
                 let num_dims_row = p_row.action_dims_joint().len();
                 let num_dims_col = p_col.action_dims_joint().len();
                 let a_row = a_row_host[..num_dims_row].to_vec();
@@ -1167,10 +1171,10 @@ mod tests {
         let mut env = MatchingPennies::new();
         let initial = env.reset_joint(None);
         let mut last_obs = initial[0].clone();
-        let rollout = trainer.collect_rollout(&mut env, &mut last_obs);
+        let mut rng = StdRng::seed_from_u64(0);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
 
         let active_mask = vec![false, true];
-        let mut rng = StdRng::seed_from_u64(0);
         trainer
             .update_with_active_agents(
                 &rollout,

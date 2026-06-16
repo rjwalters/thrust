@@ -115,22 +115,24 @@ fn test_nfsp_multi_agent_converges_to_uniform_on_matching_pennies() {
     // convergence diagnostic is on the AVERAGE policy, not the BR.
     let uniform = vec![0.5_f32; MatchingPennies::ACTION_DIM];
     for agent in 0..2 {
+        // Clone the policy to release the `&self` borrow before
+        // `action_marginal_for` (which now takes `&mut self` to drive
+        // the seeded sampling RNG; see issue #114).
+        let avg_policy = trainer.avg_policy(agent).clone();
         let marginal = trainer
-            .action_marginal_for(trainer.avg_policy(agent))
+            .action_marginal_for(&avg_policy)
             .expect("matching-pennies marginal should be computable");
         let tv = total_variation(&marginal, &uniform);
         println!("agent {agent} final AVG marginal = {marginal:?} (TV from uniform = {tv:.4})");
-        // Tolerance retained at 0.20 even after #109's inner-shuffler
-        // fix: empirical 10-run sweeps showed 0.15 was flaky (~9/10)
-        // and 0.10 was very flaky (~4/10). The residual non-determinism
-        // is the policy's rollout-time action sampler, which still
-        // uses thread-local `rand::rng()` (`src/policy/mlp.rs:295`).
-        // Once that sampler is seedable, this bound should be re-
-        // examined and tightened to the Curator's original 0.10 bar
-        // (issue #109 follow-up).
+        // Tolerance tightened from 0.20 → 0.10 after issue #114
+        // plumbed the seeded `StdRng` through
+        // `get_action_host_seeded`. Empirical 10-run release-mode
+        // sweep on this seed (#114 calibration) keeps `tv <= 0.10`
+        // for both agents on every run. The Curator's original 0.10
+        // bar from issue #106 is now achievable end-to-end.
         assert!(
-            tv <= 0.20,
-            "agent {agent} average-policy marginal TV from uniform must be <= 0.20 (got {tv} on {marginal:?})"
+            tv <= 0.10,
+            "agent {agent} average-policy marginal TV from uniform must be <= 0.10 (got {tv} on {marginal:?})"
         );
     }
 }
@@ -160,16 +162,19 @@ fn test_nfsp_single_agent_marginal_converges_against_symmetric_opponent() {
     let _ = trainer.run_silent().expect("NFSP run should not error");
 
     let uniform = vec![0.5_f32; MatchingPennies::ACTION_DIM];
+    let avg_policy_0 = trainer.avg_policy(0).clone();
     let marginal = trainer
-        .action_marginal_for(trainer.avg_policy(0))
+        .action_marginal_for(&avg_policy_0)
         .expect("matching-pennies marginal should be computable");
     let tv = total_variation(&marginal, &uniform);
     println!("single-agent (agent 0) AVG marginal = {marginal:?} (TV = {tv:.4})");
-    // Tolerance retained at 0.20 even after #109's inner-shuffler
-    // fix (see the multi-agent test above for the calibration sweep).
+    // Tolerance tightened from 0.20 → 0.10 after issue #114
+    // plumbed the seeded `StdRng` through
+    // `get_action_host_seeded` (see calibration in the multi-agent
+    // test above).
     assert!(
-        tv <= 0.20,
-        "single-agent NFSP average-policy marginal TV from uniform must be <= 0.20 (got {tv})"
+        tv <= 0.10,
+        "single-agent NFSP average-policy marginal TV from uniform must be <= 0.10 (got {tv})"
     );
 }
 
