@@ -112,7 +112,7 @@ fn test_psro_converges_to_uniform_on_matching_pennies() {
 
     // Acceptance criterion 7: marginal mean over actions has TV ≤ 0.10
     // from uniform after ≥10 iterations.
-    let final_meta_nash = stats.iterations.last().unwrap().meta_nash_row.clone();
+    let final_meta_nash = stats.iterations.last().unwrap().meta_nash_row().to_vec();
     let marginal_row =
         meta_nash_action_marginal(trainer.population_row(), &final_meta_nash, &Default::default());
     let marginal_col =
