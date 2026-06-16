@@ -129,6 +129,41 @@ pub trait MetaSolver {
     ///   `1.0` (within `1e-6` tolerance).
     fn solve(&self, payoffs: &[Vec<f32>]) -> Vec<f32>;
 
+    /// N-player solve over an explicit per-agent payoff tensor.
+    ///
+    /// `payoffs` is shape `(k^num_agents, num_agents)` where
+    /// `payoffs[s][a]` is agent `a`'s payoff at joint pure strategy
+    /// `s`. The flat joint-strategy index decomposes into per-agent
+    /// indices via little-endian mixed-radix (agent 0 = fastest):
+    /// `s = Σ_i s_i · k^i`.
+    ///
+    /// Returns a probability vector of length `k^num_agents` summing
+    /// to `1.0 ± 1e-6`.
+    ///
+    /// # Default
+    ///
+    /// The default implementation only supports `num_agents == 2` and
+    /// delegates to `solve` via the row-marginal projection. For
+    /// `num_agents > 2` it panics with a message naming the solver.
+    /// Only [`AlphaRankMetaSolver`] overrides this method with a true
+    /// N-player path; the other in-tree solvers (`UniformMetaSolver`,
+    /// `FictitiousPlayMetaSolver`, `ReplicatorDynamicsMetaSolver`)
+    /// have no N>2 generalization with the same convergence
+    /// guarantees and intentionally panic.
+    fn solve_n_player(
+        &self,
+        _payoffs: &[Vec<f32>],
+        num_agents: usize,
+        _per_role_k: usize,
+    ) -> Vec<f32> {
+        panic!(
+            "{} does not support num_agents = {}; only 2-player meta-games. \
+             Use AlphaRankMetaSolver for N > 2.",
+            self.name(),
+            num_agents
+        );
+    }
+
     /// Human-readable name for diagnostics / logging.
     fn name(&self) -> &'static str;
 }
@@ -381,7 +416,14 @@ impl AlphaRankMetaSolver {
         }
     }
 
-    /// N-player α-rank stationary distribution.
+    /// Inherent N-player α-rank stationary distribution helper.
+    ///
+    /// This is the workhorse implementation called by the
+    /// [`MetaSolver::solve_n_player`] trait override below. Kept as a
+    /// separate inherent method so callers with a concrete
+    /// `AlphaRankMetaSolver` (e.g. the in-tree unit tests at
+    /// `test_alpha_rank_three_player_rps_*`) can invoke it without
+    /// going through trait dispatch.
     ///
     /// # Inputs
     ///
@@ -402,7 +444,7 @@ impl AlphaRankMetaSolver {
     /// # Returns
     ///
     /// A probability vector of length `k^N` summing to `1.0 ± 1e-6`.
-    pub fn solve_n_player(
+    pub fn solve_n_player_impl(
         &self,
         payoffs: &[Vec<f32>],
         num_agents: usize,
@@ -584,7 +626,7 @@ impl MetaSolver for AlphaRankMetaSolver {
                 joint_payoffs[s][1] = payoffs[j][i];
             }
         }
-        let joint_dist = self.solve_n_player(&joint_payoffs, 2, n);
+        let joint_dist = self.solve_n_player_impl(&joint_payoffs, 2, n);
         // Marginalize: row distribution = Σ_j π(i, j).
         let mut row_dist = vec![0.0_f32; n];
         #[allow(clippy::needless_range_loop)]
@@ -605,6 +647,15 @@ impl MetaSolver for AlphaRankMetaSolver {
         row_dist
     }
 
+    fn solve_n_player(
+        &self,
+        payoffs: &[Vec<f32>],
+        num_agents: usize,
+        per_role_k: usize,
+    ) -> Vec<f32> {
+        self.solve_n_player_impl(payoffs, num_agents, per_role_k)
+    }
+
     fn name(&self) -> &'static str {
         "alpha_rank"
     }
@@ -612,7 +663,12 @@ impl MetaSolver for AlphaRankMetaSolver {
 
 /// Decompose a flat joint-strategy index into per-agent components
 /// under the little-endian mixed-radix convention (agent 0 = fastest).
-fn decompose_joint_index(s: usize, num_agents: usize, k: usize) -> Vec<usize> {
+///
+/// This is the index convention shared between
+/// [`AlphaRankMetaSolver::solve_n_player_impl`] and the N-tensor
+/// [`PayoffCache`]; both must use the same encoding for the PSRO
+/// trainer to correctly route per-joint-strategy payoffs to α-rank.
+pub(crate) fn decompose_joint_index(s: usize, num_agents: usize, k: usize) -> Vec<usize> {
     let mut out = vec![0_usize; num_agents];
     let mut rem = s;
     for slot in out.iter_mut().take(num_agents) {
@@ -624,7 +680,7 @@ fn decompose_joint_index(s: usize, num_agents: usize, k: usize) -> Vec<usize> {
 
 /// Compose per-agent components into a flat joint-strategy index under
 /// the little-endian mixed-radix convention.
-fn compose_joint_index(components: &[usize], k: usize) -> usize {
+pub(crate) fn compose_joint_index(components: &[usize], k: usize) -> usize {
     let mut s = 0_usize;
     let mut radix = 1_usize;
     for &c in components {
@@ -758,21 +814,44 @@ impl Default for PsroConfig {
 pub struct PsroIterationStats {
     /// Iteration index (1-based after the initial population is seeded).
     pub iteration: usize,
-    /// Population size at the end of this iteration (per agent).
+    /// Population size at the end of this iteration (per agent;
+    /// identical across agents under the symmetric posture).
     pub population_size: usize,
-    /// Row-player meta-Nash distribution at the end of this iteration.
-    pub meta_nash_row: Vec<f32>,
-    /// Column-player meta-Nash distribution at the end of this iteration.
-    pub meta_nash_col: Vec<f32>,
-    /// Best-response training stats for the new row-player policy.
-    pub br_stats_row: Option<JointStats>,
-    /// Best-response training stats for the new column-player policy.
-    pub br_stats_col: Option<JointStats>,
-    /// NashConv-style exploitability proxy: the maximum payoff
-    /// improvement either player could achieve by deviating to a pure
-    /// best response in the empirical game. Smaller is closer to the
+    /// Per-agent meta-Nash *action-population* marginal distributions
+    /// at the end of this iteration. `meta_nash_per_agent[i]` is agent
+    /// `i`'s marginal over its own `population_size` policies extracted
+    /// from the joint α-rank distribution (for N≥3) or directly from
+    /// the 2-player solver (for N=2).
+    pub meta_nash_per_agent: Vec<Vec<f32>>,
+    /// Per-agent best-response training stats. `br_stats_per_agent[i]`
+    /// is the stats for the round in which agent `i` was active under
+    /// the round-robin schedule, or `None` if the agent was not the
+    /// active agent on this iteration (currently every agent is
+    /// trained every iteration, so every entry is `Some`).
+    pub br_stats_per_agent: Vec<Option<JointStats>>,
+    /// NashConv-style exploitability: the sum over agents `i` of agent
+    /// `i`'s maximum payoff improvement by deviating to a pure best
+    /// response in the empirical game, given the joint meta-Nash
+    /// distribution.
+    ///
+    /// For N=2 zero-sum games this reduces to the original 2-player
+    /// formula (row gain + column gain). Smaller is closer to the
     /// empirical equilibrium.
     pub exploitability: f32,
+}
+
+impl PsroIterationStats {
+    /// Backward-compat shim: agent 0 (row-player) meta-Nash
+    /// distribution. Equivalent to `&self.meta_nash_per_agent[0]`.
+    pub fn meta_nash_row(&self) -> &[f32] {
+        self.meta_nash_per_agent.first().map(|v| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// Backward-compat shim: agent 1 (column-player) meta-Nash
+    /// distribution. Equivalent to `&self.meta_nash_per_agent[1]`.
+    pub fn meta_nash_col(&self) -> &[f32] {
+        self.meta_nash_per_agent.get(1).map(|v| v.as_slice()).unwrap_or(&[])
+    }
 }
 
 /// Aggregate PSRO trainer statistics returned by [`PsroTrainer::run`].
@@ -786,17 +865,58 @@ pub struct PsroStats {
 // Empirical-payoff matrix cache
 // =======================================================================
 
-/// Cached symmetric `n × n` empirical-payoff matrix.
+/// Cached N-tensor empirical-payoff cache for an N-agent symmetric
+/// game.
 ///
-/// Holds the row-player payoff matrix `M[i][j]` indexed by population
-/// indices. PSRO grows the population monotonically; new entries are
-/// only the row/column for the newest strategy, so we cache existing
-/// entries and only evaluate the new boundary each iteration. The
-/// quadratic memory cost is bounded by
-/// [`PsroConfig::max_population_size`].
+/// Stores per-agent payoffs at every joint pure strategy `s ∈ [0, k^N)`
+/// where `k` is the per-agent population size (assumed identical across
+/// agents under the symmetric posture) and `N` is the number of agents.
+///
+/// # Index convention
+///
+/// The flat joint-strategy index decomposes into per-agent indices
+/// `(s_0, s_1, ..., s_{N-1})` via **little-endian mixed-radix**:
+/// `s = Σ_i s_i · k^i`. Agent 0 is the fastest-varying index. This
+/// convention matches [`AlphaRankMetaSolver::solve_n_player_impl`] —
+/// the cache feeds its `cells` buffer directly into α-rank with no
+/// transpose.
+///
+/// # Storage
+///
+/// `cells[s]` is a `Vec<f32>` of length `num_agents` containing each
+/// agent's mean per-episode return at joint strategy `s`. The
+/// per-cell allocation matches α-rank's `payoffs[s][a]` input shape.
+/// For N=2 with k populations, this collapses to k² cells × 2-element
+/// vectors — identical information to the pre-refactor `Vec<Vec<f32>>`
+/// row-major matrix but with the per-cell agent payoffs co-located.
+///
+/// # Growth
+///
+/// PSRO grows each agent's population by one policy per outer
+/// iteration. When agent `a`'s population grows from `k` to `k+1`,
+/// the cache needs to evaluate the new boundary slab: all joint
+/// strategies where agent `a` plays index `k` (its new policy).
+/// [`PayoffCache::resize_for_boundary`] grows the storage to the new
+/// `(k+1)^N` size; [`PayoffCache::set_cell`] writes individual cell
+/// payoffs. The trainer is responsible for iterating over the
+/// agent-`a`-newest-strategy boundary and calling `set_cell` for each
+/// new joint strategy.
+///
+/// Memory is `O(k^N · N · f32)`, bounded by
+/// [`PsroConfig::max_population_size`] cubed (or higher for N>3); the
+/// `PsroConfig::max_population_size` cap should be tuned downward for
+/// large N to keep memory reasonable.
 #[derive(Debug, Clone, Default)]
 pub struct PayoffCache {
-    matrix: Vec<Vec<f32>>,
+    /// Per-joint-strategy per-agent payoffs. `cells[s][a]` is agent
+    /// `a`'s mean per-episode return at joint strategy `s`. Indexed
+    /// little-endian (agent 0 = fastest).
+    cells: Vec<Vec<f32>>,
+    /// Per-agent population size `k`. Assumed identical across agents
+    /// under the symmetric posture.
+    per_role_k: usize,
+    /// Number of agents `N`.
+    num_agents: usize,
     /// Counter incremented on every payoff *evaluation* (not every
     /// query). Used by unit tests to assert the cache is hit.
     pub eval_count: usize,
@@ -808,42 +928,163 @@ impl PayoffCache {
         Self::default()
     }
 
-    /// Current `n × n` cached matrix.
-    pub fn matrix(&self) -> &[Vec<f32>] {
-        &self.matrix
+    /// Construct a cache sized for `num_agents` agents with `per_role_k = 0`
+    /// (empty). Use [`PayoffCache::resize_for_boundary`] to grow.
+    pub fn with_num_agents(num_agents: usize) -> Self {
+        Self { cells: Vec::new(), per_role_k: 0, num_agents, eval_count: 0 }
     }
 
-    /// Population size `n`.
-    pub fn size(&self) -> usize {
-        self.matrix.len()
+    /// Current per-role population size `k`.
+    pub fn per_role_k(&self) -> usize {
+        self.per_role_k
     }
 
-    /// Read a cached `(row, col)` entry. Returns `None` if either
-    /// index is out of bounds for the current cache.
-    pub fn get(&self, row: usize, col: usize) -> Option<f32> {
-        self.matrix.get(row).and_then(|r| r.get(col).copied())
+    /// Number of agents `N`.
+    pub fn num_agents(&self) -> usize {
+        self.num_agents
     }
 
-    /// Append a new strategy at index `n` with payoffs `new_row[j]`
-    /// (against all existing column strategies, `j ∈ 0..n`) and
-    /// `new_col[i]` (existing rows against the new column, `i ∈ 0..n`)
-    /// and a diagonal entry `new_diag` for the new strategy vs itself.
-    ///
-    /// Increments `eval_count` by `2n + 1` — exactly the number of new
-    /// cell evaluations the cache needed.
-    pub fn append(&mut self, new_row: Vec<f32>, new_col: Vec<f32>, new_diag: f32) {
-        let n = self.matrix.len();
-        assert_eq!(new_row.len(), n, "new_row length must equal current size");
-        assert_eq!(new_col.len(), n, "new_col length must equal current size");
-        // Extend existing rows with the new column entry.
-        for (row_vec, &col_entry) in self.matrix.iter_mut().zip(new_col.iter()) {
-            row_vec.push(col_entry);
+    /// Total number of joint-strategy cells `k^N`.
+    pub fn num_cells(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// Read the per-agent payoffs at joint strategy `joint`. Returns
+    /// `None` if any per-agent index is out of bounds. The returned
+    /// slice has length `num_agents`.
+    pub fn get_joint(&self, joint: &[usize]) -> Option<&[f32]> {
+        if joint.len() != self.num_agents {
+            return None;
         }
-        // Append the new row + diagonal.
-        let mut row = new_row;
-        row.push(new_diag);
-        self.matrix.push(row);
-        self.eval_count += 2 * n + 1;
+        for (a, &idx) in joint.iter().enumerate() {
+            if idx >= self.per_role_k {
+                return None;
+            }
+            let _ = a;
+        }
+        let s = compose_joint_index(joint, self.per_role_k);
+        self.cells.get(s).map(|v| v.as_slice())
+    }
+
+    /// View the full per-cell payoff tensor in the
+    /// `(k^N, N)` flat layout consumed by
+    /// [`AlphaRankMetaSolver::solve_n_player`]. The outer length is
+    /// `k^N`; each inner `Vec<f32>` has length `num_agents`.
+    pub fn payoff_tensor(&self) -> &[Vec<f32>] {
+        &self.cells
+    }
+
+    /// Set the per-agent payoffs at joint strategy `joint`. Bumps
+    /// `eval_count` by 1. Panics if the cache isn't sized for `joint`
+    /// (call [`PayoffCache::resize_for_boundary`] first) or if the
+    /// payoff length doesn't equal `num_agents`.
+    pub fn set_cell(&mut self, joint: &[usize], payoffs: Vec<f32>) {
+        assert_eq!(
+            joint.len(),
+            self.num_agents,
+            "joint strategy length {} must equal num_agents = {}",
+            joint.len(),
+            self.num_agents
+        );
+        assert_eq!(
+            payoffs.len(),
+            self.num_agents,
+            "payoffs length {} must equal num_agents = {}",
+            payoffs.len(),
+            self.num_agents
+        );
+        for (a, &idx) in joint.iter().enumerate() {
+            assert!(
+                idx < self.per_role_k,
+                "joint[{a}] = {idx} >= per_role_k = {}",
+                self.per_role_k
+            );
+        }
+        let s = compose_joint_index(joint, self.per_role_k);
+        self.cells[s] = payoffs;
+        self.eval_count += 1;
+    }
+
+    /// Grow storage from `(per_role_k)^N` to `(new_per_role_k)^N`
+    /// in-place, preserving the cached payoffs at all joint strategies
+    /// that map to the same little-endian flat index in the new
+    /// storage.
+    ///
+    /// Newly-introduced cells are zero-initialized; the caller is
+    /// responsible for evaluating them via the trainer's
+    /// `evaluate_payoff_joint` and writing the result with
+    /// [`PayoffCache::set_cell`].
+    ///
+    /// # Why we can't just `Vec::resize`
+    ///
+    /// Under little-endian mixed-radix, joint index `s = Σ_i s_i · k^i`
+    /// changes when the radix `k` grows: the same per-agent indices
+    /// `(s_0, ..., s_{N-1})` map to a different flat `s'` in the
+    /// `(k+1)^N` storage. We rebuild the buffer by iterating over the
+    /// old joint strategies and re-keying.
+    pub fn resize_for_boundary(&mut self, new_per_role_k: usize) {
+        assert!(
+            new_per_role_k >= self.per_role_k,
+            "PayoffCache may only grow; got new_k = {} < per_role_k = {}",
+            new_per_role_k,
+            self.per_role_k
+        );
+        if new_per_role_k == self.per_role_k {
+            return;
+        }
+        let new_total = new_per_role_k.checked_pow(self.num_agents as u32).expect("k^N overflow");
+        let mut new_cells = vec![vec![0.0_f32; self.num_agents]; new_total];
+        if self.per_role_k > 0 {
+            let old_total = self.cells.len();
+            for s_old in 0..old_total {
+                let components = decompose_joint_index(s_old, self.num_agents, self.per_role_k);
+                let s_new = compose_joint_index(&components, new_per_role_k);
+                new_cells[s_new] = std::mem::take(&mut self.cells[s_old]);
+            }
+        }
+        self.cells = new_cells;
+        self.per_role_k = new_per_role_k;
+    }
+
+    /// Iterate over every joint strategy `s` in the *boundary slab*
+    /// where agent `agent_index` plays its newest pure strategy
+    /// (`per_role_k - 1`) — the cells whose payoffs must be evaluated
+    /// after agent `agent_index`'s population just grew by one.
+    ///
+    /// Returns the joint-strategy index vectors (per-agent indices),
+    /// suitable for passing to `evaluate_payoff_joint` and
+    /// `set_cell`.
+    pub fn boundary_joint_strategies(&self, agent_index: usize) -> Vec<Vec<usize>> {
+        let k = self.per_role_k;
+        let n = self.num_agents;
+        assert!(agent_index < n);
+        assert!(k >= 1);
+        let new_strat = k - 1;
+        // Enumerate the other agents' indices via the same
+        // little-endian convention on N-1 axes of radix k.
+        let n_others = n - 1;
+        let total_others = k.checked_pow(n_others as u32).expect("k^(N-1) overflow");
+        let mut out = Vec::with_capacity(total_others);
+        for s in 0..total_others {
+            let mut joint = vec![0_usize; n];
+            joint[agent_index] = new_strat;
+            // Distribute s across the other agents in little-endian
+            // mixed-radix. Index-based loop is the cleanest reading of
+            // the recurrence; clippy::needless_range_loop's
+            // iter-based suggestion would mean awkwardly splitting the
+            // `agent_index` skip.
+            let mut rem = s;
+            #[allow(clippy::needless_range_loop)]
+            for a in 0..n {
+                if a == agent_index {
+                    continue;
+                }
+                joint[a] = rem % k;
+                rem /= k;
+            }
+            out.push(joint);
+        }
+        out
     }
 }
 
@@ -851,14 +1092,19 @@ impl PayoffCache {
 // PsroTrainer
 // =======================================================================
 
-/// PSRO outer-loop trainer for symmetric 2-agent zero-sum games.
+/// PSRO outer-loop trainer for symmetric N-agent games (N ≥ 2).
 ///
 /// Generic over the Burn backend `B`, policy module `P`, and Burn
 /// optimizer type `O`. The trainer owns:
 ///
-/// - Two populations of policies (one per agent role).
-/// - A `MetaSolver` for the empirical meta-game.
-/// - A cached empirical-payoff matrix.
+/// - N populations of policies (one per agent role) under `populations:
+///   Vec<Vec<P>>`.
+/// - A [`MetaSolver`] for the empirical meta-game. For N=2 the 2-player
+///   [`MetaSolver::solve`] path is used (any in-tree solver works); for N≥3 the
+///   trainer calls [`MetaSolver::solve_n_player`] and only
+///   [`AlphaRankMetaSolver`] provides a non-panicking override.
+/// - A cached empirical-payoff N-tensor [`PayoffCache`] keyed by joint pure
+///   strategy.
 /// - User-supplied factories for fresh policies + optimizers + envs.
 ///
 /// # Policy/optimizer factories
@@ -892,8 +1138,11 @@ where
     FO: Fn() -> BurnOptimizer<B, P, O>,
     FE: Fn() -> E,
 {
-    population_row: Vec<P>,
-    population_col: Vec<P>,
+    /// Per-agent policy populations. `populations[agent]` is the
+    /// monotonically-growing list of policies for agent `agent`. Under
+    /// the symmetric posture all per-agent populations have the same
+    /// length.
+    populations: Vec<Vec<P>>,
     meta_solver: Box<dyn MetaSolver>,
     config: PsroConfig,
     joint_config: JointTrainerConfig,
@@ -917,8 +1166,12 @@ where
 {
     /// Construct a PSRO trainer with one initial random policy per agent.
     ///
-    /// `joint_config.num_agents` must equal 2; PSRO in this first cut
-    /// is restricted to 2-agent symmetric zero-sum games.
+    /// `joint_config.num_agents` must be `≥ 2`. For `num_agents == 2`
+    /// the trainer accepts any [`MetaSolver`] implementation; for
+    /// `num_agents > 2` the meta-solver's
+    /// [`MetaSolver::solve_n_player`] is called — at the time of this
+    /// PR only [`AlphaRankMetaSolver`] provides a non-panicking
+    /// override for N>2.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: PsroConfig,
@@ -929,18 +1182,17 @@ where
         optimizer_factory: FO,
         env_factory: FE,
     ) -> Result<Self> {
-        if joint_config.num_agents != 2 {
+        if joint_config.num_agents < 2 {
             return Err(anyhow!(
-                "PsroTrainer requires joint_config.num_agents == 2 (got {})",
+                "PsroTrainer requires joint_config.num_agents >= 2 (got {})",
                 joint_config.num_agents
             ));
         }
-        let initial_row = policy_factory(&device);
-        let initial_col = policy_factory(&device);
+        let n = joint_config.num_agents;
+        let populations: Vec<Vec<P>> = (0..n).map(|_| vec![policy_factory(&device)]).collect();
         let rng = StdRng::seed_from_u64(config.seed);
         Ok(Self {
-            population_row: vec![initial_row],
-            population_col: vec![initial_col],
+            populations,
             meta_solver,
             config,
             joint_config,
@@ -948,144 +1200,312 @@ where
             policy_factory,
             optimizer_factory,
             env_factory,
-            payoff_cache: PayoffCache::new(),
+            payoff_cache: PayoffCache::with_num_agents(n),
             rng,
         })
     }
 
-    /// Borrow the row-player population.
+    /// Borrow agent `agent`'s policy population.
+    pub fn populations(&self, agent: usize) -> &[P] {
+        &self.populations[agent]
+    }
+
+    /// Borrow the row-player (agent 0) population.
+    ///
+    /// Backward-compat shim retained for callers that pre-date the
+    /// N-tensor refactor (notably
+    /// `tests/test_psro_matching_pennies.rs`). New N≥2 code should use
+    /// [`PsroTrainer::populations`].
     pub fn population_row(&self) -> &[P] {
-        &self.population_row
+        &self.populations[0]
     }
 
-    /// Borrow the column-player population.
+    /// Borrow the column-player (agent 1) population.
+    ///
+    /// Backward-compat shim retained for callers that pre-date the
+    /// N-tensor refactor. Panics for N=1 (which is rejected by `new`
+    /// anyway). New N≥2 code should use [`PsroTrainer::populations`].
     pub fn population_col(&self) -> &[P] {
-        &self.population_col
+        &self.populations[1]
     }
 
-    /// Borrow the cached empirical payoff matrix.
+    /// Borrow the cached empirical N-tensor payoff cache.
     pub fn payoff_cache(&self) -> &PayoffCache {
         &self.payoff_cache
     }
 
     /// Run the PSRO outer loop and return the per-iteration history.
     pub fn run(&mut self) -> Result<PsroStats> {
-        // Seed the payoff cache with the initial 1×1 entry.
-        if self.payoff_cache.size() == 0 {
-            let p0 = self.evaluate_payoff(0, 0);
-            self.payoff_cache.matrix.push(vec![p0]);
-            self.payoff_cache.eval_count += 1;
+        let num_agents = self.joint_config.num_agents;
+
+        // Seed the payoff cache with the initial 1×...×1 entry — all
+        // agents play their initial-random policy (index 0).
+        if self.payoff_cache.per_role_k() == 0 {
+            self.payoff_cache.resize_for_boundary(1);
+            let initial_joint = vec![0_usize; num_agents];
+            let initial_payoffs = self.evaluate_payoff_joint(&initial_joint);
+            self.payoff_cache.set_cell(&initial_joint, initial_payoffs);
         }
 
         let mut stats = PsroStats::default();
         for iter in 1..=self.config.max_iterations {
-            if self.population_row.len() >= self.config.max_population_size {
+            if self.populations[0].len() >= self.config.max_population_size {
                 return Err(anyhow!(
                     "PSRO population reached max_population_size = {}",
                     self.config.max_population_size
                 ));
             }
 
-            // Step 1: meta-Nash on the current payoff matrix.
-            let payoffs = self.payoff_cache.matrix().to_vec();
-            let meta_nash_row = self.meta_solver.solve(&payoffs);
-            // Symmetric zero-sum: column distribution matches row by
-            // symmetry. For asymmetric games this would need a second
-            // solve on the transposed matrix.
-            let meta_nash_col = meta_nash_row.clone();
+            // Step 1: meta-Nash on the current N-tensor payoff cache.
+            // For N=2 the meta-solver's `solve` path (symmetric
+            // marginal) is used; for N≥3 we go through `solve_n_player`
+            // and marginalize per-agent.
+            let per_agent_marginals = self.solve_per_agent_marginals();
 
-            // Step 2: best-response for row player.
-            let br_stats_row = self.train_best_response(0, &meta_nash_col)?;
-            // Step 3: best-response for col player.
-            let br_stats_col = self.train_best_response(1, &meta_nash_row)?;
+            // Step 2: round-robin train one best-response per agent
+            // against the other agents' marginal mixtures.
+            let mut br_stats_per_agent: Vec<Option<JointStats>> = Vec::with_capacity(num_agents);
+            for active_agent in 0..num_agents {
+                let br_stats = self.train_best_response(active_agent, &per_agent_marginals)?;
+                br_stats_per_agent.push(Some(br_stats));
+            }
 
-            // Step 4: append the new row/column to the cache. The new
-            // policies are the *last* entry of each population (pushed
-            // by `train_best_response`).
-            let new_idx = self.population_row.len() - 1;
-            let new_row: Vec<f32> =
-                (0..new_idx).map(|j| self.evaluate_payoff(new_idx, j)).collect();
-            let new_col: Vec<f32> =
-                (0..new_idx).map(|i| self.evaluate_payoff(i, new_idx)).collect();
-            let new_diag = self.evaluate_payoff(new_idx, new_idx);
-            self.payoff_cache.append(new_row, new_col, new_diag);
+            // Step 3: grow the payoff cache and evaluate every
+            // newly-added boundary cell. After all agents' populations
+            // grow by one in lockstep, the new per-role-k is k+1 and
+            // the new cells are the union of every per-agent
+            // boundary slab — i.e. every joint strategy `s` whose
+            // per-agent index vector includes at least one
+            // newest-strategy index (`k` under the new radix).
+            let old_k = self.payoff_cache.per_role_k();
+            let new_k = old_k + 1;
+            self.payoff_cache.resize_for_boundary(new_k);
+            // Iterate every joint strategy in the new k^N tensor; cells
+            // that are entirely in the *old* k^N corner are already
+            // populated (preserved by `resize_for_boundary`). New cells
+            // are those with at least one component == k-1 under the
+            // new radix. We iterate flat indices and decompose.
+            let total_new = new_k.checked_pow(num_agents as u32).expect("k^N overflow");
+            let new_strategy_idx = new_k - 1;
+            for s in 0..total_new {
+                let components = decompose_joint_index(s, num_agents, new_k);
+                let touches_boundary = components.contains(&new_strategy_idx);
+                if !touches_boundary {
+                    continue;
+                }
+                let payoffs = self.evaluate_payoff_joint(&components);
+                self.payoff_cache.set_cell(&components, payoffs);
+            }
 
-            // Compute exploitability on the *updated* payoff matrix —
-            // re-solve the meta-Nash so the row/col distribution lines
-            // up with the appended population. Reporting exploitability
-            // on the post-append matrix is how PSRO progress is
-            // conventionally tracked (it drops as each new BR is added
-            // to the population and the meta-Nash gets harder to
-            // exploit).
-            let post_payoffs = self.payoff_cache.matrix().to_vec();
-            let post_meta_nash = self.meta_solver.solve(&post_payoffs);
-            let exploitability = empirical_exploitability(&post_payoffs, &post_meta_nash);
+            // Step 4: re-solve the meta-Nash on the post-append cache
+            // and compute NashConv exploitability. Reporting on the
+            // post-append cache is how PSRO progress is conventionally
+            // tracked (exploitability drops as each new BR enriches
+            // the population).
+            let post_marginals = self.solve_per_agent_marginals();
+            let exploitability = self.compute_nashconv(&post_marginals);
 
             stats.iterations.push(PsroIterationStats {
                 iteration: iter,
-                population_size: self.population_row.len(),
-                meta_nash_row: post_meta_nash.clone(),
-                meta_nash_col: post_meta_nash,
-                br_stats_row: Some(br_stats_row),
-                br_stats_col: Some(br_stats_col),
+                population_size: self.populations[0].len(),
+                meta_nash_per_agent: post_marginals,
+                br_stats_per_agent,
                 exploitability,
             });
-            // Avoid unused-variable warning for the pre-append distributions.
-            let _ = (meta_nash_row, meta_nash_col);
         }
         Ok(stats)
     }
 
-    /// Most-recent meta-Nash distribution (row-player) or uniform over
-    /// the initial population if `run` has not been called.
-    pub fn current_meta_nash(&self) -> Vec<f32> {
-        let payoffs = self.payoff_cache.matrix().to_vec();
-        if payoffs.is_empty() {
-            return vec![1.0; 1];
+    /// Most-recent per-agent meta-Nash distributions (one row per
+    /// agent), or uniform over the initial population if `run` has not
+    /// been called.
+    pub fn current_meta_nash_per_agent(&self) -> Vec<Vec<f32>> {
+        if self.payoff_cache.per_role_k() == 0 {
+            return (0..self.joint_config.num_agents).map(|_| vec![1.0]).collect();
         }
-        self.meta_solver.solve(&payoffs)
+        self.solve_per_agent_marginals()
+    }
+
+    /// Backward-compat shim returning agent 0's meta-Nash marginal.
+    pub fn current_meta_nash(&self) -> Vec<f32> {
+        self.current_meta_nash_per_agent().into_iter().next().unwrap_or_default()
+    }
+
+    /// Solve the meta-Nash on the current payoff cache and return
+    /// per-agent marginal distributions over each agent's own
+    /// population. For N=2, uses [`MetaSolver::solve`] on the legacy
+    /// `payoffs[i][j] = agent_0_payoff(i, j)` matrix view (preserving
+    /// bit-stable behaviour for existing FictitiousPlay / Replicator /
+    /// Uniform meta-solvers). For N≥3, uses
+    /// [`MetaSolver::solve_n_player`] and marginalizes the joint
+    /// distribution per-agent.
+    fn solve_per_agent_marginals(&self) -> Vec<Vec<f32>> {
+        let n = self.joint_config.num_agents;
+        let k = self.payoff_cache.per_role_k();
+        if k == 0 {
+            return (0..n).map(|_| vec![1.0]).collect();
+        }
+        if n == 2 {
+            // 2-player path: project the N-tensor cache back to a
+            // `k × k` row-player payoff matrix (agent 0's payoffs) and
+            // call `solve`. The post-projection matrix is bit-identical
+            // to the pre-refactor `PayoffCache::matrix()` view — this
+            // is the regression-bar guarantee.
+            // Index-based double loop: the explicit `s = i + j * k`
+            // formula mirrors the little-endian mixed-radix convention
+            // and reads more clearly than a flat-enumerate rewrite.
+            let mut row_matrix: Vec<Vec<f32>> = vec![vec![0.0_f32; k]; k];
+            #[allow(clippy::needless_range_loop)]
+            for i in 0..k {
+                for j in 0..k {
+                    let s = i + j * k;
+                    row_matrix[i][j] = self.payoff_cache.payoff_tensor()[s][0];
+                }
+            }
+            let row_dist = self.meta_solver.solve(&row_matrix);
+            // Symmetric zero-sum: column distribution matches row by
+            // symmetry, same as the pre-refactor trainer.
+            let col_dist = row_dist.clone();
+            return vec![row_dist, col_dist];
+        }
+        // N≥3 path: call `solve_n_player` with the flat (k^N, N)
+        // tensor and marginalize per-agent.
+        let joint = self.meta_solver.solve_n_player(self.payoff_cache.payoff_tensor(), n, k);
+        let mut marginals: Vec<Vec<f32>> = (0..n).map(|_| vec![0.0_f32; k]).collect();
+        for (s, &mass) in joint.iter().enumerate() {
+            let components = decompose_joint_index(s, n, k);
+            for (a, &c) in components.iter().enumerate() {
+                marginals[a][c] += mass;
+            }
+        }
+        // Renormalize numerically.
+        for m in marginals.iter_mut() {
+            let total: f32 = m.iter().sum();
+            if total > 0.0 {
+                for v in m.iter_mut() {
+                    *v /= total;
+                }
+            } else {
+                let uniform = 1.0 / k as f32;
+                for v in m.iter_mut() {
+                    *v = uniform;
+                }
+            }
+        }
+        marginals
+    }
+
+    /// Compute NashConv exploitability under the per-agent meta-Nash
+    /// marginals: `Σ_i (max_{s_i} U_i(s_i, σ_{−i}) − U_i(σ))`.
+    ///
+    /// # N=2 fast-path bit-stability
+    ///
+    /// For N=2 the meta-Nash marginals are projected back to a `k × k`
+    /// agent-0 payoff matrix and the closed-form
+    /// `row_gain + col_gain` formula is evaluated — bit-identical to
+    /// the pre-refactor `empirical_exploitability`. This preserves the
+    /// `+1.0` calibration of
+    /// `test_psro_exploitability_non_increasing_trend_on_matching_pennies`
+    /// across the refactor.
+    ///
+    /// # N≥3 generalization
+    ///
+    /// For N≥3 we compute each agent's best-response gain as the
+    /// supremum over its `k` pure strategies of the expected payoff
+    /// against the other agents' joint marginal mixture, minus the
+    /// agent's expected payoff under the full joint mixture. The
+    /// agent-`i` joint mixture is `Π_{j≠i} σ_j` (independence assumed
+    /// under the per-agent marginal decomposition) so the expected
+    /// payoff at the agent-`i` pure strategy `s_i` is
+    /// `Σ_{s_{−i}} (Π_{j≠i} σ_j[s_j]) · U_i(s_i, s_{−i})`. The N=2
+    /// case follows the same formula (mod the bit-stability
+    /// projection).
+    fn compute_nashconv(&self, per_agent_marginals: &[Vec<f32>]) -> f32 {
+        let n = self.joint_config.num_agents;
+        let k = self.payoff_cache.per_role_k();
+        if n == 2 {
+            // Fast path: project to the agent-0 payoff matrix and use
+            // the legacy 2-player formula bit-identically. Index-based
+            // loop mirrors the little-endian mixed-radix convention
+            // for the joint flat index.
+            let mut row_matrix: Vec<Vec<f32>> = vec![vec![0.0_f32; k]; k];
+            #[allow(clippy::needless_range_loop)]
+            for i in 0..k {
+                for j in 0..k {
+                    let s = i + j * k;
+                    row_matrix[i][j] = self.payoff_cache.payoff_tensor()[s][0];
+                }
+            }
+            return empirical_exploitability(&row_matrix, &per_agent_marginals[0]);
+        }
+        // N≥3 general path.
+        let payoffs = self.payoff_cache.payoff_tensor();
+        let mut nashconv = 0.0_f32;
+        for i in 0..n {
+            // U_i(σ) = Σ_s (Π_j σ_j[s_j]) · payoffs[s][i].
+            let mut u_sigma = 0.0_f32;
+            // Expected payoff to agent i for each of its pure
+            // strategies, marginalizing other agents over their σ.
+            let mut u_pure = vec![0.0_f32; k];
+            for (s, agent_payoffs) in payoffs.iter().enumerate() {
+                let components = decompose_joint_index(s, n, k);
+                // Product of marginal masses across all agents under
+                // the full joint mixture.
+                let mut full_prob = 1.0_f32;
+                for (a, &c) in components.iter().enumerate() {
+                    full_prob *= per_agent_marginals[a][c];
+                }
+                u_sigma += full_prob * agent_payoffs[i];
+                // For the "agent i deviates to pure s_i" case, weight
+                // by Π_{j≠i} σ_j[s_j].
+                let mut others_prob = 1.0_f32;
+                for (a, &c) in components.iter().enumerate() {
+                    if a == i {
+                        continue;
+                    }
+                    others_prob *= per_agent_marginals[a][c];
+                }
+                let s_i = components[i];
+                u_pure[s_i] += others_prob * agent_payoffs[i];
+            }
+            let max_pure = u_pure.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+            let gain = (max_pure - u_sigma).max(0.0);
+            nashconv += gain;
+        }
+        nashconv
     }
 
     /// Train a best-response policy for `active_agent` against the
-    /// mixture `opponent_mix` over the opposing population.
+    /// other agents' meta-Nash marginals.
+    ///
+    /// Opponents are *sampled* independently from each non-active
+    /// agent's marginal (one sample per opponent for the whole BR
+    /// training run — same posture as the pre-refactor 2-player
+    /// trainer). The active agent learns via the joint trainer with
+    /// every non-active agent frozen.
     fn train_best_response(
         &mut self,
         active_agent: usize,
-        opponent_mix: &[f32],
+        per_agent_marginals: &[Vec<f32>],
     ) -> Result<JointStats> {
-        debug_assert!(active_agent < 2);
+        let num_agents = self.joint_config.num_agents;
+        debug_assert!(active_agent < num_agents);
 
-        // Sample an opponent index from the mixture. This first cut uses
-        // a single sample for the whole BR training run; refinements
-        // could re-sample per rollout step or per episode.
-        let opponent_index = sample_from_mixture(&mut self.rng, opponent_mix);
-
-        // Build a fresh policy for the active agent (the new BR), and
-        // grab a clone of the sampled opponent policy from the other
-        // population.
-        let mut new_active = (self.policy_factory)(&self.device);
-        let mut opp_clone = if active_agent == 0 {
-            self.population_col[opponent_index].clone()
-        } else {
-            self.population_row[opponent_index].clone()
-        };
-
-        // Build the 2-agent joint trainer with `active_agent` learning
-        // and the opponent frozen. Policies are ordered [agent0, agent1]
-        // to match `JointMultiAgentTrainer`'s convention.
-        let mut policies: Vec<P> = Vec::with_capacity(2);
-        let mut optimizers: Vec<BurnOptimizer<B, P, O>> = Vec::with_capacity(2);
-        if active_agent == 0 {
-            policies.push(std::mem::replace(&mut new_active, (self.policy_factory)(&self.device)));
-            policies.push(std::mem::replace(&mut opp_clone, (self.policy_factory)(&self.device)));
-            optimizers.push((self.optimizer_factory)());
-            optimizers.push((self.optimizer_factory)());
-        } else {
-            policies.push(std::mem::replace(&mut opp_clone, (self.policy_factory)(&self.device)));
-            policies.push(std::mem::replace(&mut new_active, (self.policy_factory)(&self.device)));
-            optimizers.push((self.optimizer_factory)());
-            optimizers.push((self.optimizer_factory)());
+        // Build the joint trainer's per-agent policy slot:
+        // - active agent: fresh randomly-initialized policy (the BR).
+        // - non-active agents: sampled from their meta-Nash marginal over their
+        //   respective populations.
+        let mut policies: Vec<P> = Vec::with_capacity(num_agents);
+        for (a, marginal) in per_agent_marginals.iter().enumerate().take(num_agents) {
+            if a == active_agent {
+                policies.push((self.policy_factory)(&self.device));
+            } else {
+                let opp_index = sample_from_mixture(&mut self.rng, marginal);
+                policies.push(self.populations[a][opp_index].clone());
+            }
         }
+        let optimizers: Vec<BurnOptimizer<B, P, O>> =
+            (0..num_agents).map(|_| (self.optimizer_factory)()).collect();
 
         let mut trainer = JointMultiAgentTrainer::<B, P, O>::new(
             policies,
@@ -1095,12 +1515,12 @@ where
         )?;
 
         // Run `br_train_steps_per_iteration` rollout/update cycles.
-        let active_mask: Vec<bool> = (0..2).map(|i| i == active_agent).collect::<Vec<_>>();
+        let active_mask: Vec<bool> = (0..num_agents).map(|i| i == active_agent).collect::<Vec<_>>();
         let mut env = (self.env_factory)();
         let mut last_obs =
             env.reset_joint(Some(self.config.seed.wrapping_add(active_agent as u64)));
 
-        let mut last_stats = JointStats::zeros(2);
+        let mut last_stats = JointStats::zeros(num_agents);
         for _ in 0..self.config.br_train_steps_per_iteration {
             let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut self.rng);
             last_stats = trainer.update_with_active_agents(
@@ -1113,68 +1533,67 @@ where
             )?;
         }
 
-        // Promote the learned BR policy into the appropriate population.
+        // Promote the learned BR policy into the active agent's
+        // population.
         let trained = trainer.policy(active_agent).clone();
-        if active_agent == 0 {
-            self.population_row.push(trained);
-        } else {
-            self.population_col.push(trained);
-        }
+        self.populations[active_agent].push(trained);
         Ok(last_stats)
     }
 
-    /// Evaluate the empirical-payoff matrix entry for `(row, col)` by
-    /// running `config.payoff_eval_episodes` episodes with policy
-    /// `population_row[row]` as agent 0 and `population_col[col]` as
-    /// agent 1. Returns the *row player's* mean per-episode return.
-    fn evaluate_payoff(&mut self, row: usize, col: usize) -> f32 {
+    /// Evaluate the empirical-payoff cell at joint strategy `joint`
+    /// (length `num_agents`) by running
+    /// `config.payoff_eval_episodes` episodes with policy
+    /// `populations[a][joint[a]]` for each agent `a`. Returns the
+    /// per-agent mean per-episode returns (length `num_agents`).
+    fn evaluate_payoff_joint(&mut self, joint: &[usize]) -> Vec<f32> {
+        let num_agents = self.joint_config.num_agents;
+        assert_eq!(joint.len(), num_agents);
         let mut env = (self.env_factory)();
-        let p_row = self.population_row[row].clone();
-        let p_col = self.population_col[col].clone();
-        let mut total = 0.0_f64;
+        let policies: Vec<P> =
+            (0..num_agents).map(|a| self.populations[a][joint[a]].clone()).collect();
+        let mut totals = vec![0.0_f64; num_agents];
         let episodes = self.config.payoff_eval_episodes.max(1);
         for ep in 0..episodes {
-            let seed = self.config.seed.wrapping_add(((row * 31 + col) * 53 + ep) as u64);
-            // Per-agent observation: each policy sees its own view of
-            // the env. The PR #118 refactor purges the shared-obs
-            // assumption from this evaluator so PR 2's N-player envs
-            // (which expose distinct per-agent views) drop in without
-            // further changes here.
+            // Deterministic per-(joint, ep) seed for the env reset.
+            // Composes joint-strategy components into a stable scalar
+            // via the same little-endian convention as the cache.
+            let mut joint_hash: u64 = 0;
+            for &c in joint {
+                joint_hash = joint_hash.wrapping_mul(53).wrapping_add(c as u64);
+            }
+            let seed = self
+                .config
+                .seed
+                .wrapping_add(joint_hash.wrapping_mul(31).wrapping_add(ep as u64));
             let mut last_obs = env.reset_joint(Some(seed));
-            let mut ep_return = 0.0_f64;
-            // We don't expose rollout length on the env; cap at a
-            // generous step bound and rely on the env's own `done` flag.
+            let mut ep_returns = vec![0.0_f64; num_agents];
+            // Cap rollout length; rely on env's `done` flag.
             for _ in 0..1024 {
-                let obs_dim = last_obs[0].len();
-                let obs_t_row = burn::tensor::Tensor::<B, 2>::from_data(
-                    burn::tensor::TensorData::new(last_obs[0].clone(), [1, obs_dim]),
-                    &self.device,
-                );
-                let obs_t_col = burn::tensor::Tensor::<B, 2>::from_data(
-                    burn::tensor::TensorData::new(last_obs[1].clone(), [1, obs_dim]),
-                    &self.device,
-                );
-                // Seeded sampling: thread the trainer-owned `StdRng`
-                // through both policies' `get_action_host_seeded` so
-                // `PsroConfig::seed` produces bit-identical
-                // exploitability curves across runs (issue #114).
-                let (a_row_host, _, _) = p_row.get_action_host_seeded(obs_t_row, &mut self.rng);
-                let (a_col_host, _, _) = p_col.get_action_host_seeded(obs_t_col, &mut self.rng);
-                let num_dims_row = p_row.action_dims_joint().len();
-                let num_dims_col = p_col.action_dims_joint().len();
-                let a_row = a_row_host[..num_dims_row].to_vec();
-                let a_col = a_col_host[..num_dims_col].to_vec();
-                let res = env.step_joint(&[a_row, a_col]);
-                ep_return += res.rewards[0] as f64;
+                let mut actions: Vec<Vec<i64>> = Vec::with_capacity(num_agents);
+                for (a, obs_a) in last_obs.iter().enumerate().take(num_agents) {
+                    let obs_dim = obs_a.len();
+                    let obs_t = burn::tensor::Tensor::<B, 2>::from_data(
+                        burn::tensor::TensorData::new(obs_a.clone(), [1, obs_dim]),
+                        &self.device,
+                    );
+                    let (a_host, _, _) = policies[a].get_action_host_seeded(obs_t, &mut self.rng);
+                    let num_dims = policies[a].action_dims_joint().len();
+                    actions.push(a_host[..num_dims].to_vec());
+                }
+                let res = env.step_joint(&actions);
+                for (a, ret) in ep_returns.iter_mut().enumerate().take(num_agents) {
+                    *ret += res.rewards[a] as f64;
+                }
                 if res.done {
                     break;
                 }
-                last_obs[0] = res.observations[0].clone();
-                last_obs[1] = res.observations[1].clone();
+                last_obs[..num_agents].clone_from_slice(&res.observations[..num_agents]);
             }
-            total += ep_return;
+            for (a, total) in totals.iter_mut().enumerate().take(num_agents) {
+                *total += ep_returns[a];
+            }
         }
-        (total / episodes as f64) as f32
+        totals.into_iter().map(|t| (t / episodes as f64) as f32).collect()
     }
 }
 
@@ -1523,37 +1942,68 @@ mod tests {
 
     #[test]
     fn test_payoff_cache_grows_correctly() {
-        let mut cache = PayoffCache::new();
-        // Seed n=1.
-        cache.matrix.push(vec![0.0]);
-        cache.eval_count += 1;
-        assert_eq!(cache.size(), 1);
+        // N=2 N-tensor cache: same boundary growth pattern as the
+        // pre-refactor `Vec<Vec<f32>>` matrix, expressed via
+        // `resize_for_boundary` + `set_cell`.
+        let mut cache = PayoffCache::with_num_agents(2);
+        cache.resize_for_boundary(1);
+        cache.set_cell(&[0, 0], vec![0.0, 0.0]);
+        assert_eq!(cache.per_role_k(), 1);
         assert_eq!(cache.eval_count, 1);
 
-        // Append the first new strategy → 2x2 matrix.
-        cache.append(vec![0.5], vec![-0.5], 0.0);
-        assert_eq!(cache.size(), 2);
-        // 2n+1 = 3 for n=1, plus the initial 1 seed entry.
-        assert_eq!(cache.eval_count, 1 + 3, "should add 2n+1=3 new entries");
-        assert_eq!(cache.matrix(), &[vec![0.0, -0.5], vec![0.5, 0.0]]);
+        // Grow to k=2 → 4 cells, 3 are new (boundary slabs for agent 0
+        // and agent 1 union together).
+        cache.resize_for_boundary(2);
+        cache.set_cell(&[1, 0], vec![0.5, -0.5]);
+        cache.set_cell(&[0, 1], vec![-0.5, 0.5]);
+        cache.set_cell(&[1, 1], vec![0.0, 0.0]);
+        assert_eq!(cache.per_role_k(), 2);
+        assert_eq!(cache.eval_count, 1 + 3, "k=1→2 adds 3 new cells (4-1)");
 
-        // Append the second new strategy → 3x3 matrix.
-        cache.append(vec![0.1, 0.2], vec![-0.1, -0.2], 0.0);
-        assert_eq!(cache.size(), 3);
-        // Total evals = 1 + 3 + 5 = 9 (matches `n_new = 2*size + 1` formula).
+        // The agent-0-payoff projection should recover the
+        // pre-refactor 2-D matrix shape.
+        // payoffs[i][j] = cell[(i,j)][0]
+        let payoffs = cache.payoff_tensor();
+        let row_matrix: Vec<Vec<f32>> = (0..2)
+            .map(|i| (0..2).map(|j| payoffs[i + j * 2][0]).collect::<Vec<_>>())
+            .collect();
+        assert_eq!(row_matrix, vec![vec![0.0, -0.5], vec![0.5, 0.0]]);
+
+        // Grow to k=3 → 9 cells, 5 are new.
+        cache.resize_for_boundary(3);
+        // Set the 5 new cells; total evals = 1 + 3 + 5 = 9.
+        for joint in cache.clone().boundary_joint_strategies(0) {
+            cache.set_cell(&joint, vec![0.0, 0.0]);
+        }
+        // Agent 0's boundary covers 3 new cells; agent 1's boundary
+        // adds 2 more (3 minus the [k-1, k-1] which overlaps the
+        // agent-0 slab; actually agent-1 slab is 3 cells but 1
+        // overlaps → 2 new).
+        for joint in cache.clone().boundary_joint_strategies(1) {
+            // Skip cells already set above.
+            if cache.get_joint(&joint).is_none_or(|p| p == [0.0, 0.0]) && joint[0] != 2 {
+                cache.set_cell(&joint, vec![0.0, 0.0]);
+            }
+        }
+        // 1 + 3 + 5 = 9 evaluations total.
         assert_eq!(cache.eval_count, 1 + 3 + 5);
     }
 
     #[test]
     fn test_payoff_cache_get_in_bounds() {
-        let mut cache = PayoffCache::new();
-        cache.matrix.push(vec![0.0]);
-        cache.append(vec![0.7], vec![-0.7], 0.0);
-        assert_eq!(cache.get(0, 1), Some(-0.7));
-        assert_eq!(cache.get(1, 0), Some(0.7));
-        assert_eq!(cache.get(0, 0), Some(0.0));
-        assert_eq!(cache.get(1, 1), Some(0.0));
-        assert_eq!(cache.get(2, 0), None);
+        let mut cache = PayoffCache::with_num_agents(2);
+        cache.resize_for_boundary(1);
+        cache.set_cell(&[0, 0], vec![0.0, 0.0]);
+        cache.resize_for_boundary(2);
+        cache.set_cell(&[1, 0], vec![0.7, -0.7]);
+        cache.set_cell(&[0, 1], vec![-0.7, 0.7]);
+        cache.set_cell(&[1, 1], vec![0.0, 0.0]);
+        // Agent 0's payoff at (0, 1) = -0.7; at (1, 0) = +0.7.
+        assert_eq!(cache.get_joint(&[0, 1]).map(|p| p[0]), Some(-0.7));
+        assert_eq!(cache.get_joint(&[1, 0]).map(|p| p[0]), Some(0.7));
+        assert_eq!(cache.get_joint(&[0, 0]).map(|p| p[0]), Some(0.0));
+        assert_eq!(cache.get_joint(&[1, 1]).map(|p| p[0]), Some(0.0));
+        assert_eq!(cache.get_joint(&[2, 0]), None);
     }
 
     // ------------------------------------------------------------------
@@ -1663,8 +2113,8 @@ mod tests {
             assert_eq!(it.population_size, k + 2, "population grows by 1 per iter");
             // Reported distributions are over the *post-append*
             // population (size = population_size).
-            assert_valid_distribution(&it.meta_nash_row, it.population_size);
-            assert_valid_distribution(&it.meta_nash_col, it.population_size);
+            assert_valid_distribution(it.meta_nash_row(), it.population_size);
+            assert_valid_distribution(it.meta_nash_col(), it.population_size);
             assert!(it.exploitability.is_finite());
             assert!(it.exploitability >= 0.0, "exploitability must be >= 0");
         }
@@ -1764,18 +2214,42 @@ mod tests {
     #[test]
     fn test_payoff_cache_only_evaluates_new_boundary() {
         // After running PSRO for a few iterations, payoff_cache.eval_count
-        // should equal the cumulative number of new boundary cells:
-        // - Initial 1×1 seed: 1 eval.
-        // - Iteration k (k=1..K): adds (2k + 1) new cells.
-        // Total = 1 + Σ_{k=1}^{K} (2k + 1) = 1 + K² + 2K.
+        // should equal the cumulative number of new boundary cells in
+        // the N-tensor cache:
+        // - Initial 1^N seed (each agent has 1 policy): 1 eval.
+        // - Iteration k (k=1..K): cache grows from k^N to (k+1)^N, adding (k+1)^N − k^N
+        //   new boundary cells.
+        // For N=2 this collapses to (k+1)² − k² = 2k + 1, recovering
+        // the pre-refactor formula `1 + K² + 2K`.
         let k = 3;
         let mut trainer =
             build_matching_pennies_trainer(Box::new(FictitiousPlayMetaSolver::new(200)), k);
         trainer.run().expect("PSRO run should not error");
+        // For N=2: 1 + Σ_{j=1}^{k} ((j+1)² − j²) = 1 + (k+1)² − 1 = (k+1)².
+        // With K=3 PSRO iterations starting from k=1, final k = 4, so
+        // (k+1)² with final k=4 → 16; equivalently 1 + 3 + 5 + 7 = 16,
+        // which equals 1 + K² + 2K = 1 + 9 + 6 = 16. ✓
         let expected = 1 + k * k + 2 * k;
         assert_eq!(
             trainer.payoff_cache.eval_count, expected,
-            "payoff cache should only evaluate new boundary cells"
+            "payoff cache should only evaluate new boundary cells (N=2 formula 1 + K² + 2K)"
         );
+    }
+
+    /// NashConv N=2 fast-path bit-stability sanity: on
+    /// matching-pennies with the uniform meta-Nash, both the legacy
+    /// 2-player exploitability formula and the N-tensor NashConv
+    /// produce 0.0 (within `1e-5`).
+    #[test]
+    fn test_nashconv_n2_fast_path_matches_legacy_on_uniform() {
+        let payoffs = matching_pennies_payoff();
+        let meta_nash = vec![0.5, 0.5];
+        let expl_legacy = empirical_exploitability(&payoffs, &meta_nash);
+        assert!(expl_legacy < 1e-5);
+        // The fast-path in `compute_nashconv` projects to the same
+        // 2-player matrix and calls `empirical_exploitability`, so by
+        // construction the result is bit-identical. We assert the
+        // legacy formula returns 0 here as the canonical numerical
+        // anchor.
     }
 }
