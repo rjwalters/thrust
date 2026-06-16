@@ -9,18 +9,18 @@
 //!
 //! # `gap_closed` baselines (base scenario)
 //!
-//! [`MINSPEC_RANDOM`] and [`MINSPEC_SPECIALIST`] are the per-step team
+//! `MINSPEC_RANDOM` and `MINSPEC_SPECIALIST` are the per-step team
 //! payoffs of the random and specialist policies on the **base**
 //! `minimal_specialization-v1` scenario (4 agents, 10 houses), mirrored
 //! from the canonical Python single-source-of-truth at
 //! `envs/bucket-brigade/bucket_brigade/baselines/__init__.py:68-69`. Use
-//! [`gap_closed`] to normalize a per-step team payoff against these
+//! `gap_closed` to normalize a per-step team payoff against these
 //! base-scenario baselines.
 //!
 //! **Not valid on non-base scenarios.** The three no-convergence cells of
 //! the workshop-paper phase diagram (β ∈ {0.1, 0.5, 0.9} with κ=0.1,
 //! c=0.5) have meaningfully different baseline payoffs and need their
-//! own normalization endpoints — see [`gap_closed_cell`] and the
+//! own normalization endpoints — see `gap_closed_cell` and the
 //! `MINSPEC_RANDOM_BETA0XX` / `MINSPEC_SPECIALIST_BETA0XX` constants.
 //!
 //! # `gap_closed_cell` baselines (per cell)

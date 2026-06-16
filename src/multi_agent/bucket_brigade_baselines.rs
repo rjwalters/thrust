@@ -20,8 +20,8 @@
 //!
 //! The specialist policy reads the `houses` slice of the per-agent
 //! observation. That slice lives at offset `1..1+num_houses` in the flat
-//! observation produced by
-//! [`crate::env::games::bucket_brigade::env::flatten_observation`]:
+//! observation produced by the bucket-brigade env's `flatten_observation`
+//! helper (private to `crate::env::games::bucket_brigade::env`):
 //!
 //! ```text
 //! [agent_id_norm(1), houses(num_houses), signals(N), locations(N),
