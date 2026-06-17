@@ -454,46 +454,106 @@ mod tests {
         }
     }
 
-    /// `soft_update_from` with `tau` in `(0, 1)` moves the target toward
-    /// the online network: the post-update output sits strictly between
-    /// the original target output and the online output, and the
-    /// distance to online shrinks.
+    /// Flatten every learnable parameter of a critic (weights then bias
+    /// for each layer, in a stable order) into a single `Vec<f32>`. Used
+    /// to assert the parameter-space Polyak invariant of `soft_update_from`.
+    fn all_params(net: &ContinuousQNetwork<B>) -> Vec<f32> {
+        let mut out = Vec::new();
+        let mut push_linear = |l: &Linear<B>| {
+            out.extend(l.weight.val().into_data().to_vec::<f32>().unwrap());
+            if let Some(b) = &l.bias {
+                out.extend(b.val().into_data().to_vec::<f32>().unwrap());
+            }
+        };
+        push_linear(&net.fc1);
+        push_linear(&net.fc2);
+        if let Some(fc3) = &net.fc3 {
+            push_linear(fc3);
+        }
+        push_linear(&net.q_head);
+        out
+    }
+
+    /// `soft_update_from` with `tau` in `(0, 1)` blends the target toward
+    /// the online network in PARAMETER space following the Polyak rule
+    /// `new_target = tau * online + (1 - tau) * old_target`.
+    ///
+    /// This is the invariant `soft_update_from` actually guarantees and it
+    /// is exact and deterministic. (An earlier version of this test asserted
+    /// that the *output* distance shrinks; that is not a valid invariant —
+    /// the Q output is a nonlinear MLP function of the parameters, so a
+    /// convex blend of parameters does not guarantee a monotone move of the
+    /// output toward online's output. That made the test flaky under the
+    /// unseeded RNG. Here we seed both critics for determinism and assert
+    /// the parameter-space invariant directly.)
     #[test]
     fn soft_update_moves_target_toward_online() {
         let device = Default::default();
-        let cfg = ContinuousQNetworkConfig {
-            hidden_dim: 16,
-            use_orthogonal_init: false,
-            ..Default::default()
-        };
-        let online = ContinuousQNetwork::<B>::with_config(4, 2, cfg, &device);
-        let mut target = ContinuousQNetwork::<B>::with_config(4, 2, cfg, &device);
-
-        let obs = ramp(3, 4);
-        let action = ramp(3, 2);
-
-        let online_out: Vec<f32> =
-            online.forward(obs.clone(), action.clone()).into_data().to_vec().unwrap();
-        let target_before: Vec<f32> =
-            target.forward(obs.clone(), action.clone()).into_data().to_vec().unwrap();
-
-        let dist_before: f32 =
-            online_out.iter().zip(&target_before).map(|(o, t)| (o - t).abs()).sum();
-        assert!(dist_before > 1e-4, "test needs distinct critics to start");
-
-        let tau = 0.25;
-        target.soft_update_from(&online, tau);
-        let target_after: Vec<f32> = target.forward(obs, action).into_data().to_vec().unwrap();
-
-        let dist_after: f32 =
-            online_out.iter().zip(&target_after).map(|(o, t)| (o - t).abs()).sum();
-        assert!(
-            dist_after < dist_before,
-            "soft update should shrink distance to online: before={dist_before} after={dist_after}"
+        // Seed both critics with distinct fixed seeds so they start with
+        // distinct but fully deterministic weights every run.
+        let online = ContinuousQNetwork::<B>::with_config(
+            4,
+            2,
+            ContinuousQNetworkConfig {
+                hidden_dim: 16,
+                use_orthogonal_init: false,
+                seed: Some(11),
+                ..Default::default()
+            },
+            &device,
+        );
+        let mut target = ContinuousQNetwork::<B>::with_config(
+            4,
+            2,
+            ContinuousQNetworkConfig {
+                hidden_dim: 16,
+                use_orthogonal_init: false,
+                seed: Some(29),
+                ..Default::default()
+            },
+            &device,
         );
 
-        // And the params should actually have changed from the original
-        // target (tau > 0).
+        let online_p = all_params(&online);
+        let target_before = all_params(&target);
+
+        // Critics must start distinct, else the test is vacuous.
+        let dist_before: f32 =
+            online_p.iter().zip(&target_before).map(|(o, t)| (o - t).abs()).sum();
+        assert!(dist_before > 1e-4, "test needs distinct critics to start");
+
+        let tau = 0.25_f64;
+        target.soft_update_from(&online, tau);
+        let target_after = all_params(&target);
+
+        assert_eq!(target_after.len(), target_before.len());
+        assert_eq!(target_after.len(), online_p.len());
+
+        // Parameter-space Polyak invariant, exact (modulo f32 rounding):
+        // new_target == tau * online + (1 - tau) * old_target.
+        let tau_f = tau as f32;
+        for (i, ((&onl, &old), &new)) in
+            online_p.iter().zip(&target_before).zip(&target_after).enumerate()
+        {
+            let expected = tau_f * onl + (1.0 - tau_f) * old;
+            assert!(
+                (new - expected).abs() < 1e-5,
+                "param {i}: Polyak blend mismatch new={new} expected={expected} \
+                 (online={onl} old_target={old} tau={tau})"
+            );
+        }
+
+        // Consequently the summed parameter distance to online shrinks by
+        // exactly the factor (1 - tau).
+        let dist_after: f32 = online_p.iter().zip(&target_after).map(|(o, t)| (o - t).abs()).sum();
+        let expected_after = (1.0 - tau_f) * dist_before;
+        assert!(
+            (dist_after - expected_after).abs() < 1e-4,
+            "param distance to online should scale by (1-tau): \
+             before={dist_before} after={dist_after} expected={expected_after}"
+        );
+
+        // Sanity: with tau > 0 the target parameters actually changed.
         assert!(
             target_before.iter().zip(&target_after).any(|(a, b)| (a - b).abs() > 1e-6),
             "soft update with tau>0 must change the target"
