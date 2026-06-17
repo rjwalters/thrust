@@ -30,6 +30,11 @@ pub mod seeded_init;
 #[cfg(feature = "training")]
 pub mod q_network;
 
+/// Continuous-action `Q(s, a)` critic for SAC (twin critics + targets),
+/// with hard and Polyak (soft) target-sync helpers.
+#[cfg(feature = "training")]
+pub mod continuous_q;
+
 /// 3-conv + 2-fc CNN used by the Snake trainer.
 #[cfg(feature = "training")]
 pub mod snake_cnn;
