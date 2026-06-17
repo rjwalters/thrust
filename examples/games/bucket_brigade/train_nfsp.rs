@@ -207,8 +207,8 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
-    let policy_factory = move |dev: &burn::tensor::Device<InnerBackend>| {
-        MultiDiscreteMlpBurnPolicy::<B>::new(obs_dim, action_dims(), HIDDEN_DIM, dev)
+    let policy_factory = move |dev: &burn::tensor::Device<InnerBackend>, seed: u64| {
+        MultiDiscreteMlpBurnPolicy::<B>::new_seeded(obs_dim, action_dims(), HIDDEN_DIM, seed, dev)
     };
     let optimizer_factory = || {
         let inner = AdamConfig::new().init();

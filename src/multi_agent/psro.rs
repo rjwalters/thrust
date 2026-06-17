@@ -1112,7 +1112,13 @@ impl PayoffCache {
 /// The trainer doesn't know how to construct a Burn module of the
 /// caller's chosen architecture, so we take closures:
 ///
-/// - `policy_factory: Fn(&B::Device) -> P` — fresh randomly-initialized policy.
+/// - `policy_factory: Fn(&B::Device, u64) -> P` — fresh policy. The `u64` is a
+///   **per-construction seed** the trainer derives from `PsroConfig::seed` via
+///   a monotonic init-counter. A reproducibility-aware factory threads it into
+///   `MlpBurnPolicy::new_seeded` / `MlpBurnConfig::with_seed` so that every
+///   agent's initial policy and every per-iteration best-response gets
+///   *distinct but deterministic* weights (issue #135). Factories that don't
+///   care about reproducibility may ignore the argument.
 /// - `optimizer_factory: Fn() -> BurnOptimizer<B, P, O>` — fresh optimizer.
 /// - `env_factory: Fn() -> E` — fresh env instance.
 ///
@@ -1134,7 +1140,7 @@ where
     P: JointPolicy<B>,
     O: Optimizer<P, B>,
     E: JointEnv,
-    FP: Fn(&B::Device) -> P,
+    FP: Fn(&B::Device, u64) -> P,
     FO: Fn() -> BurnOptimizer<B, P, O>,
     FE: Fn() -> E,
 {
@@ -1152,6 +1158,17 @@ where
     env_factory: FE,
     payoff_cache: PayoffCache,
     rng: StdRng,
+    /// Monotonic counter feeding the per-construction policy-init seed.
+    ///
+    /// Incremented on every `policy_factory` call (once per agent at
+    /// construction, once per best-response per outer iteration). Each
+    /// call derives `config.seed.wrapping_add(0x9E37_79B9 *
+    /// init_counter)` so distinct constructions get distinct — but
+    /// fully deterministic — initial weights. Without this, a factory
+    /// closing over a single fixed seed would hand every agent and every
+    /// iteration *identical* weights, a regression (issue #135,
+    /// Correction 1).
+    init_counter: u64,
 }
 
 impl<B, P, O, E, FP, FO, FE> PsroTrainer<B, P, O, E, FP, FO, FE>
@@ -1160,7 +1177,7 @@ where
     P: JointPolicy<B>,
     O: Optimizer<P, B>,
     E: JointEnv,
-    FP: Fn(&B::Device) -> P,
+    FP: Fn(&B::Device, u64) -> P,
     FO: Fn() -> BurnOptimizer<B, P, O>,
     FE: Fn() -> E,
 {
@@ -1189,7 +1206,16 @@ where
             ));
         }
         let n = joint_config.num_agents;
-        let populations: Vec<Vec<P>> = (0..n).map(|_| vec![policy_factory(&device)]).collect();
+        // Derive a distinct init seed per agent at construction time.
+        // We advance the counter inline here (the trainer isn't built
+        // yet) using the same derivation as `next_init_seed`.
+        let base_seed = config.seed;
+        let populations: Vec<Vec<P>> = (0..n)
+            .map(|i| {
+                let s = base_seed.wrapping_add(0x9E37_79B9_u64.wrapping_mul(i as u64));
+                vec![policy_factory(&device, s)]
+            })
+            .collect();
         let rng = StdRng::seed_from_u64(config.seed);
         Ok(Self {
             populations,
@@ -1202,7 +1228,23 @@ where
             env_factory,
             payoff_cache: PayoffCache::with_num_agents(n),
             rng,
+            // Start the running counter past the `n` seeds consumed by
+            // the initial per-agent constructions above.
+            init_counter: n as u64,
         })
+    }
+
+    /// Derive and consume the next per-construction policy-init seed.
+    ///
+    /// Returns `config.seed.wrapping_add(0x9E37_79B9 * init_counter)`
+    /// and advances the counter so the next call gets a fresh,
+    /// non-colliding stream. The multiplier is the 32-bit golden-ratio
+    /// constant — any odd large constant works; this one keeps adjacent
+    /// counters well-separated in the `StdRng` seed space.
+    fn next_init_seed(&mut self) -> u64 {
+        let s = self.config.seed.wrapping_add(0x9E37_79B9_u64.wrapping_mul(self.init_counter));
+        self.init_counter = self.init_counter.wrapping_add(1);
+        s
     }
 
     /// Borrow agent `agent`'s policy population.
@@ -1498,7 +1540,8 @@ where
         let mut policies: Vec<P> = Vec::with_capacity(num_agents);
         for (a, marginal) in per_agent_marginals.iter().enumerate().take(num_agents) {
             if a == active_agent {
-                policies.push((self.policy_factory)(&self.device));
+                let init_seed = self.next_init_seed();
+                policies.push((self.policy_factory)(&self.device, init_seed));
             } else {
                 let opp_index = sample_from_mixture(&mut self.rng, marginal);
                 policies.push(self.populations[a][opp_index].clone());
@@ -2056,7 +2099,7 @@ mod tests {
         MlpBurnPolicy<B>,
         burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MlpBurnPolicy<B>, B>,
         MatchingPennies,
-        impl Fn(&NdArrayDevice) -> MlpBurnPolicy<B>,
+        impl Fn(&NdArrayDevice, u64) -> MlpBurnPolicy<B>,
         impl Fn() -> BurnOptimizer<
             B,
             MlpBurnPolicy<B>,
@@ -2084,12 +2127,13 @@ mod tests {
             joint_config,
             meta_solver,
             device,
-            |dev: &NdArrayDevice| {
+            |dev: &NdArrayDevice, seed: u64| {
                 // 1 obs dim, 2 actions, small hidden.
-                MlpBurnPolicy::<B>::new(
+                MlpBurnPolicy::<B>::new_seeded(
                     MatchingPennies::OBS_DIM,
                     MatchingPennies::ACTION_DIM,
                     16,
+                    seed,
                     dev,
                 )
             },

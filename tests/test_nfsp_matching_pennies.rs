@@ -53,7 +53,7 @@ fn build_trainer(
     MlpBurnPolicy<B>,
     burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MlpBurnPolicy<B>, B>,
     MatchingPennies,
-    impl Fn(&NdArrayDevice) -> MlpBurnPolicy<B>,
+    impl Fn(&NdArrayDevice, u64) -> MlpBurnPolicy<B>,
     impl Fn() -> BurnOptimizer<
         B,
         MlpBurnPolicy<B>,
@@ -83,8 +83,14 @@ fn build_trainer(
         nfsp_config,
         joint_config,
         device,
-        |dev: &NdArrayDevice| {
-            MlpBurnPolicy::<B>::new(MatchingPennies::OBS_DIM, MatchingPennies::ACTION_DIM, 16, dev)
+        |dev: &NdArrayDevice, seed: u64| {
+            MlpBurnPolicy::<B>::new_seeded(
+                MatchingPennies::OBS_DIM,
+                MatchingPennies::ACTION_DIM,
+                16,
+                seed,
+                dev,
+            )
         },
         || {
             let inner = AdamConfig::new().init();

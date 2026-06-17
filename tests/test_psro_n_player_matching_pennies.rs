@@ -132,11 +132,12 @@ fn test_psro_n4_converges_to_uniform_on_majority_game() {
         joint_config,
         meta_solver,
         device,
-        |dev: &NdArrayDevice| {
-            MlpBurnPolicy::<B>::new(
+        |dev: &NdArrayDevice, seed: u64| {
+            MlpBurnPolicy::<B>::new_seeded(
                 NPlayerMatchingPennies::OBS_DIM,
                 NPlayerMatchingPennies::ACTION_DIM,
                 16,
+                seed,
                 dev,
             )
         },
@@ -185,7 +186,18 @@ fn test_psro_n4_converges_to_uniform_on_majority_game() {
 /// reduces to the legacy 2-player exploitability formula for N=2 by
 /// construction; see `compute_nashconv`'s N=2 fast path) is finite,
 /// non-negative, and decreases on average — last-half mean ≤
-/// first-half mean + `0.5` slack.
+/// first-half mean + `0.2` slack.
+///
+/// **Bit-exact since issue #135.** With policy init seeded
+/// (`MlpBurnPolicy::new_seeded` → `crate::policy::seeded_init`) and the
+/// PSRO factory fed a distinct per-construction seed derived from
+/// `PsroConfig::seed`, this curve is fully deterministic. Across
+/// repeated release-mode runs the curve is identically
+/// `[1.0, 3.5556, 1.375, 1.3120, 1.2577]`: first-half mean `2.2778`,
+/// second-half mean `1.3149`, so `(second - first) = -0.963` every
+/// run. The slack is tightened from `+0.5` to `+0.2`; the deterministic
+/// delta sits ~1.16 below the bound, so the assertion fires only on a
+/// genuine blow-up.
 ///
 /// The PSRO N≥3 NashConv is monotonically-decreasing in *expectation*
 /// (each newly-added best response is, by α-rank's response-graph
@@ -223,11 +235,12 @@ fn test_psro_n4_nashconv_trend_does_not_blow_up() {
         joint_config,
         meta_solver,
         device,
-        |dev: &NdArrayDevice| {
-            MlpBurnPolicy::<B>::new(
+        |dev: &NdArrayDevice, seed: u64| {
+            MlpBurnPolicy::<B>::new_seeded(
                 NPlayerMatchingPennies::OBS_DIM,
                 NPlayerMatchingPennies::ACTION_DIM,
                 16,
+                seed,
                 dev,
             )
         },
@@ -252,7 +265,7 @@ fn test_psro_n4_nashconv_trend_does_not_blow_up() {
     let second_mean: f32 = expls[half..].iter().copied().sum::<f32>() / (n - half) as f32;
     println!("N=4 NashConv first-half mean = {first_mean:.4}, second-half mean = {second_mean:.4}");
     assert!(
-        second_mean <= first_mean + 0.5,
-        "NashConv blew up: first-half mean {first_mean}, second-half mean {second_mean}"
+        second_mean <= first_mean + 0.2,
+        "NashConv blew up: first-half mean {first_mean}, second-half mean {second_mean}.          Band tightened from +0.5 to +0.2 after issue #135 made the curve          bit-exact (deterministic delta -0.963); see test docs."
     );
 }

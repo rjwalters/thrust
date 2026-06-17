@@ -214,8 +214,14 @@ fn main() -> Result<()> {
     };
     let meta_solver: Box<dyn MetaSolver> = Box::new(AlphaRankMetaSolver::default());
 
-    let policy_factory = move |dev: &burn::tensor::Device<InnerBackend>| {
-        MultiDiscreteMlpBurnPolicy::<B>::new(obs_dim, vec![NUM_HOUSES, 2, 2], HIDDEN_DIM, dev)
+    let policy_factory = move |dev: &burn::tensor::Device<InnerBackend>, seed: u64| {
+        MultiDiscreteMlpBurnPolicy::<B>::new_seeded(
+            obs_dim,
+            vec![NUM_HOUSES, 2, 2],
+            HIDDEN_DIM,
+            seed,
+            dev,
+        )
     };
     let optimizer_factory = || {
         let inner = AdamConfig::new().init();

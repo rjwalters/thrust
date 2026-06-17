@@ -111,6 +111,7 @@ fn main() -> Result<()> {
             hidden_dim: HIDDEN_DIM,
             use_orthogonal_init: true,
             activation: BurnActivation::Tanh,
+            seed: None,
         };
         // Construct a blank policy with the same architecture, then load
         // the recorded record into it. `load_file` will append `.bin` so

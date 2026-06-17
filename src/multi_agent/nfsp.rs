@@ -362,7 +362,7 @@ where
     P: JointPolicy<B>,
     O: Optimizer<P, B>,
     E: JointEnv,
-    FP: Fn(&B::Device) -> P,
+    FP: Fn(&B::Device, u64) -> P,
     FO: Fn() -> BurnOptimizer<B, P, O>,
     FE: Fn() -> E,
 {
@@ -409,7 +409,7 @@ where
     P: JointPolicy<B>,
     O: Optimizer<P, B>,
     E: JointEnv,
-    FP: Fn(&B::Device) -> P,
+    FP: Fn(&B::Device, u64) -> P,
     FO: Fn() -> BurnOptimizer<B, P, O>,
     FE: Fn() -> E,
 {
@@ -442,7 +442,16 @@ where
             ));
         }
         let num_agents = joint_config.num_agents;
-        let br_policies: Vec<P> = (0..num_agents).map(|_| policy_factory(&device)).collect();
+        // Per-construction init seeds (issue #135, Correction 1): every
+        // BR and AP policy gets a distinct, deterministic seed derived
+        // from `config.seed` so they start from different — but
+        // reproducible — weights. A factory closing over a single fixed
+        // seed would otherwise hand every policy identical weights. BR
+        // policies use counter `agent`; AP policies use
+        // `num_agents + agent`, keeping the two banks disjoint.
+        let init_seed = |idx: u64| config.seed.wrapping_add(0x9E37_79B9_u64.wrapping_mul(idx));
+        let br_policies: Vec<P> =
+            (0..num_agents).map(|i| policy_factory(&device, init_seed(i as u64))).collect();
         let br_optimizers: Vec<BurnOptimizer<B, P, O>> =
             (0..num_agents).map(|_| optimizer_factory()).collect();
         let br_trainer = JointMultiAgentTrainer::<B, P, O>::new(
@@ -451,8 +460,9 @@ where
             joint_config.clone(),
             device.clone(),
         )?;
-        let avg_policies: Vec<Option<P>> =
-            (0..num_agents).map(|_| Some(policy_factory(&device))).collect();
+        let avg_policies: Vec<Option<P>> = (0..num_agents)
+            .map(|i| Some(policy_factory(&device, init_seed((num_agents + i) as u64))))
+            .collect();
         let avg_optimizers: Vec<BurnOptimizer<B, P, O>> =
             (0..num_agents).map(|_| optimizer_factory()).collect();
         let reservoirs = (0..num_agents)
@@ -1117,7 +1127,7 @@ mod tests {
         MlpBurnPolicy<B>,
         burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MlpBurnPolicy<B>, B>,
         MatchingPennies,
-        impl Fn(&NdArrayDevice) -> MlpBurnPolicy<B>,
+        impl Fn(&NdArrayDevice, u64) -> MlpBurnPolicy<B>,
         impl Fn() -> BurnOptimizer<
             B,
             MlpBurnPolicy<B>,
@@ -1147,11 +1157,12 @@ mod tests {
             nfsp_config,
             joint_config,
             device,
-            |dev: &NdArrayDevice| {
-                MlpBurnPolicy::<B>::new(
+            |dev: &NdArrayDevice, seed: u64| {
+                MlpBurnPolicy::<B>::new_seeded(
                     MatchingPennies::OBS_DIM,
                     MatchingPennies::ACTION_DIM,
                     16,
+                    seed,
                     dev,
                 )
             },
@@ -1182,7 +1193,7 @@ mod tests {
             nfsp_config,
             joint_config,
             device,
-            |dev: &NdArrayDevice| MlpBurnPolicy::<B>::new(1, 2, 8, dev),
+            |dev: &NdArrayDevice, seed: u64| MlpBurnPolicy::<B>::new_seeded(1, 2, 8, seed, dev),
             || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
             MatchingPennies::new,
         );
@@ -1210,11 +1221,12 @@ mod tests {
             nfsp_config,
             joint_config,
             device,
-            |dev: &NdArrayDevice| {
-                MlpBurnPolicy::<B>::new(
+            |dev: &NdArrayDevice, seed: u64| {
+                MlpBurnPolicy::<B>::new_seeded(
                     NPlayerMatchingPennies::OBS_DIM,
                     NPlayerMatchingPennies::ACTION_DIM,
                     8,
+                    seed,
                     dev,
                 )
             },
@@ -1244,7 +1256,7 @@ mod tests {
             nfsp_config,
             joint_config,
             device,
-            |dev: &NdArrayDevice| MlpBurnPolicy::<B>::new(1, 2, 8, dev),
+            |dev: &NdArrayDevice, seed: u64| MlpBurnPolicy::<B>::new_seeded(1, 2, 8, seed, dev),
             || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
             MatchingPennies::new,
         );
@@ -1325,11 +1337,12 @@ mod tests {
             nfsp_config,
             joint_config,
             device,
-            |dev: &NdArrayDevice| {
-                MlpBurnPolicy::<B>::new(
+            |dev: &NdArrayDevice, seed: u64| {
+                MlpBurnPolicy::<B>::new_seeded(
                     MatchingPennies::OBS_DIM,
                     MatchingPennies::ACTION_DIM,
                     16,
+                    seed,
                     dev,
                 )
             },
@@ -1376,7 +1389,7 @@ mod tests {
             nfsp_config,
             joint_config,
             device,
-            |dev: &NdArrayDevice| MlpBurnPolicy::<B>::new(1, 2, 8, dev),
+            |dev: &NdArrayDevice, seed: u64| MlpBurnPolicy::<B>::new_seeded(1, 2, 8, seed, dev),
             || BurnOptimizer::new(AdamConfig::new().init(), 5e-2),
             MatchingPennies::new,
         )

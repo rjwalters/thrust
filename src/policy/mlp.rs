@@ -22,7 +22,7 @@
 
 use burn::{
     module::{Module, Param},
-    nn::{Initializer, Linear, LinearConfig},
+    nn::{Initializer, Linear},
     tensor::{Int, Tensor, activation, backend::Backend},
 };
 
@@ -61,6 +61,73 @@ pub(crate) fn linear_with_init<B: Backend>(
     Linear::<B> { weight, bias: Some(Param::from_tensor(bias_tensor)) }
 }
 
+/// Build a [`Linear`] layer from a pre-computed, row-major
+/// `[d_input, d_output]` weight buffer (and a zeroed bias).
+///
+/// This is the seeded counterpart to [`linear_with_init`]: instead of
+/// routing through Burn's unseedable [`Initializer`], the caller
+/// supplies weights produced by
+/// [`crate::policy::seeded_init`] (driven by `StdRng::seed_from_u64`),
+/// so two constructions with the same seed yield bit-identical layers.
+/// Used by the `with_config` seeded path on both
+/// [`MlpBurnPolicy`] and
+/// [`crate::policy::multi_discrete_mlp::MultiDiscreteMlpBurnPolicy`]
+/// (issue #135).
+pub(crate) fn linear_from_weights<B: Backend>(
+    d_input: usize,
+    d_output: usize,
+    weights: &[f32],
+    device: &B::Device,
+) -> Linear<B> {
+    debug_assert_eq!(weights.len(), d_input * d_output, "weight buffer must be d_input * d_output");
+    let weight_tensor = Tensor::<B, 2>::from_data(
+        burn::tensor::TensorData::new(weights.to_vec(), [d_input, d_output]),
+        device,
+    );
+    let bias_tensor = Tensor::<B, 1>::zeros([d_output], device);
+    Linear::<B> {
+        weight: Param::from_tensor(weight_tensor),
+        bias: Some(Param::from_tensor(bias_tensor)),
+    }
+}
+
+/// Produce a seeded weight buffer for one layer, honoring the
+/// orthogonal-vs-Kaiming recipe shared by both MLP policies.
+///
+/// Mirrors the gains used on the unseeded [`Initializer`] path:
+/// orthogonal trunk `sqrt(2)` / head `0.01`; Kaiming `1/sqrt(3)` for
+/// both heads and trunk (Burn's `KaimingUniform` default gain).
+pub(crate) fn seeded_layer_weights(
+    seed: u64,
+    d_in: usize,
+    d_out: usize,
+    use_orthogonal: bool,
+    is_head: bool,
+) -> Vec<f32> {
+    use crate::policy::seeded_init::{seeded_kaiming_uniform, seeded_orthogonal};
+    if use_orthogonal {
+        let gain = if is_head { 0.01_f32 } else { 2.0_f32.sqrt() };
+        seeded_orthogonal(seed, d_in, d_out, gain)
+    } else {
+        let gain = 1.0_f32 / 3.0_f32.sqrt();
+        seeded_kaiming_uniform(seed, d_in, d_out, gain)
+    }
+}
+
+/// Derive a distinct per-layer seed from a base construction seed.
+///
+/// Each `Linear` layer in a policy must draw from a *different* RNG
+/// stream — otherwise every layer of the same shape would get identical
+/// weights. We mix the base seed with a small per-layer index using a
+/// SplitMix64-style finalizer so the streams are decorrelated yet fully
+/// determined by `(base_seed, layer_index)`.
+pub(crate) fn derive_layer_seed(base_seed: u64, layer_index: u64) -> u64 {
+    let mut z = base_seed.wrapping_add(layer_index.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
 /// Activation function applied between hidden layers in
 /// [`MlpBurnPolicy`] (and its multi-discrete sibling).
 ///
@@ -94,6 +161,19 @@ pub struct MlpBurnConfig {
     pub use_orthogonal_init: bool,
     /// Activation applied between hidden layers.
     pub activation: BurnActivation,
+    /// Optional construction seed. When `Some`, `with_config` builds
+    /// every layer from a deterministic, [`StdRng`](rand::rngs::StdRng)-
+    /// driven weight buffer (see [`crate::policy::seeded_init`]) instead
+    /// of Burn's unseedable [`Initializer`], so two constructions with
+    /// the same seed produce **bit-identical** policies. When `None`
+    /// (the default) the behavior is unchanged — Burn's `Initializer`
+    /// path is used verbatim. This is the load-bearing knob behind the
+    /// end-to-end `PsroConfig::seed` / `NfspConfig::seed` reproducibility
+    /// contract (issue #135). The seeded path covers **both** the
+    /// orthogonal and Kaiming-uniform recipes (selected by
+    /// `use_orthogonal_init`), so seeding works regardless of which init
+    /// the caller picks.
+    pub seed: Option<u64>,
 }
 
 impl Default for MlpBurnConfig {
@@ -103,7 +183,20 @@ impl Default for MlpBurnConfig {
             hidden_dim: 64,
             use_orthogonal_init: true,
             activation: BurnActivation::Tanh,
+            seed: None,
         }
+    }
+}
+
+impl MlpBurnConfig {
+    /// Set the construction seed, enabling the deterministic
+    /// host-side init path in `with_config`.
+    ///
+    /// Builder-style; returns `self` for chaining:
+    /// `MlpBurnConfig::default().with_seed(42)`.
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
     }
 }
 
@@ -153,6 +246,33 @@ impl<B: Backend> MlpBurnPolicy<B> {
             // PPO orthogonal recipe.
             use_orthogonal_init: false,
             activation: BurnActivation::Tanh,
+            seed: None,
+        };
+        Self::with_config(obs_dim, action_dim, config, device)
+    }
+
+    /// Seeded variant of [`new`](Self::new): same 2-layer Kaiming
+    /// architecture, but constructed deterministically from `seed` so
+    /// two calls with the same seed produce bit-identical weights.
+    ///
+    /// Convenience wrapper for callers (and the PSRO/NFSP policy
+    /// factories) that want reproducible policies without assembling a
+    /// full [`MlpBurnConfig`]. Equivalent to
+    /// `with_config(.., MlpBurnConfig { use_orthogonal_init: false,
+    /// .., seed: Some(seed) }, ..)`.
+    pub fn new_seeded(
+        obs_dim: usize,
+        action_dim: usize,
+        hidden_dim: usize,
+        seed: u64,
+        device: &B::Device,
+    ) -> Self {
+        let config = MlpBurnConfig {
+            num_layers: 2,
+            hidden_dim,
+            use_orthogonal_init: false,
+            activation: BurnActivation::Tanh,
+            seed: Some(seed),
         };
         Self::with_config(obs_dim, action_dim, config, device)
     }
@@ -167,6 +287,31 @@ impl<B: Backend> MlpBurnPolicy<B> {
         config: MlpBurnConfig,
         device: &B::Device,
     ) -> Self {
+        // Seeded path (issue #135): when `config.seed` is set, build
+        // every layer from a deterministic `StdRng`-driven weight buffer
+        // so two constructions with the same seed are bit-identical.
+        // Each layer gets a distinct derived seed so layers of the same
+        // shape don't collide. Layer indices are fixed:
+        // 0=fc1, 1=fc2, 2=fc3, 3=policy_head, 4=value_head.
+        if let Some(seed) = config.seed {
+            let orth = config.use_orthogonal_init;
+            let mk = |idx: u64, d_in: usize, d_out: usize, is_head: bool| {
+                let s = derive_layer_seed(seed, idx);
+                let w = seeded_layer_weights(s, d_in, d_out, orth, is_head);
+                linear_from_weights::<B>(d_in, d_out, &w, device)
+            };
+            let fc1 = mk(0, obs_dim, config.hidden_dim, false);
+            let fc2 = mk(1, config.hidden_dim, config.hidden_dim, false);
+            let fc3 = if config.num_layers >= 3 {
+                Some(mk(2, config.hidden_dim, config.hidden_dim, false))
+            } else {
+                None
+            };
+            let policy_head = mk(3, config.hidden_dim, action_dim, true);
+            let value_head = mk(4, config.hidden_dim, 1, true);
+            return Self { fc1, fc2, fc3, policy_head, value_head, activation: config.activation };
+        }
+
         let hidden_init = if config.use_orthogonal_init {
             Initializer::Orthogonal { gain: 2.0_f64.sqrt() }
         } else {
@@ -507,5 +652,86 @@ mod tests {
         // of accidental match) — but at least the call must succeed
         // and produce a 2-row response.
         assert_eq!(a_c.len(), 2, "two-row batch returns two actions");
+    }
+
+    /// Flatten every weight + bias of a policy into one comparison
+    /// vector (test helper for the bit-identity assertions below).
+    fn collect_params(p: &MlpBurnPolicy<B>) -> Vec<f32> {
+        let mut out = Vec::new();
+        let mut push = |lin: &Linear<B>| {
+            out.extend::<Vec<f32>>(lin.weight.val().into_data().to_vec().unwrap());
+            if let Some(b) = &lin.bias {
+                out.extend::<Vec<f32>>(b.val().into_data().to_vec().unwrap());
+            }
+        };
+        push(&p.fc1);
+        push(&p.fc2);
+        if let Some(fc3) = &p.fc3 {
+            push(fc3);
+        }
+        push(&p.policy_head);
+        push(&p.value_head);
+        out
+    }
+
+    /// Two seeded constructions (orthogonal init) with the same seed
+    /// produce bit-identical weights; a different seed differs. This is
+    /// the core guarantee behind end-to-end `PsroConfig::seed` /
+    /// `NfspConfig::seed` reproducibility (issue #135).
+    #[test]
+    fn test_with_seed_is_bit_identical_orthogonal() {
+        let device = Default::default();
+        let cfg = MlpBurnConfig { num_layers: 3, ..Default::default() }.with_seed(42);
+        let a = MlpBurnPolicy::<B>::with_config(4, 2, cfg, &device);
+        let b = MlpBurnPolicy::<B>::with_config(4, 2, cfg, &device);
+        assert_eq!(collect_params(&a), collect_params(&b), "same seed must be bit-identical");
+
+        let cfg_diff = MlpBurnConfig { num_layers: 3, ..Default::default() }.with_seed(43);
+        let c = MlpBurnPolicy::<B>::with_config(4, 2, cfg_diff, &device);
+        assert_ne!(collect_params(&a), collect_params(&c), "different seed must differ");
+    }
+
+    /// Same as above but for the Kaiming-uniform path (`new_seeded`
+    /// uses `use_orthogonal_init = false`). This is the path the
+    /// matching-pennies tests exercise (issue #135, Correction 2).
+    #[test]
+    fn test_new_seeded_is_bit_identical_kaiming() {
+        let device = Default::default();
+        let a = MlpBurnPolicy::<B>::new_seeded(4, 2, 16, 7, &device);
+        let b = MlpBurnPolicy::<B>::new_seeded(4, 2, 16, 7, &device);
+        assert_eq!(collect_params(&a), collect_params(&b), "same seed must be bit-identical");
+        let c = MlpBurnPolicy::<B>::new_seeded(4, 2, 16, 8, &device);
+        assert_ne!(collect_params(&a), collect_params(&c), "different seed must differ");
+    }
+
+    /// Distinct layers within one policy must not share weights even
+    /// when they have the same shape (the per-layer seed derivation
+    /// must decorrelate them). fc2 and fc3 are both
+    /// `[hidden, hidden]`; assert they differ.
+    #[test]
+    fn test_seeded_layers_are_decorrelated() {
+        let device = Default::default();
+        let cfg = MlpBurnConfig { num_layers: 3, hidden_dim: 8, ..Default::default() }.with_seed(1);
+        let p = MlpBurnPolicy::<B>::with_config(8, 2, cfg, &device);
+        let fc2: Vec<f32> = p.fc2.weight.val().into_data().to_vec().unwrap();
+        let fc3: Vec<f32> = p.fc3.as_ref().unwrap().weight.val().into_data().to_vec().unwrap();
+        assert_ne!(fc2, fc3, "same-shape trunk layers must get distinct seeded weights");
+    }
+
+    /// The unseeded path (`seed: None`) is unchanged — two
+    /// constructions are *not* required to match (Burn's unseeded
+    /// init), and the seeded path must not accidentally fire. We just
+    /// assert construction succeeds and produces the right shapes, i.e.
+    /// the `None` branch is still wired to Burn's `Initializer`.
+    #[test]
+    fn test_unseeded_path_still_constructs() {
+        let device = Default::default();
+        let cfg = MlpBurnConfig::default(); // seed: None
+        assert!(cfg.seed.is_none());
+        let p = MlpBurnPolicy::<B>::with_config(4, 2, cfg, &device);
+        let obs = Tensor::<B, 2>::zeros([3, 4], &device);
+        let (logits, values) = p.forward(obs);
+        assert_eq!(logits.dims(), [3, 2]);
+        assert_eq!(values.dims(), [3]);
     }
 }

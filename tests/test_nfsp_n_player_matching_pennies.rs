@@ -51,7 +51,7 @@ fn build_n_player_trainer(
     MlpBurnPolicy<B>,
     burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MlpBurnPolicy<B>, B>,
     NPlayerMatchingPennies,
-    impl Fn(&NdArrayDevice) -> MlpBurnPolicy<B>,
+    impl Fn(&NdArrayDevice, u64) -> MlpBurnPolicy<B>,
     impl Fn() -> BurnOptimizer<
         B,
         MlpBurnPolicy<B>,
@@ -81,11 +81,12 @@ fn build_n_player_trainer(
         nfsp_config,
         joint_config,
         device,
-        |dev: &NdArrayDevice| {
-            MlpBurnPolicy::<B>::new(
+        |dev: &NdArrayDevice, seed: u64| {
+            MlpBurnPolicy::<B>::new_seeded(
                 NPlayerMatchingPennies::OBS_DIM,
                 NPlayerMatchingPennies::ACTION_DIM,
                 16,
+                seed,
                 dev,
             )
         },

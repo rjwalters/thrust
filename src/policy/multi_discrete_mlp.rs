@@ -11,7 +11,10 @@ use burn::{
     tensor::{Int, Tensor, activation, backend::Backend},
 };
 
-use super::mlp::{BurnActivation, MlpBurnConfig, linear_with_init};
+use super::mlp::{
+    BurnActivation, MlpBurnConfig, derive_layer_seed, linear_from_weights, linear_with_init,
+    seeded_layer_weights,
+};
 
 /// Multi-discrete MLP actor-critic policy on Burn.
 ///
@@ -44,6 +47,22 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
         Self::with_config(obs_dim, action_dims, config, device)
     }
 
+    /// Seeded variant of [`new`](Self::new): same default architecture
+    /// (orthogonal init), but constructed deterministically from `seed`
+    /// so two calls with the same seed produce bit-identical weights
+    /// (issue #135). Convenience wrapper for PSRO/NFSP policy factories
+    /// over the multi-discrete policy.
+    pub fn new_seeded(
+        obs_dim: usize,
+        action_dims: Vec<usize>,
+        hidden_dim: usize,
+        seed: u64,
+        device: &B::Device,
+    ) -> Self {
+        let config = MlpBurnConfig { hidden_dim, ..Default::default() }.with_seed(seed);
+        Self::with_config(obs_dim, action_dims, config, device)
+    }
+
     /// Build a fresh multi-discrete policy with custom configuration.
     pub fn with_config(
         obs_dim: usize,
@@ -54,6 +73,34 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
         assert!(!action_dims.is_empty(), "action_dims must have at least one element");
         for (i, d) in action_dims.iter().enumerate() {
             assert!(*d >= 1, "action_dims[{i}] = {d}; must be >= 1");
+        }
+
+        // Seeded path (issue #135): mirror the single-action policy's
+        // deterministic construction per-head. Layer indices are fixed:
+        // 0=fc1, 1=fc2, 2=fc3, 3=value_head, then 100+i for action
+        // head i (offset keeps action-head streams distinct from the
+        // trunk/value streams regardless of head count).
+        if let Some(seed) = config.seed {
+            let orth = config.use_orthogonal_init;
+            let mk = |idx: u64, d_in: usize, d_out: usize, is_head: bool| {
+                let s = derive_layer_seed(seed, idx);
+                let w = seeded_layer_weights(s, d_in, d_out, orth, is_head);
+                linear_from_weights::<B>(d_in, d_out, &w, device)
+            };
+            let fc1 = mk(0, obs_dim, config.hidden_dim, false);
+            let fc2 = mk(1, config.hidden_dim, config.hidden_dim, false);
+            let fc3 = if config.num_layers >= 3 {
+                Some(mk(2, config.hidden_dim, config.hidden_dim, false))
+            } else {
+                None
+            };
+            let value_head = mk(3, config.hidden_dim, 1, true);
+            let action_heads: Vec<Linear<B>> = action_dims
+                .iter()
+                .enumerate()
+                .map(|(i, &dim)| mk(100 + i as u64, config.hidden_dim, dim, true))
+                .collect();
+            return Self { fc1, fc2, fc3, action_heads, value_head, activation: config.activation };
         }
 
         let hidden_init = if config.use_orthogonal_init {
@@ -381,5 +428,52 @@ mod tests {
         assert_eq!(a_a, a_b, "same-seed actions must be bit-identical");
         assert_eq!(lp_a, lp_b, "same-seed log_probs must be bit-identical");
         assert_eq!(v_a, v_b, "same-seed values must be bit-identical");
+    }
+
+    /// Flatten every weight + bias (trunk, value head, all action
+    /// heads) into one comparison vector.
+    fn collect_params(p: &MultiDiscreteMlpBurnPolicy<B>) -> Vec<f32> {
+        let mut out = Vec::new();
+        let mut push = |lin: &Linear<B>| {
+            out.extend::<Vec<f32>>(lin.weight.val().into_data().to_vec().unwrap());
+            if let Some(b) = &lin.bias {
+                out.extend::<Vec<f32>>(b.val().into_data().to_vec().unwrap());
+            }
+        };
+        push(&p.fc1);
+        push(&p.fc2);
+        if let Some(fc3) = &p.fc3 {
+            push(fc3);
+        }
+        push(&p.value_head);
+        for h in &p.action_heads {
+            push(h);
+        }
+        out
+    }
+
+    /// Two `new_seeded` constructions with the same seed produce
+    /// bit-identical weights across the trunk and every per-head; a
+    /// different seed differs (issue #135).
+    #[test]
+    fn test_new_seeded_is_bit_identical() {
+        let device = Default::default();
+        let a = MultiDiscreteMlpBurnPolicy::<B>::new_seeded(4, vec![3, 4, 2], 16, 42, &device);
+        let b = MultiDiscreteMlpBurnPolicy::<B>::new_seeded(4, vec![3, 4, 2], 16, 42, &device);
+        assert_eq!(collect_params(&a), collect_params(&b), "same seed must be bit-identical");
+        let c = MultiDiscreteMlpBurnPolicy::<B>::new_seeded(4, vec![3, 4, 2], 16, 43, &device);
+        assert_ne!(collect_params(&a), collect_params(&c), "different seed must differ");
+    }
+
+    /// Action heads of the same cardinality must get distinct seeded
+    /// weights (per-head seed derivation decorrelates them).
+    #[test]
+    fn test_seeded_action_heads_are_distinct() {
+        let device = Default::default();
+        // Two heads of identical cardinality (2) — must differ.
+        let p = MultiDiscreteMlpBurnPolicy::<B>::new_seeded(4, vec![2, 2], 8, 5, &device);
+        let h0: Vec<f32> = p.action_heads[0].weight.val().into_data().to_vec().unwrap();
+        let h1: Vec<f32> = p.action_heads[1].weight.val().into_data().to_vec().unwrap();
+        assert_ne!(h0, h1, "same-cardinality action heads must get distinct seeded weights");
     }
 }

@@ -104,6 +104,7 @@ fn main() -> Result<()> {
         hidden_dim: HIDDEN_DIM,
         use_orthogonal_init: true,
         activation: BurnActivation::ReLU,
+        seed: None,
     };
     let policy = MlpBurnPolicy::<Backend>::with_config(obs_dim, action_dim, policy_config, &device);
 
