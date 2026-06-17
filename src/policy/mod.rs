@@ -25,6 +25,10 @@ pub mod multi_discrete_mlp;
 #[cfg(feature = "training")]
 pub mod seeded_init;
 
+/// SAC stochastic Gaussian actor (tanh-squashed) for continuous control.
+#[cfg(feature = "training")]
+pub mod sac_actor;
+
 /// DQN Q-network with the same MLP backbone as `MlpPolicy` but with a
 /// single Q-head.
 #[cfg(feature = "training")]
