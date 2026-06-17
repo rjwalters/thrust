@@ -8,10 +8,11 @@
 //! `burn-core-0.21.0/src/module/initializer.rs`) take **no seed
 //! parameter** — they route through a backend-internal
 //! `Tensor::random` that draws from an unseeded, thread-local
-//! generator. That makes [`Initializer::Orthogonal`] and
-//! [`Initializer::KaimingUniform`] the last non-reproducible site in
-//! the PSRO/NFSP determinism contract advertised by
-//! [`crate::multi_agent::psro::PsroConfig::seed`] /
+//! generator. That makes
+//! [`Initializer::Orthogonal`](burn::nn::Initializer::Orthogonal) and
+//! [`Initializer::KaimingUniform`](burn::nn::Initializer::KaimingUniform) the
+//! last non-reproducible site in the PSRO/NFSP determinism contract advertised
+//! by [`crate::multi_agent::psro::PsroConfig::seed`] /
 //! [`crate::multi_agent::nfsp::NfspConfig::seed`] (every rollout/
 //! training RNG site was plumbed through `StdRng::seed_from_u64` in
 //! PRs #113/#116/#122/#123/#125; this closes the policy-init gap —
@@ -19,12 +20,13 @@
 //!
 //! # What it does
 //!
-//! Provides pure-Rust, [`StdRng`]-driven ports of the two init recipes
-//! the MLP policies use:
+//! Provides pure-Rust, [`StdRng`](rand::rngs::StdRng)-driven ports of the two
+//! init recipes the MLP policies use:
 //!
-//! - [`seeded_orthogonal`] — orthogonal init via Householder QR of a Gaussian
-//!   matrix, scaled by `gain` (PPO recipe: `sqrt(2)` trunk, `0.01` heads).
-//! - [`seeded_kaiming_uniform`] — Kaiming-uniform init matching Burn's
+//! - [`seeded_orthogonal`](crate::policy::seeded_init::seeded_orthogonal) —
+//!   orthogonal init via Householder QR of a Gaussian matrix, scaled by `gain`
+//!   (PPO recipe: `sqrt(2)` trunk, `0.01` heads).
+//! - [`seeded_kaiming_uniform`](crate::policy::seeded_init::seeded_kaiming_uniform) — Kaiming-uniform init matching Burn's
 //!   `KaimingUniform { gain, fan_out_only: false }` formula (`bound = gain *
 //!   sqrt(3 / fan_in)`), the path [`crate::policy::mlp::MlpBurnPolicy::new`]
 //!   exercises.
