@@ -128,7 +128,7 @@ fn build_trainer(
     MultiDiscreteMlpBurnPolicy<B>,
     burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MultiDiscreteMlpBurnPolicy<B>, B>,
     ToyMultiDiscreteEnv,
-    impl Fn(&NdArrayDevice) -> MultiDiscreteMlpBurnPolicy<B>,
+    impl Fn(&NdArrayDevice, u64) -> MultiDiscreteMlpBurnPolicy<B>,
     impl Fn() -> BurnOptimizer<
         B,
         MultiDiscreteMlpBurnPolicy<B>,
@@ -158,8 +158,14 @@ fn build_trainer(
         nfsp_config,
         joint_config,
         device,
-        |dev: &NdArrayDevice| {
-            MultiDiscreteMlpBurnPolicy::<B>::new(OBS_DIM, ACTION_DIMS.to_vec(), HIDDEN_DIM, dev)
+        |dev: &NdArrayDevice, seed: u64| {
+            MultiDiscreteMlpBurnPolicy::<B>::new_seeded(
+                OBS_DIM,
+                ACTION_DIMS.to_vec(),
+                HIDDEN_DIM,
+                seed,
+                dev,
+            )
         },
         || {
             let inner = AdamConfig::new().init();

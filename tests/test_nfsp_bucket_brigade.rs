@@ -284,8 +284,8 @@ fn test_nfsp_beats_ppo_on_canonical_no_convergence_cell() {
         ..Default::default()
     };
 
-    let policy_factory = move |dev: &NdArrayDevice| {
-        MultiDiscreteMlpBurnPolicy::<B>::new(obs_dim, action_dims(), HIDDEN_DIM, dev)
+    let policy_factory = move |dev: &NdArrayDevice, seed: u64| {
+        MultiDiscreteMlpBurnPolicy::<B>::new_seeded(obs_dim, action_dims(), HIDDEN_DIM, seed, dev)
     };
     let optimizer_factory = || {
         let inner = AdamConfig::new().init();

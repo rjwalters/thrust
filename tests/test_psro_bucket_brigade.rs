@@ -388,8 +388,14 @@ fn test_psro_beats_ppo_on_no_convergence_cells() {
         let beta_c = *beta;
         let kappa_c = *kappa;
         let cost_c = *cost;
-        let policy_factory = move |dev: &NdArrayDevice| {
-            MultiDiscreteMlpBurnPolicy::<B>::new(obs_dim, vec![NUM_HOUSES, 2, 2], HIDDEN_DIM, dev)
+        let policy_factory = move |dev: &NdArrayDevice, seed: u64| {
+            MultiDiscreteMlpBurnPolicy::<B>::new_seeded(
+                obs_dim,
+                vec![NUM_HOUSES, 2, 2],
+                HIDDEN_DIM,
+                seed,
+                dev,
+            )
         };
         let optimizer_factory = || {
             let inner = AdamConfig::new().init();

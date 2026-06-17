@@ -18,6 +18,13 @@ pub mod mlp;
 #[cfg(feature = "training")]
 pub mod multi_discrete_mlp;
 
+/// Seeded, host-side weight-initialization helpers that make policy
+/// construction bit-exact under `PsroConfig::seed` / `NfspConfig::seed`
+/// (issue #135). Burn 0.21's `Initializer` has no seed parameter, so we
+/// pre-compute the trunk + head weights from an `StdRng` instead.
+#[cfg(feature = "training")]
+pub mod seeded_init;
+
 /// DQN Q-network with the same MLP backbone as `MlpPolicy` but with a
 /// single Q-head.
 #[cfg(feature = "training")]
