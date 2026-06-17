@@ -10,6 +10,7 @@ pub mod optimizer;
 
 pub mod dqn;
 pub mod ppo;
+pub mod sac;
 
 pub use dqn::{DQNConfig, DQNStepStatsBurn, DQNTrainerBurn};
 pub use optimizer::{BackendOptimizer, BurnOptimizer};
@@ -17,3 +18,4 @@ pub use ppo::{
     AggregatedStats, PPOConfig, PPOTrainerBurn, TrainingStats, compute_entropy_loss,
     compute_policy_loss, compute_value_loss, generate_minibatch_indices,
 };
+pub use sac::{SacConfig, SacStepStats, SacTrainer};
