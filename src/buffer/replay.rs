@@ -8,8 +8,12 @@
 //! 2. [`PrioritizedReplayBuffer`] — a sum-tree backed buffer with proportional
 //!    priority sampling and importance-sampling correction weights (Schaul et
 //!    al. 2015).
+//! 3. [`ContinuousReplayBuffer`] — the continuous-action sibling of
+//!    [`ReplayBuffer`], storing `Vec<f32>` actions of width `action_dim` for
+//!    off-policy continuous control (SAC / TD3 / DDPG). Same ring/FIFO design
+//!    and flat-`Vec` storage; sample it via [`sample_continuous`].
 //!
-//! Both store transitions as flat CPU-side `Vec`s rather than Burn tensors
+//! All store transitions as flat CPU-side `Vec`s rather than Burn tensors
 //! so the buffer stays WASM-compatible if it ever needs to be exposed
 //! there. Tensor materialization happens via `to_burn_tensors` on the
 //! batch types when the trainer pushes them to a device.
@@ -52,11 +56,17 @@
 //! }
 //! ```
 
+pub use continuous_sampling::{
+    ContinuousReplayBatch, ContinuousReplayBurnTensors, sample as sample_continuous,
+};
+pub use continuous_storage::ContinuousReplayBuffer;
 pub use prioritized::{PrioritizedBatch, PrioritizedBurnTensors, PrioritizedReplayBuffer};
 pub use sampling::{ReplayBatch, ReplayBurnTensors, sample};
 pub use storage::ReplayBuffer;
 pub use sum_tree::SumTree;
 
+mod continuous_sampling;
+mod continuous_storage;
 mod prioritized;
 mod sampling;
 mod storage;
