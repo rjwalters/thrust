@@ -1112,14 +1112,13 @@ impl PayoffCache {
 /// The trainer doesn't know how to construct a Burn module of the
 /// caller's chosen architecture, so we take closures:
 ///
-/// - `policy_factory: Fn(&B::Device, u64) -> P` — fresh policy. The
-///   `u64` is a **per-construction seed** the trainer derives from
-///   `PsroConfig::seed` via a monotonic init-counter. A
-///   reproducibility-aware factory threads it into
-///   `MlpBurnPolicy::new_seeded` / `MlpBurnConfig::with_seed` so that
-///   every agent's initial policy and every per-iteration best-response
-///   gets *distinct but deterministic* weights (issue #135). Factories
-///   that don't care about reproducibility may ignore the argument.
+/// - `policy_factory: Fn(&B::Device, u64) -> P` — fresh policy. The `u64` is a
+///   **per-construction seed** the trainer derives from `PsroConfig::seed` via
+///   a monotonic init-counter. A reproducibility-aware factory threads it into
+///   `MlpBurnPolicy::new_seeded` / `MlpBurnConfig::with_seed` so that every
+///   agent's initial policy and every per-iteration best-response gets
+///   *distinct but deterministic* weights (issue #135). Factories that don't
+///   care about reproducibility may ignore the argument.
 /// - `optimizer_factory: Fn() -> BurnOptimizer<B, P, O>` — fresh optimizer.
 /// - `env_factory: Fn() -> E` — fresh env instance.
 ///

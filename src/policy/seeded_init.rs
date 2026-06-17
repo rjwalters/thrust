@@ -22,13 +22,12 @@
 //! Provides pure-Rust, [`StdRng`]-driven ports of the two init recipes
 //! the MLP policies use:
 //!
-//! - [`seeded_orthogonal`] — orthogonal init via Householder QR of a
-//!   Gaussian matrix, scaled by `gain` (PPO recipe: `sqrt(2)` trunk,
-//!   `0.01` heads).
+//! - [`seeded_orthogonal`] — orthogonal init via Householder QR of a Gaussian
+//!   matrix, scaled by `gain` (PPO recipe: `sqrt(2)` trunk, `0.01` heads).
 //! - [`seeded_kaiming_uniform`] — Kaiming-uniform init matching Burn's
-//!   `KaimingUniform { gain, fan_out_only: false }` formula
-//!   (`bound = gain * sqrt(3 / fan_in)`), the path
-//!   [`crate::policy::mlp::MlpBurnPolicy::new`] exercises.
+//!   `KaimingUniform { gain, fan_out_only: false }` formula (`bound = gain *
+//!   sqrt(3 / fan_in)`), the path [`crate::policy::mlp::MlpBurnPolicy::new`]
+//!   exercises.
 //!
 //! # Bit-parity caveat
 //!
@@ -51,7 +50,11 @@ fn standard_normal(rng: &mut StdRng) -> f32 {
     // Guard u1 away from 0 so ln() is finite.
     let u1: f32 = {
         let x: f32 = rng.random();
-        if x <= f32::MIN_POSITIVE { f32::MIN_POSITIVE } else { x }
+        if x <= f32::MIN_POSITIVE {
+            f32::MIN_POSITIVE
+        } else {
+            x
+        }
     };
     let u2: f32 = rng.random();
     let r = (-2.0_f32 * u1.ln()).sqrt();
@@ -66,9 +69,9 @@ fn standard_normal(rng: &mut StdRng) -> f32 {
 ///
 /// Algorithm (a faithful, seeded port of the orthogonal recipe):
 /// 1. Sample an `[rows, cols]` matrix `A` from `N(0, 1)`.
-/// 2. Compute a (thin) QR factorization `A = Q R` via Householder
-///    reflections, with the sign convention `sign(diag(R)) >= 0` so the
-///    result is deterministic.
+/// 2. Compute a (thin) QR factorization `A = Q R` via Householder reflections,
+///    with the sign convention `sign(diag(R)) >= 0` so the result is
+///    deterministic.
 /// 3. Return `gain * Q`.
 ///
 /// `Q` has orthonormal columns when `rows >= cols`, and orthonormal
@@ -81,8 +84,11 @@ pub fn seeded_orthogonal(seed: u64, d_in: usize, d_out: usize, gain: f32) -> Vec
     // QR is cleanest when the matrix is tall (rows >= cols). If
     // d_in < d_out we QR the transpose ([d_out, d_in]) and transpose
     // the resulting Q back.
-    let (rows, cols, transposed) =
-        if d_in >= d_out { (d_in, d_out, false) } else { (d_out, d_in, true) };
+    let (rows, cols, transposed) = if d_in >= d_out {
+        (d_in, d_out, false)
+    } else {
+        (d_out, d_in, true)
+    };
 
     // Sample the tall Gaussian matrix in column-major working storage:
     // a[c] is the c-th column (length `rows`). Column-major makes the

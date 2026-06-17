@@ -100,14 +100,7 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
                 .enumerate()
                 .map(|(i, &dim)| mk(100 + i as u64, config.hidden_dim, dim, true))
                 .collect();
-            return Self {
-                fc1,
-                fc2,
-                fc3,
-                action_heads,
-                value_head,
-                activation: config.activation,
-            };
+            return Self { fc1, fc2, fc3, action_heads, value_head, activation: config.activation };
         }
 
         let hidden_init = if config.use_orthogonal_init {
