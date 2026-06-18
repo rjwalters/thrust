@@ -1,5 +1,15 @@
 # Thrust Architecture Proposal
 
+> **⚠️ Historical document (superseded in part).** This is the original
+> pre-v0.1.0 architecture proposal. Its high-level ideas (Rayon-parallel
+> environments, zero-copy buffers, lock-free channels) still hold, but the
+> **tensor-backend decision changed**: Thrust does **not** use `tch-rs` /
+> libtorch / CUDA kernels as proposed here — it runs entirely on the pure-Rust
+> [Burn](https://burn.dev) framework (NdArray default; `wgpu` / `cuda` opt-in).
+> See [`BURN_BACKENDS.md`](BURN_BACKENDS.md) for the migration rationale and
+> [`../ROADMAP.md`](../ROADMAP.md) for current status. Read the `tch`/PyTorch
+> references below as historical context only.
+
 ## Executive Summary
 
 Thrust aims to be the **fastest reinforcement learning library in Rust**, targeting 3-6x speedup over Python implementations like PufferLib through:

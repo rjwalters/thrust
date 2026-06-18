@@ -2,6 +2,14 @@
 
 This document catalogs key papers, systems, and insights that should inform Thrust's architecture design.
 
+> **⚠️ Backend note.** The "Architecture Recommendations" sections below predate
+> the Burn migration and recommend `tch-rs` / PyTorch bindings for the GPU path.
+> Thrust has since moved entirely to the pure-Rust [Burn](https://burn.dev)
+> framework (NdArray default; `wgpu` / `cuda` opt-in) — see
+> [`BURN_BACKENDS.md`](BURN_BACKENDS.md). The *algorithm* and *systems* insights
+> here remain valuable; read the `tch`/PyTorch backend recommendations as
+> historical context.
+
 ---
 
 ## Table of Contents

@@ -54,9 +54,12 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 - [x] Snake environment (multi-agent support)
 - [x] SimpleBandit environment (contextual bandits)
 
-### Phase 2: Multi-Agent & WASM (In Progress - 60%)
+### Phase 2: Multi-Agent & WASM (In Progress)
 - [x] Multi-agent training infrastructure (`multi_agent::PolicyLearner` is experimental — API may change)
 - [x] Population-based training design
+- [x] PSRO with α-rank meta-solver (N-player)
+- [x] NFSP (approximate, N-player, multi-discrete)
+- [x] Bucket Brigade cooperative-MARL integration
 - [x] Pure Rust inference (Burn backend or hand-rolled WASM path)
 - [x] Universal inference system (JSON model format)
 - [ ] Complete WASM bindings
@@ -64,6 +67,10 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 - [ ] Multi-agent communication channels
 
 ### Phase 3: Features
+- [x] SAC for continuous control (twin critics, auto-entropy, Polyak targets)
+- [x] Continuous-control environments (PendulumSwingUp, ContinuousLqr)
+- [ ] A2C (Advantage Actor-Critic)
+- [ ] Behavioral cloning / imitation learning
 - [ ] LSTM policy support
 - [ ] Prioritized experience replay
 - [ ] V-trace importance sampling
@@ -90,7 +97,8 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 │  │ Buffers      │  │ (Pure Rust)          │    │
 │  └──────────────┘  └──────────────────────┘    │
 │  ┌─────────────────────────────────────────┐   │
-│  │   PPO / DQN trainers (Burn autodiff)    │   │
+│  │ PPO / DQN / SAC + PSRO / NFSP trainers   │   │
+│  │            (Burn autodiff)               │   │
 │  └─────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────┘
 ```
@@ -98,16 +106,23 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 ## 🎮 Environments
 
 - **CartPole** ✅ - Classic control benchmark (solved: 301.6 avg reward)
+- **PendulumSwingUp** ✅ - Continuous-control benchmark (Gym `Pendulum-v1`; SAC's reference env)
+- **ContinuousLqr** ✅ - Linear-quadratic regulator (continuous-action trait existence proof)
 - **Snake** ✅ - Multi-agent grid world with torus wrapping
+- **Pong** ✅ - Two-player competitive self-play
 - **SimpleBandit** ✅ - Contextual multi-armed bandits
-- **Bucket Brigade** 🚧 - Cooperative multi-agent coordination
+- **Matching Pennies** ✅ - Two-player and N-player zero-sum (PSRO/NFSP smoke tests)
+- **Bucket Brigade** ✅ - Cooperative multi-agent coordination (Slepian-Wolf MARL adapter)
 - More coming soon!
 
 ## 🧠 Algorithms
 
-- **PPO** ✅ - Proximal Policy Optimization (on-policy, actor-critic)
+- **PPO** ✅ - Proximal Policy Optimization (on-policy, actor-critic; single- and multi-agent)
 - **DQN** ✅ - Deep Q-Network (off-policy, replay buffer + target network), including **Double-DQN** target computation and optional **Polyak (soft) target updates**
-- More coming soon (prioritized replay, dueling heads — see [ROADMAP.md](ROADMAP.md))
+- **SAC** ✅ - Soft Actor-Critic (off-policy, continuous control; twin critics, automatic entropy tuning, Polyak target updates)
+- **PSRO** ✅ - Policy-Space Response Oracles with **α-rank** meta-solver (multi-agent, N-player)
+- **NFSP** ✅ - Neural Fictitious Self-Play (approximate, N-player, multi-discrete actions)
+- More coming soon (A2C, behavioral cloning — see [ROADMAP.md](ROADMAP.md))
 
 ## 📚 Inspiration
 
