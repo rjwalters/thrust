@@ -10,7 +10,7 @@ Process an explicit list of issues — **or an explicit/NL-described set of open
 
 **Arguments**: $ARGUMENTS
 
-`$ARGUMENTS` is interpreted in one of **three modes**, chosen by inspection of the non-flag tokens and the presence of a `--prs` flag. Before classifying, **strip all recognized flag tokens** (`--builders-per-wave N`, `--dry-run`, `--prs`) from the token list — flags are honoured in their respective modes.
+`$ARGUMENTS` is interpreted in one of **three modes**, chosen by inspection of the non-flag tokens and the presence of a `--prs` flag. Before classifying, **strip all recognized flag tokens** (`--builders-per-wave N`, `--dry-run`, `--prs`, `--no-daemon`) from the token list — flags are honoured in their respective modes.
 
 **Mode selection summary** (full rules below):
 
@@ -96,7 +96,7 @@ Combine flags as needed. Always pass `--state open` explicitly (Mode C operates 
 
 **Mode C validation rules:**
 
-- `--prs` strips from the token list before classification, exactly like `--builders-per-wave N` and `--dry-run`.
+- `--prs` strips from the token list before classification, exactly like `--builders-per-wave N`, `--dry-run`, and `--no-daemon`.
 - Numeric tokens (after stripping `--prs`): same `^#?\d+$` regex as Mode A. Strip leading `#`, parse as positive integers, deduplicate (preserve first-seen order). Reject any token that fails to parse, with a clear error citing the offending token, and EXIT.
 - NL tokens (after stripping `--prs`): translate to one or more `gh pr list` invocations per the guide above. Run the command, deduplicate the resulting PR list, and **display the candidate set to the user before spawning any agents**. Await confirmation. If the user declines, EXIT cleanly.
 - **`--builders-per-wave N` is silently ignored in Mode C**. The Builder phase is skipped wholesale for PR-set mode; per-PR Judge is sequential within a wave (matching the existing issue-side wave policy). If the user passes both `--prs` and `--builders-per-wave N`, print a one-line note that the flag has no effect in Mode C and proceed without it. Mode C waves are size-1 by default — one PR settles fully (Judge → optional Doctor → optional Merge) before the next PR is touched. This may relax in a future issue; today it preserves the load-bearing #3289 sequencing rule.
@@ -114,19 +114,20 @@ Combine flags as needed. Always pass `--state open` explicitly (Mode C operates 
 - **`--builders-per-wave N`** — dispatch up to `N` builders in parallel per wave. Default `1` (fully sequential, matching the MVP behaviour). `N` must be an integer `>= 1`. Honoured in Modes A and B (issue-side); **silently ignored in Mode C** (PR-set mode has no Builder phase — see Mode C validation rules above). Flag tokens are stripped before classification.
 - **`--dry-run`** — print the planned candidate list (with wave grouping) and EXIT without performing any mutation. Recognized as a bare flag token (no value). May appear anywhere in `$ARGUMENTS`. Default is off. Honoured in **all three** modes — stripped before classification along with other flags. Mode C dry-run prints the PR-set plan (per-PR routing) instead of the issue-set plan.
 - **`--prs`** — switch into Mode C (PR-set mode). Recognized as a bare flag token (no value). May appear anywhere in `$ARGUMENTS`. Default is off. When present, non-flag tokens are interpreted as **PR numbers** (numeric tokens) or as a **PR-list description** (NL tokens). When absent, an NL trigger phrase listed in the Mode C section can still select Mode C. See "Mode C" above for full semantics.
+- **`--no-daemon`** — force in-process subagent dispatch even when the daemon is running with a multi-account token pool. Recognized as a bare flag token (no value). May appear anywhere in `$ARGUMENTS`. Default is off. When present, **Stage -1 (Backend detection) skips the `PROBE_DAEMON` step entirely** and the skill always falls through to the existing Mode A/B/C subagent dispatch path. Honoured in **all three** modes — stripped before classification along with other flags. Use this when you want the predictable single-process behaviour even though daemon dispatch is available (e.g., debugging, demoing the subagent path, or running under a token configuration that you don't want shared with daemon-spawned sweeps). See "Stage -1: Backend detection" below.
 
 ### Validation rules
 
-- Recognize `--dry-run`, `--prs`, and `--builders-per-wave N` as flag tokens anywhere in `$ARGUMENTS`, strip them from the candidate list before validation, and store them as flags / parameters (`DRY_RUN=true|false`, `PRS_MODE=true|false`, `BUILDERS_PER_WAVE=N`).
+- Recognize `--dry-run`, `--prs`, `--no-daemon`, and `--builders-per-wave N` as flag tokens anywhere in `$ARGUMENTS`, strip them from the candidate list before validation, and store them as flags / parameters (`DRY_RUN=true|false`, `PRS_MODE=true|false`, `NO_DAEMON=true|false`, `BUILDERS_PER_WAVE=N`).
 - At least one candidate (numeric token or NL description) must be supplied. If `$ARGUMENTS` (after stripping flag tokens) is empty, display:
   ```
-  Usage: /sweep <issue-number> [<issue-number> ...] [--builders-per-wave N] [--dry-run]
-         /sweep <natural-language description>     [--builders-per-wave N] [--dry-run]
+  Usage: /sweep <issue-number> [<issue-number> ...] [--builders-per-wave N] [--dry-run] [--no-daemon]
+         /sweep <natural-language description>     [--builders-per-wave N] [--dry-run] [--no-daemon]
          /sweep --prs <pr-number> [<pr-number> ...] [--dry-run]
          /sweep --prs <natural-language PR description> [--dry-run]
          /sweep <natural-language PR description>       [--dry-run]   # PR NL triggers select Mode C
 
-  See #3298 and #3384 for the full design.
+  See #3298, #3384, and #3454 for the full design.
   ```
   and EXIT.
 - **Mode-selection precedence** (apply in order):
@@ -154,6 +155,10 @@ Combine flags as needed. Always pass `--state open` explicitly (Mode C operates 
   - Reject `N < 1` (including `0` and negative values) with: `Error: --builders-per-wave must be >= 1 (got: <N>)` and EXIT. Do **not** silently default to `1`.
   - If `N > 3`, print a warning and continue: `WARNING: --builders-per-wave=<N> is unvalidated. N<=3 is recommended; N>=4 may exhaust context or hit rate limits. Proceeding at your own risk.`
   - If `N` exceeds the number of candidates at any wave, **silently clamp** to the candidate count for that wave. Do not warn, do not stall.
+- **`--no-daemon` validation:**
+  - Bare flag, no value. If a value is supplied (`--no-daemon=true`, `--no-daemon something`), treat the `=value` form as an error and EXIT (`Error: --no-daemon takes no value`). The standalone-token form is the only accepted spelling.
+  - Honoured in all three modes (A, B, C). The flag is a no-op in Mode C (Mode C is always subagent-side — see Stage -1's `DECIDE` precedence below) but is accepted without error so operators can pass it unconditionally from scripts.
+  - When `NO_DAEMON=true`, Stage -1 short-circuits to the subagent path **before** issuing the daemon Ping probe. No daemon-state files are read or written, and no `mcp__loom__*` calls are made for backend probing.
 
 **Wave-size guidance:**
 
@@ -179,6 +184,7 @@ The cap is **soft** — there is no hard upper bound. The warning is the only gu
 /sweep 1 2 --builders-per-wave 5              # Silently clamps to 2 (candidate count)
 /sweep 123 456 789 --dry-run                  # Print plan and EXIT without mutating
 /sweep 1 2 3 4 5 --dry-run --builders-per-wave 2  # Preview with wave grouping
+/sweep 123 456 --no-daemon                    # Force in-process subagent dispatch even when daemon is up (#3454)
 ```
 
 ### Mode B — Natural-language description
@@ -281,9 +287,247 @@ Concretely, when this skill says "dispatch builders for the wave", that means: i
 
 If a future maintainer is tempted to "simplify" by replacing the wave-loop with parallel `/shepherd` calls: don't. Read #3289, then read this section again.
 
+### Model selection for subagent dispatch (issue #3477, Phase 1)
+
+Every role subagent dispatched by this skill (`loom-curator`, `loom-builder`, `loom-judge`, `loom-doctor`) gets its model resolved through a fixed precedence chain. Resolve once per role at dispatch time and pass the result via the Task tool's `model` parameter:
+
+1. **Explicit dispatch param** — a model explicitly requested by the operator for this sweep (e.g., an operator instruction in the invoking prompt).
+2. **Workspace override** — `.loom/config.json` → the `terminals[]` entry whose `roleConfig.roleFile` matches the role (e.g., `builder.md`) → its optional `roleConfig.model` field.
+3. **Role default** — `.loom/roles/<role>.json` → `suggestedModel` (ships as an alias: `sonnet`, `opus`, or `haiku`).
+4. **Session default** — if none of the above resolves (or resolves to an empty string), **omit the `model` parameter entirely** so the subagent inherits the parent session's model. Never pass `model: ""`.
+
+Rules:
+
+- Aliases (`sonnet`/`opus`/`haiku`) and pinned IDs (`claude-sonnet-4-6`) are both valid at every tier. Shipped role JSONs use aliases; workspaces that need determinism pin exact IDs in `roleConfig.model`.
+- A retry of the same role for the same issue (e.g., Builder re-dispatch after a mid-builder kill, or a second Judge pass after Doctor) **reuses the same resolved model**. Transport-level retries inside `claude-wrapper.sh` (token exhaustion, crashes, 5xx) likewise always keep the model — they are not quality signals and never trigger escalation.
+- **Exception — Judge-rejection escalation (issue #3481, Phase 2)**: a Doctor dispatched *because of* a `loom:changes-requested` transition escalates one rung up the capability ladder. See "Model escalation on Judge rejection" below.
+- Resolution failures are soft: if a role JSON is missing or unparseable, fall through to the next tier silently. Model selection must never block a sweep.
+- The daemon path has its own equivalent: `mcp__loom__dispatch_sweep` accepts an optional `model` param which the daemon forwards to the spawned child as `claude --model <value>`. When delegating to the daemon (Stage -1 `use_daemon`), you MAY pass a resolved model; when omitted, the child inherits the spawning environment's default — the daemon emits no `--model` flag at all.
+
+### Model escalation on Judge rejection (issue #3481, Phase 2)
+
+When the Judge requests changes and this orchestrator dispatches a Doctor for the rejected PR — the Doctor phase at issue-side step 6 and at Mode C step C1b — the Doctor's model escalates one rung up a capability ladder instead of resolving through tiers 3/4 of the precedence chain.
+
+**The ladder** lives in `.loom/config.json` under `sweep.escalation`:
+
+```json
+{
+  "sweep": {
+    "escalation": ["sonnet", "opus"]
+  }
+}
+```
+
+Three states:
+
+| `sweep.escalation` value | Behavior |
+|--------------------------|----------|
+| Key absent | Default ladder `["sonnet", "opus"]` applies |
+| `[]` or `false` | Escalation disabled — pure Phase 1 behavior; the rejection-triggered Doctor resolves through the unmodified precedence chain |
+| Non-empty array | As configured; rungs accept aliases or pinned IDs, same as every other tier |
+
+Rules:
+
+1. **Trigger**: escalation fires **only** on a real Judge rejection — the `loom:changes-requested` transition that routes into the Doctor phase. First attempts of every role (Curator, Builder, the first Judge pass) always use the unmodified Phase 1 precedence chain. `ladder[0]` never overrides anything — it documents what attempt 1 is *expected* to run on, it is not applied.
+2. **Precedence interaction**: the rejection-triggered Doctor resolves to `ladder[1]`, but only when its model would otherwise come from tier 3 (role `suggestedModel`) or tier 4 (session default). Tier 1 (explicit dispatch param) and tier 2 (`roleConfig.model` workspace pin) still win — pins are pins; operators who pinned want determinism.
+3. **Cap unchanged**: the single Doctor→Judge cycle cap still applies — escalation composes with the cap, it does not extend it. A second rejection blocks the PR; it does not dispatch a second Doctor. A configured third rung (e.g., a frontier model) is therefore **dormant** today: consume the ladder generically as `ladder[min(attempt - 1, len - 1)]` so a future cap raise activates deeper rungs without changes here, but only `ladder[1]` is reachable in v1.
+4. **Mode C inherits the rule** — C1b runs the identical Doctor phase under the identical cap, so the identical `ladder[1]` rule applies. No separate policy.
+5. **Resume safety**: the escalation decision derives from the `loom:changes-requested` label/phase, **not** from a stored counter — so a sweep killed between Doctor dispatch and the follow-up Judge resumes correctly: re-entry routes back through the Doctor/Judge phases per the checkpoint skip rules, and any re-dispatched rejection-triggered Doctor escalates again. The optional `attempt` field on the sweep checkpoint (`sweep-checkpoint.sh write N doctor-done ... --attempt 2`) is forward-compat bookkeeping for a future cap raise; readers treat an absent field as attempt 1.
+6. **The orchestrator decides, never the wrapper**: escalation is resolved here at Doctor-dispatch time. `claude-wrapper.sh` / `spawn-claude.sh` retries always keep their model (transport failures are not quality signals), and no wrapper change is involved.
+
 ### Other constraints
 
 - **Do NOT write to `.loom/daemon-state.json`.** That file is owned by the standalone daemon. `/sweep` runs independently and must not race with the daemon on shepherd-slot bookkeeping. Reading `daemon-state.json` for situational awareness is fine; writing is not.
+
+## Stage -1: Backend detection (Phase D of #3449)
+
+Before **any** other stage — including the dry-run gate and all wave lifecycles — decide whether to **delegate dispatch to the in-process loom-daemon** or **fall through to the existing in-process subagent dispatch**. This stage is prose for the LLM running this skill; it does not run a separate binary. Implementation is small, side-effect-free probes followed by a single routing decision.
+
+This stage exists because Phase A of epic #3449 (#3452) shipped `mcp__loom__dispatch_sweep`, an MCP tool that queues a sweep on the daemon's spawn queue and returns immediately. When the daemon is reachable **and** a multi-account token pool is configured, dispatching to the daemon means each sweep runs in its own detached process with its own rotated OAuth token — load is balanced across accounts, and the orchestrator session exits sub-2-second after dispatch. When either precondition is missing, today's Mode A/B/C subagent path is the right choice — it works on a solo token, it doesn't depend on a running daemon, and it is the verified behaviour for the v0.9.x line.
+
+The contract is **strict AND between two preconditions**, with an explicit Mode C short-circuit and an explicit `--no-daemon` opt-out. There is **no implicit auto-start** of the daemon if the pool exists but the daemon is down; there is **no implicit "use daemon if reachable even without a pool"** branch. Either probe failing → subagent fallthrough.
+
+### Decision tree (the contract)
+
+```text
+PROBE_MODE:
+  If --prs flag present OR any PR-side NL trigger detected → Mode C (subagent always)
+
+PROBE_DAEMON:
+  Ping ~/.loom/loom-daemon.sock with 500ms timeout. Pong → reachable.
+
+PROBE_POOL:
+  Count *.token files in .loom/tokens/ OR ACCOUNT_KEY_* lines in .env. Pool exists if count >= 2.
+
+DECIDE:
+  if Mode C: use_subagent()
+  elif --no-daemon: use_subagent()
+  elif PROBE_DAEMON AND PROBE_POOL: use_daemon()
+  else: use_subagent()
+```
+
+The precedence is deliberate:
+
+1. **Mode C → subagent** (always, regardless of daemon/pool state). The daemon's dispatch surface is **issue-keyed only** in v0.10.0 (`mcp__loom__dispatch_sweep --kind '{"Issue":N}'`); PR-set dispatch is an explicit non-goal of the parent epic and is not on the v0.10.0 roadmap. PR-set sweeps therefore route to the existing in-process subagent path, which already supports Mode C end-to-end.
+2. **`--no-daemon` → subagent** (operator opt-out, after Mode C but before any probes). When this flag is present, do not even attempt the `PROBE_DAEMON` Ping — saves a 500ms ceiling and produces predictable behaviour for debug/demo/scripted runs.
+3. **`PROBE_DAEMON ∧ PROBE_POOL → daemon`** (the only way to land on the daemon path). **Strict AND**: both probes must succeed. Either missing → fallthrough.
+4. **Else → subagent** (the universal fallthrough, equivalent to v0.9.x behaviour).
+
+### The three probes
+
+#### PROBE_MODE — mode classification (already done)
+
+Mode classification happens in the existing "Mode-selection precedence" rules above (Arguments → Validation rules). By the time Stage -1 runs, the skill knows whether it is in Mode A, B, or C. **If the mode is C, the decision is already made — go straight to the subagent path** (the "Stage 0: Dry-run gate" section below, then "PR-set Wave Lifecycle"). Do not run the daemon or pool probes for Mode C.
+
+#### PROBE_DAEMON — is the loom-daemon reachable?
+
+The daemon listens on `~/.loom/loom-daemon.sock` (a Unix-domain socket). A reachability probe is a cheap `mcp__loom__list_sweeps` invocation — the daemon answers with the current sweep list (which may be an empty array if the daemon is up but no sweeps are queued). Either a successful response **or** an empty-list response is a "pong" — the daemon is reachable.
+
+Use a **500ms timeout** on this probe. The MCP layer accepts a timeout parameter; do not raise it. The 500ms ceiling covers two failure modes simultaneously:
+
+- **No daemon running.** The Unix socket file does not exist, or the connection refused immediately. The MCP call returns an error in well under 500ms; treat as `PROBE_DAEMON = false`.
+- **Stale socket.** The socket file exists but no process is listening (e.g., the daemon crashed without cleanup). The connection hangs until the OS times out — that's the 500ms guard. Timeout → treat as `PROBE_DAEMON = false`. **Do not retry, do not auto-clean the stale socket, do not auto-start the daemon.** Those behaviours belong in operator tools, not in this skill.
+
+A successful response (any well-formed `EventStream`/sweep-list payload, including the empty case) → `PROBE_DAEMON = true`.
+
+```text
+PROBE_DAEMON pseudocode (LLM-directed):
+
+  if NO_DAEMON:
+      PROBE_DAEMON = false   # short-circuit; do not even issue the call
+  else:
+      try:
+          response = mcp__loom__list_sweeps(timeout_ms=500)
+          PROBE_DAEMON = true        # any structured response = reachable
+      except timeout, connection_error, no_such_tool:
+          PROBE_DAEMON = false
+```
+
+The `no_such_tool` case covers older Loom installs without Phase A's MCP additions — treat as "daemon not reachable" and fall through. Do not try to detect the daemon by other means (no `ps` parsing, no PID file reads — the socket probe is the authoritative reachability test).
+
+#### PROBE_POOL — does a multi-account token pool exist?
+
+A pool exists if **either** of these is true (logical OR, both checked):
+
+1. **Materialized pool**: `.loom/tokens/*.token` contains **two or more** files. The bootstrap step (`loom-tokens bootstrap`) writes one `*.token` file per `ACCOUNT_KEY_*` triple in `.env`; a count `>= 2` means at least two distinct accounts are available for rotation.
+2. **Configured pool**: `.env` at the workspace root contains **two or more** `ACCOUNT_KEY_*` lines. This catches the case where the operator has configured multiple accounts but hasn't yet run `loom-tokens bootstrap` — the daemon's spawn-time selector can still pick a token, and the pool will be materialized on demand.
+
+Both checks are cheap, local, and side-effect-free:
+
+```bash
+TOKEN_FILE_COUNT=$(ls .loom/tokens/*.token 2>/dev/null | wc -l | tr -d ' ')
+ENV_KEY_COUNT=$(grep -c '^ACCOUNT_KEY_' .env 2>/dev/null || echo 0)
+if (( TOKEN_FILE_COUNT >= 2 )) || (( ENV_KEY_COUNT >= 2 )); then
+  PROBE_POOL=true
+else
+  PROBE_POOL=false
+fi
+```
+
+A single-token configuration (`TOKEN_FILE_COUNT == 1` and `ENV_KEY_COUNT <= 1`) is **not** a pool — the daemon dispatch path needs at least two accounts to make rotation meaningful, and a single-token operator gets no benefit from delegating to the daemon. Fall through to the subagent path in that case.
+
+> **Why >= 2 and not >= 1?** A pool of one is not a pool — it is a single token, and rotation requires alternatives. The daemon's dispatch advantage (per-sweep token selection, weekly-quota recovery) only materializes once two-or-more accounts are configured. Single-token operators see no degradation in the subagent path; this preserves the existing solo-token experience.
+
+### The daemon-dispatch path (when `DECIDE = use_daemon`)
+
+When `DECIDE` lands on `use_daemon`, the skill **dispatches each candidate issue** to the daemon and **exits sub-2-second**. There is no in-session orchestration after dispatch — operators monitor with `mcp__loom__list_sweeps` (Phase A) or the richer Phase C tools once they land.
+
+For each candidate issue `N` in the candidate set:
+
+```text
+mcp__loom__dispatch_sweep(kind={"Issue": N})
+```
+
+The daemon enqueues the sweep, returns a sweep ID, and the skill logs the dispatch (`Dispatched sweep <sweep-id> for issue #N to daemon`). The daemon's spawn-time logic picks an OAuth token from the rotation pool, detaches a `claude -p "/loom:sweep N"` child, and runs the sweep in that child's session — completely independent of this orchestrator session.
+
+**The skill does NOT subscribe to events.** Phase B's pub/sub bus is consumed by long-running monitors and the spawn loop, not by the skill itself. The skill is fire-and-forget: dispatch, log, exit.
+
+**Mode C is excluded.** Mode C uses `--prs` (or NL triggers); the daemon does not handle PR-set dispatch in v0.10.0. If `PROBE_MODE` returned Mode C, this branch is unreachable — the `DECIDE` precedence sends Mode C to subagent before this branch is evaluated.
+
+**Exit immediately after the last `mcp__loom__dispatch_sweep` returns.** Do **not** run the dry-run gate, the issue-side wave lifecycle, or any of the "0." through "8." stages below — those are subagent-path-only and would double-orchestrate. The skill's job in the daemon path is dispatch and exit; the daemon-side child runs the full Curator → Builder → Judge → Doctor → Merge lifecycle in its own session.
+
+**Dry-run interaction:** when `--dry-run` is passed alongside the daemon path, **the dry-run gate (Stage 0) still runs and the skill EXITs without dispatching**. Dry-run is a read-only contract independent of backend choice; it prints the candidate plan and exits without mutation regardless of whether the daemon would have been used. This is intentional — operators previewing a sweep should see the plan before any backend dispatches.
+
+### The subagent fallthrough (when `DECIDE = use_subagent`)
+
+Otherwise — `DECIDE` is `use_subagent` for **any** of the reasons above (Mode C, `--no-daemon`, daemon unreachable, no pool, or any probe error) — **continue to "0. Dry-run gate" below and run the existing Mode A/B/C lifecycle in-process exactly as today**. This is the v0.9.x behaviour, unchanged. The skill prose from "0. Dry-run gate" onward is the canonical subagent path.
+
+No behaviour change for solo-token operators: their `PROBE_POOL` returns `false`, the `DECIDE` lands on `use_subagent`, and the rest of the skill runs as it always has.
+
+### Smoke tests (documented expectations)
+
+These are the AC #3 and AC #4 contracts, written for the operator.
+
+**Daemon-on + multi-account pool (AC #3):**
+
+```bash
+# Preconditions:
+#   - loom-daemon is running (`pgrep loom-daemon` matches, ~/.loom/loom-daemon.sock exists)
+#   - At least 2 accounts in .env / .loom/tokens/
+
+/loom:sweep 123 456
+
+# Expected:
+#   1. Stage -1 runs: PROBE_MODE=A, PROBE_DAEMON=true, PROBE_POOL=true.
+#   2. DECIDE = use_daemon.
+#   3. Skill calls mcp__loom__dispatch_sweep for issue 123 → logs sweep ID.
+#   4. Skill calls mcp__loom__dispatch_sweep for issue 456 → logs sweep ID.
+#   5. Skill exits in < 2 seconds.
+#   6. Daemon runs the two sweeps independently in detached processes.
+#   7. Operator monitors progress via mcp__loom__list_sweeps or Phase C tools.
+```
+
+**Daemon-off OR single-token (AC #4):**
+
+```bash
+# Preconditions:
+#   - Either loom-daemon is not running, OR .env has < 2 ACCOUNT_KEY_* lines.
+
+/loom:sweep 123 456
+
+# Expected:
+#   1. Stage -1 runs: PROBE_MODE=A, PROBE_DAEMON or PROBE_POOL is false.
+#   2. DECIDE = use_subagent.
+#   3. Skill continues to "0. Dry-run gate" → "Wave Lifecycle" → ... exactly as today.
+#   4. Issue 123 runs Curator→Builder→Judge→Doctor→Merge in-session.
+#   5. Issue 456 runs the same way in the next wave (default --builders-per-wave=1).
+#   6. Skill exits when both issues have settled (potentially many minutes).
+```
+
+**`--no-daemon` opt-out:**
+
+```bash
+# Preconditions: any. The flag forces the subagent path.
+
+/loom:sweep 123 456 --no-daemon
+
+# Expected:
+#   1. Stage -1 sees NO_DAEMON=true → PROBE_DAEMON skipped entirely.
+#   2. DECIDE = use_subagent.
+#   3. Skill continues to "0. Dry-run gate" → "Wave Lifecycle" → ... exactly as today.
+```
+
+**Mode C (PR-set):**
+
+```bash
+# Preconditions: any. Mode C short-circuits Stage -1's daemon path.
+
+/loom:sweep --prs 200 201
+
+# Expected:
+#   1. PROBE_MODE = C (because --prs is present).
+#   2. DECIDE = use_subagent (regardless of daemon/pool state).
+#   3. Skill continues to "0. Dry-run gate" → "PR-set Wave Lifecycle" → ... exactly as today.
+```
+
+### What Stage -1 does NOT do
+
+- **Does not auto-start the daemon** if the pool exists but the daemon is unreachable. Auto-start is operator policy, not skill policy.
+- **Does not write `~/.loom/loom-daemon.sock` cleanup** for stale sockets. Stale-socket cleanup belongs to the daemon's own startup logic and to operator tools.
+- **Does not subscribe to the Phase B event bus.** Subscription is consumed by long-running monitors and the spawn loop, not by this skill. Phase D is dispatch-only.
+- **Does not retry probe failures.** Either probe returns within 500ms (or its natural latency) and is treated as authoritative; no retry, no backoff.
+- **Does not mutate any forge state** during the probes. `mcp__loom__list_sweeps` and the local pool checks are read-only. Even in the daemon path, mutation happens inside the daemon-side child sweep, not in this orchestrator session.
+- **Does not log to `.loom/daemon-state.json` or any daemon-owned state file.** Read-only access is fine for situational awareness; writes are forbidden (same constraint as the existing "Daemon Coexistence" section).
 
 ## 0. Dry-run gate (if `--dry-run`)
 
@@ -446,6 +690,7 @@ Apply exactly one of the three branches below, based on the PR's current label:
 - Expected exit states:
   - **Approve** → PR labeled `loom:pr` by Judge. If a closing-issue checkpoint is in scope, write `judge-done`:
     ```bash
+    # Append --model <resolved> when you passed a model param to the judge subagent (#3482).
     ./.loom/scripts/sweep-checkpoint.sh write N judge-done --task-id "sweep-$$" --pr-number P
     ```
     Continue to **C2 (Merge)** for this PR.
@@ -457,10 +702,11 @@ If the PR entered the wave already labeled `loom:changes-requested` (e.g., from 
 
 - Load and follow the instructions in `.claude/commands/loom/doctor.md` for this PR.
 - Dispatch `loom-doctor` as a **single subagent Task** from this orchestrator session. Do **NOT** invoke `/shepherd` or `/doctor` slash-commands as subagents — see "CRITICAL: One level deep".
+- **Model escalation (#3481)**: Mode C inherits the issue-side rule unchanged — this Doctor is dispatched because of a `loom:changes-requested` rejection, so resolve its model per "Model escalation on Judge rejection" in the Execution Model: pass `ladder[1]` from `sweep.escalation` (default ladder: `opus`) via the Task tool's `model` parameter, **unless** a tier-1/tier-2 pin applies (pins win) or escalation is disabled (`[]`/`false`).
 - Doctor addresses the judge feedback, commits the fixes, pushes, and re-labels the PR `loom:review-requested`.
-- If a closing-issue checkpoint is in scope, write `doctor-done` **before** the follow-up Judge:
+- If a closing-issue checkpoint is in scope, write `doctor-done` (with the attempt counter and the model the Doctor actually ran on — escalated or pinned, #3482) **before** the follow-up Judge:
   ```bash
-  ./.loom/scripts/sweep-checkpoint.sh write N doctor-done --task-id "sweep-$$" --pr-number P
+  ./.loom/scripts/sweep-checkpoint.sh write N doctor-done --task-id "sweep-$$" --pr-number P --attempt 2 --model <doctor-model>
   ```
 - Re-dispatch `loom-judge` for the PR (now `loom:review-requested` again).
 - Expected exit states:
@@ -526,8 +772,9 @@ See `.claude/commands/loom/shepherd-lifecycle.md` for the canonical phase-by-pha
 Sweep persists a per-issue phase checkpoint after each successful lifecycle phase so that a killed-and-relaunched sweep can pick up where it left off. The checkpoint is the **only** state required to resume — worktree preservation is handled by `worktree.sh`'s idempotency (re-running for an existing worktree is a no-op).
 
 - **Checkpoint file**: `.loom/sweep-checkpoint/issue-<N>.json` (gitignored).
-- **Schema**: `{phase: "<curator-done|builder-done|judge-done|doctor-done|merge-done>", task_id, timestamp, pr_number?}`.
-- **Helper**: `.loom/scripts/sweep-checkpoint.sh {write|read|phase|exists|delete|list}` — wraps the read/write/delete operations with atomic writes (`.tmp` + `mv`) and validates the phase enum.
+- **Schema**: `{phase: "<curator-done|builder-done|judge-done|doctor-done|merge-done>", task_id, timestamp, pr_number?, attempt?, model?}`.
+- **Helper**: `.loom/scripts/sweep-checkpoint.sh {write|read|phase|attempt|model|exists|delete|list}` — wraps the read/write/delete operations with atomic writes (`.tmp` + `mv`) and validates the phase enum.
+- **Model field (#3482, Phase 3a observability)**: when you resolved a model for the phase's subagent (i.e., you actually passed a `model` param to the Task tool — any tier above session default), record it on the checkpoint write with `--model <resolved>` (alias or pinned ID). When the subagent inherited the session default (tier 4, no `model` param passed), omit `--model` entirely. This is observability-only bookkeeping for per-model metrics — readers MUST tolerate checkpoints without the field (legacy checkpoints predate it; absence means default/unknown), and the field never feeds back into model selection or escalation decisions.
 - **Write timing**: After the *successful completion* of each lifecycle phase below. Never write a checkpoint speculatively before the phase finishes — a kill mid-phase must resume at the start of that phase.
 - **Read timing**: At the start of per-issue pre-flight (step 1) for every issue in the candidate list, before any worktree or label mutation for that issue.
 - **Delete timing**: On `merge-done` (step 7) and on stale-checkpoint detection (step 1).
@@ -602,6 +849,7 @@ For each surviving issue `N` in the wave:
 - If the issue already has `loom:curated` or `loom:issue`, skip the curator skill invocation but still write the checkpoint below (so future sweep runs can skip the redundant label probe).
 - **On successful completion** (curator ran, or curator-skip-because-already-curated), write the checkpoint:
   ```bash
+  # Append --model <resolved> when you passed a model param to the curator subagent (#3482).
   ./.loom/scripts/sweep-checkpoint.sh write N curator-done --task-id "sweep-$$"
   ```
 
@@ -643,6 +891,7 @@ Each builder is responsible for:
 
 **On successful PR creation**, write the `builder-done` checkpoint for that issue (record the PR number):
 ```bash
+# Append --model <resolved> when you passed a model param to the builder subagent (#3482).
 ./.loom/scripts/sweep-checkpoint.sh write N builder-done --task-id "sweep-$$" --pr-number <PR>
 ```
 
@@ -675,6 +924,7 @@ for pr in wave_prs:
 - Expected exit states per PR:
   - **Approve** → PR labeled `loom:pr`. Write the `judge-done` checkpoint for this issue (carrying the PR number), then continue to Merge (step 7) for this PR, then advance to the next PR in the wave.
     ```bash
+    # Append --model <resolved> when you passed a model param to the judge subagent (#3482).
     ./.loom/scripts/sweep-checkpoint.sh write N judge-done --task-id "sweep-$$" --pr-number <PR>
     ```
   - **Request changes** → PR labeled `loom:changes-requested`. Continue to Doctor (step 6) **inline for this PR**, then re-judge, then merge or block. Do **not** write a `judge-done` checkpoint here — the PR is not yet approved, and a resume after a kill should re-enter Doctor, not skip Judge.
@@ -686,10 +936,11 @@ for pr in wave_prs:
 If Judge requests changes on PR `#X` mid-wave, run a **single inline Doctor→Judge cycle** for `#X` before moving to the next PR's Judge:
 
 - Load and follow the instructions in `.claude/commands/loom/doctor.md` for PR `#X`.
+- **Model escalation (#3481)**: this Doctor is dispatched because of a Judge rejection, so resolve its model per "Model escalation on Judge rejection" in the Execution Model — pass `ladder[1]` from `sweep.escalation` (default ladder: `opus`) via the Task tool's `model` parameter, **unless** a tier-1/tier-2 pin applies (pins win) or escalation is disabled (`[]`/`false`).
 - Doctor addresses the judge's feedback, commits the fixes, and pushes.
-- **On successful Doctor completion**, write the `doctor-done` checkpoint for the issue (carrying the PR number) **before** re-invoking Judge:
+- **On successful Doctor completion**, write the `doctor-done` checkpoint for the issue (carrying the PR number, the attempt counter, and the model the Doctor actually ran on — escalated or pinned, #3482) **before** re-invoking Judge:
   ```bash
-  ./.loom/scripts/sweep-checkpoint.sh write N doctor-done --task-id "sweep-$$" --pr-number <PR>
+  ./.loom/scripts/sweep-checkpoint.sh write N doctor-done --task-id "sweep-$$" --pr-number <PR> --attempt 2 --model <doctor-model>
   ```
   This way, if sweep is killed between Doctor and the follow-up Judge, the resume run will see `doctor-done` and re-enter at the Judge phase (step 5), not redo the Doctor work.
 - On completion, re-label the PR from `loom:changes-requested` back to `loom:review-requested` and **re-run the Judge phase** (step 5) for this PR.
@@ -770,6 +1021,8 @@ If the user is running an overnight sweep, they should heed the warning before w
 
 ## Daemon Coexistence
 
+> **Stop-gap note (epic #3449, stop-gap #3451)**: `./.loom/scripts/daemon.sh` does not currently exist on `origin/main` (deleted in #3432, rebuild in flight under epic #3449). The PID-file check below is a defensive coexistence guard that fires only if a daemon process is already running — it's a no-op in v0.9.x. The `./.loom/scripts/daemon.sh stop` instruction in the warning text is forward-looking until the rebuild lands.
+
 `/sweep` does not require the daemon and does not interact with `.loom/daemon-state.json` for writes. If the daemon is running, `/sweep` and the daemon may both try to claim the same `loom:issue` label.
 
 **Coexistence behavior:** before the first wave, check whether the daemon is running. If it is, warn the user once at the start of the sweep:
@@ -812,6 +1065,7 @@ The full `/sweep` design in #3298 includes many features that are intentionally 
 | `loom:operator-only` enforcement | **Implemented (#3360)** | Pre-flight skips issues with `loom:operator-only` (human action required: credentials, infra, hardware). Champion `--merge` mode also refuses to auto-promote them. |
 | Checkpoint/resume after kill | **Implemented (#3373)** | Per-issue phase checkpoint at `.loom/sweep-checkpoint/issue-<N>.json`. Sweep reads on entry and skips completed phases. No mid-builder recovery — kill during Builder resumes at builder start, worktree preserved by `worktree.sh` idempotency. Mode C reuses the helper keyed by the PR's closing-issue number (`closingIssuesReferences`); PRs without a `Closes #N` reference run without checkpointing. |
 | PR-set mode (`--prs` flag and PR NL triggers; Judge/Doctor/Merge from current PR label) | **Implemented (#3384)** | Mode C. Skips Curator, Approval gate, Builder. Size-1 waves. `--builders-per-wave` ignored. Reuses issue-keyed checkpoint via `closingIssuesReferences`. |
+| Daemon backend detection (Stage -1) | **Implemented (#3454)** | Strict-AND between daemon reachability and multi-account pool. Mode C and `--no-daemon` short-circuit to subagent. No implicit auto-start. Dispatch-only — Phase D does not subscribe to the event bus. See "Stage -1: Backend detection". |
 | `--max-waves` cap | Deferred | Operator-level brake on long sweeps. |
 | `--paused-merge` / `--no-judge` | Deferred | Merge-mode variants for trusted batches. |
 | `--include-blocked` (unblock pass) | Deferred | Currently `/sweep` skips `loom:blocked` issues outright. |
@@ -831,6 +1085,101 @@ The full `/sweep` design in #3298 includes many features that are intentionally 
 
 For the full design discussion (including the open questions raised by the curator), see issue #3298.
 
+## Daemon event bus (Phase B of #3449 — #3453)
+
+When the in-process **loom-daemon** is running, the sweep child **must** publish phase-transition events onto the daemon's in-memory pub/sub bus so monitoring tools, the spawn loop, and any subscribed MCP layer can react in real time. This is the **wire-protocol contract** the skill exposes to the daemon (and via the daemon to the rest of Loom).
+
+The bus is an in-process `tokio::sync::broadcast::channel<Event>` with a default capacity of **1024** events. It is **not** NATS/ZeroMQ — it lives only inside the running daemon and is gone the moment the daemon exits. Subscribers route by **topic prefix** (segment-aligned — `sweep.issue` matches `sweep.issue.123.phase` but not `sweep.issuetype.foo`). Slow subscribers receive a synthetic `topic_lag` event when they fall behind, then resume at the current channel head (pass-through, no silent drops; matches tokio's `Receiver::Lagged` semantics).
+
+### When to publish
+
+Publish a `sweep.issue.{N}.phase` event **immediately after the sweep skill commits a phase transition** — i.e. once the phase is durable in the forge (label flipped, comment posted, checkpoint written via `sweep-checkpoint.sh`). Do not publish before the side effects have landed; downstream subscribers treat the event as the authoritative signal that the phase is complete.
+
+Publish a `sweep.issue.{N}.blocker` event when the skill chooses to mark the issue with a Loom-recognized blocker label (e.g., `loom:blocked`, `loom:operator-only`) and exits the lifecycle without proceeding to the next phase.
+
+The daemon publishes `sweep.issue.{N}.exited`, `sweep.issue.{N}.crashed`, `sweep.global.dispatch`, and `sweep.global.completed` itself — the sweep child does **not** publish those.
+
+### Topic taxonomy (frozen for v0.10.0)
+
+The following six topics are the **entire** event vocabulary for v0.10.0. New topics require a follow-up issue — do not invent topics outside this table.
+
+| Topic | Publisher | Payload (JSON) |
+|-------|-----------|----------------|
+| `sweep.issue.{N}.phase` | Sweep child via `PublishEvent` | `{"phase": "<phase-name>", "pr_number": <int or null>}` |
+| `sweep.issue.{N}.blocker` | Sweep child | `{"reason": "<short-text>", "label_added": "<label>"}` |
+| `sweep.issue.{N}.exited` | Daemon reaper | `{"exit_code": <int or null>, "duration_sec": <int>}` |
+| `sweep.issue.{N}.crashed` | Daemon reaper | `{"checkpoint_phase": "<phase-name or null>"}` |
+| `sweep.global.dispatch` | Daemon | `{"sweep_id": "<id>", "kind": {"type": "Issue", "value": <N>}}` |
+| `sweep.global.completed` | Daemon | `{"sweep_id": "<id>", "outcome": "exited" | "crashed"}` |
+
+`{N}` is the issue number (a positive integer). Phase names match the sweep-checkpoint schema (#3373): `curator`, `builder`, `judge`, `doctor`, `merge`, etc.
+
+### How to publish — IPC contract
+
+The daemon exposes a `Request::PublishEvent { topic, payload }` variant over its line-delimited JSON Unix-socket framing (the same socket used for `DispatchSweep`, `ListSweeps`, etc. — see `loom-daemon/src/ipc.rs`). One request → one `Response::EventPublished { topic, receivers }` ack frame.
+
+**Sample wire frame** — sweep child advertises that it just finished the builder phase and opened PR #501:
+
+```json
+{"type": "PublishEvent", "payload": {"topic": "sweep.issue.123.phase", "payload": {"phase": "builder", "pr_number": 501}}}
+```
+
+The daemon responds with:
+
+```json
+{"type": "EventPublished", "payload": {"topic": "sweep.issue.123.phase", "receivers": 2}}
+```
+
+If no subscribers are listening, `receivers` is `0` and the event is dropped. **This is not an error condition** — the sweep child treats `receivers: 0` as "best-effort delivery, nobody home" and continues. Do not retry; the event is fire-and-forget.
+
+### Sample payloads for the six initial topics
+
+The following six samples are the authoritative reference for the payload schema of each frozen topic.
+
+```json
+{"type": "PublishEvent", "payload": {"topic": "sweep.issue.123.phase", "payload": {"phase": "curator", "pr_number": null}}}
+{"type": "PublishEvent", "payload": {"topic": "sweep.issue.123.phase", "payload": {"phase": "builder", "pr_number": 501}}}
+{"type": "PublishEvent", "payload": {"topic": "sweep.issue.123.phase", "payload": {"phase": "judge", "pr_number": 501}}}
+{"type": "PublishEvent", "payload": {"topic": "sweep.issue.123.phase", "payload": {"phase": "merge", "pr_number": 501}}}
+{"type": "PublishEvent", "payload": {"topic": "sweep.issue.123.blocker", "payload": {"reason": "missing credentials", "label_added": "loom:operator-only"}}}
+{"type": "PublishEvent", "payload": {"topic": "sweep.issue.456.blocker", "payload": {"reason": "dependent on #999", "label_added": "loom:blocked"}}}
+```
+
+The daemon-side events (these are **emitted by the daemon**, not by the sweep child — included here as the contract for subscribers):
+
+```json
+{"type": "EventStream", "payload": {"events": [{"type": "SweepExited", "issue": 123, "exit_code": 0, "duration_sec": 1842}]}}
+{"type": "EventStream", "payload": {"events": [{"type": "SweepCrashed", "issue": 456, "checkpoint_phase": "judge"}]}}
+{"type": "EventStream", "payload": {"events": [{"type": "SweepGlobalDispatch", "sweep_id": "sweep-issue-789-1717599600", "kind": {"type": "Issue", "value": 789}}]}}
+{"type": "EventStream", "payload": {"events": [{"type": "SweepGlobalCompleted", "sweep_id": "sweep-issue-123-1717599600", "outcome": "exited"}]}}
+```
+
+### Subscription (for tooling, not the sweep child)
+
+Long-running monitors subscribe with a single `Request::SubscribeEvents { topics }` frame and receive a stream of `Response::EventStream { events }` frames on the same open connection. Topic matching is prefix-aligned: `["sweep.issue.123"]` matches every event for issue 123; `["sweep.global"]` matches the two global topics; `[]` (empty list) matches everything on the bus.
+
+```json
+{"type": "SubscribeEvents", "payload": {"topics": ["sweep.issue.123", "sweep.global.completed"]}}
+```
+
+The sweep child itself does **not** subscribe — it only publishes. Subscription is consumed by the spawn loop, the operator-facing monitoring tools slated for Phase C (#3454), and any custom MCP-bridged tool an operator wires up.
+
+### Failure modes (publisher side)
+
+- **Daemon not running**: the Unix-socket connect fails. The sweep child must treat this as a soft error and continue without publishing — Loom is designed to run without the daemon. Log a single `debug` line and proceed.
+- **Daemon running but no subscribers**: `Response::EventPublished { receivers: 0 }`. Fire-and-forget; continue.
+- **Bus capacity exhausted on the subscriber side**: the slow subscriber sees a `topic_lag` event; **the publisher is unaffected** and never blocks. The bus is bounded but tokio's broadcast channel has pass-through overflow on the receiver, not the sender.
+
+### Out-of-scope for Phase B
+
+These are deferred to Phase C (#3454) and Phase D follow-ups — do **not** implement them in the sweep skill:
+
+- Operator-facing MCP tools (`get_sweep_status`, `subscribe_to_events`, `tail_event_bus`) — Phase C.
+- New topics beyond the six listed — frozen for v0.10.0 per epic #3449; file a follow-up issue if you "need" one.
+- Distributed bus / cross-daemon coordination — explicit non-goal (single broker, in-process).
+- Persistent event log or replay — explicit non-goal (transient bus).
+- Consumer groups / durable subscriptions — explicit non-goal.
+
 ## Reference Documentation
 
 - **Shepherd lifecycle**: `.claude/commands/loom/shepherd-lifecycle.md` — canonical per-issue lifecycle.
@@ -845,3 +1194,6 @@ For the full design discussion (including the open questions raised by the curat
 - **PR-set mode (Mode C) design**: issue #3384
 - **Parallel-shepherd stall hazard**: issue #3289
 - **Checkpoint/resume design**: issue #3373 (Phase 0 of #3372 shepherd/daemon deprecation epic)
+- **Daemon backend detection (Stage -1)**: issue #3454 (Phase D of #3449 daemon rebuild epic)
+- **Daemon dispatch MCP tool (`mcp__loom__dispatch_sweep`)**: issue #3452 (Phase A of #3449)
+- **Daemon event bus (Phase B)**: issue #3453 (Phase B of #3449)
