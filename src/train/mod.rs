@@ -8,10 +8,12 @@
 /// Burn optimizer wrapper used by both PPO and DQN.
 pub mod optimizer;
 
+pub mod a2c;
 pub mod dqn;
 pub mod ppo;
 pub mod sac;
 
+pub use a2c::A2cConfig;
 pub use dqn::{DQNConfig, DQNStepStatsBurn, DQNTrainerBurn};
 pub use optimizer::{BackendOptimizer, BurnOptimizer};
 pub use ppo::{
