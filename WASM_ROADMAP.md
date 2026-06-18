@@ -38,11 +38,11 @@ Compile Rust inference code to WASM and run trained policies in the browser with
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Training (Native Rust + PyTorch)                            │
+│ Training (Pure Rust + Burn)                                 │
 ├─────────────────────────────────────────────────────────────┤
-│  • GPU training with tch-rs                                 │
-│  • Full PyTorch neural network                              │
-│  • Saves model weights (.pt format)                         │
+│  • GPU/CPU training via Burn (NdArray / wgpu / cuda)        │
+│  • Burn autodiff neural networks                            │
+│  • Saves model weights (Burn record / JSON)                 │
 └─────────────────────────────────────────────────────────────┘
                           │
                           │ Extract weights
@@ -50,9 +50,9 @@ Compile Rust inference code to WASM and run trained policies in the browser with
 ┌─────────────────────────────────────────────────────────────┐
 │ Weight Export (Rust)                                        │
 ├─────────────────────────────────────────────────────────────┤
-│  • Load .pt model                                           │
+│  • Read Burn module params                                  │
 │  • Extract layer weights & biases                           │
-│  • Export to JSON                                           │
+│  • Export to portable JSON (ExportedModel)                  │
 └─────────────────────────────────────────────────────────────┘
                           │
                           │ Portable weights

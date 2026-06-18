@@ -353,8 +353,9 @@ cargo valgrind --bin your-binary
 
 ### Related Projects
 - [PufferLib](https://github.com/PufferAI/PufferLib) - Python RL library
-- [tch-rs](https://github.com/LaurentMazare/tch-rs) - PyTorch bindings
+- [Burn](https://burn.dev) - Pure-Rust deep learning framework (Thrust's tensor backend)
 - [Border](https://github.com/laboroai/border) - Rust RL library
+- [tch-rs](https://github.com/LaurentMazare/tch-rs) - PyTorch bindings (Thrust's pre-v0.1.0 backend; since replaced by Burn)
 
 ---
 

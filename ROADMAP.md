@@ -1,57 +1,60 @@
 # Thrust Development Roadmap
 
-**Last Updated**: 2025-11-06
+**Last Updated**: 2026-06-17
 
 ## Vision
 
 Thrust aims to be the **first production-ready RL library in pure Rust** with:
-- 🚀 GPU-accelerated training (tch-rs + PyTorch)
+- 🚀 GPU-accelerated training via [Burn](https://burn.dev) (CUDA / wgpu) — no libtorch FFI
 - 🎮 Multi-agent population training (cooperative & competitive)
 - 🌐 WASM inference for web demos
 - ⚡ High-performance Rust environments
 
+> **Backend note.** Thrust runs entirely on the [Burn](https://burn.dev) tensor
+> framework (pure Rust, autodiff). The pre-v0.1.0 `tch`/libtorch path has been
+> fully removed (see `docs/BURN_BACKENDS.md`). The default build uses Burn's
+> NdArray CPU backend with **no external system libraries**; GPU is opt-in via
+> the `wgpu` (cross-platform) or `cuda` (Linux/NVIDIA) features.
+
 ## Current Status
 
-### ✅ Completed (Phase 1)
+### ✅ Completed Foundation
 
 **Core Infrastructure**
-- [x] Environment trait and CartPole implementation
+- [x] `Environment` trait (discrete + continuous actions) with CartPole, Pendulum, LQR, Snake, Pong, bandit, matching-pennies
 - [x] EnvPool for parallel environments
-- [x] RolloutBuffer with GAE
-- [x] MlpPolicy with tch-rs
-- [x] PPO trainer with clipping
-- [x] GPU training pipeline (NVIDIA L4, ~1000 steps/sec)
-- [x] Version management (local: tch 0.22, GPU: tch 0.15)
-- [x] Training scripts for remote GPU
+- [x] RolloutBuffer with GAE (on-policy) + ReplayBuffer / ContinuousReplayBuffer (off-policy)
+- [x] Burn-backed policy networks (`MlpBurnPolicy`, multi-discrete, Q-networks, SAC actor/critics)
+- [x] Seeded, bit-exact-reproducible network init (`seeded_init`)
+- [x] PPO trainer with clipping (single- and multi-agent)
+- [x] Burn NdArray CPU backend by default; `wgpu` / `cuda` GPU backends opt-in
 - [x] CartPole solved: 301.6 avg steps/episode (target: 195+)
 
+**Algorithms** (see the Algorithms section below)
+- [x] PPO, DQN (Double-DQN + Polyak), SAC (continuous control)
+- [x] PSRO with α-rank meta-solver (N-player), NFSP (N-player, multi-discrete)
+
 **WASM Infrastructure (Partial)**
-- [x] Pure Rust inference module (no PyTorch deps)
+- [x] Pure Rust inference module (no external deps)
 - [x] ExportedModel with JSON serialization
 - [x] Forward pass implementation (softmax, linear layers)
-- [x] 5 passing inference tests
 
-**Multi-Agent Infrastructure (Partial)**
-- [x] MultiAgentEnvironment trait
-- [x] Population and Agent structs
-- [x] 4 matchmaking strategies (Random, RoundRobin, Fitness, SelfPlay)
-- [x] GameSimulator skeleton
-- [x] PolicyLearner skeleton
-- [x] 15 passing multi-agent tests
+**Multi-Agent Infrastructure**
+- [x] MultiAgentEnvironment trait + `JointMultiAgentTrainer` (per-agent observations)
+- [x] Population and Agent structs, 4 matchmaking strategies
+- [x] Bucket Brigade cooperative-MARL adapter + PSRO/NFSP integration
 
 ## Active Work
 
 ### 🚧 In Progress
 
-1. **Multi-Agent Training (Phase 2 - 60% complete)**
-   - Status: Core structs done, need communication layer
-   - Next: Crossbeam channels, run loops
-   - Files: `src/multi_agent/simulator.rs`, `src/multi_agent/learner.rs`
+1. **Research validation (operator-gated)** — long-budget PSRO/NFSP training +
+   evaluation on the Bucket Brigade no-convergence cells (issue #134). Needs
+   GPU host time on alc-2; the *infrastructure* is shipped, the multi-hour
+   *runs* are pending an operator.
 
-2. **WASM Visualization (Phase 1 - 40% complete)**
-   - Status: Pure Rust inference ready, need weight export
-   - Blocker: `MlpPolicy::export_for_inference()` tch-rs API
-   - Files: `examples/export_model.rs`, needs `src/wasm.rs`
+2. **WASM Visualization** — pure Rust inference is ready; remaining work is the
+   `wasm-bindgen` bindings and a browser demo. Files: needs `src/wasm.rs`.
 
 ## Roadmap
 
@@ -96,13 +99,11 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 **Goal**: Interactive web demo of trained CartPole policy
 
 **Tasks**:
-- [ ] Solve tch-rs weight extraction (MlpPolicy::export_for_inference)
-  - Option A: Manual tensor access via tch-rs API
-  - Option B: Save to .pt, load with Python, extract to JSON
-  - Option C: Hook into existing save/load mechanism
+- [x] Weight export to JSON (`ExportedModel` / universal inference format) — the
+      pre-Burn `tch` weight-extraction blocker is gone; Burn modules serialize directly
 - [ ] Add wasm-bindgen to Cargo.toml with features
 - [ ] Create src/wasm.rs with WASM bindings
-- [ ] Implement CartPole environment in pure Rust (no tch)
+- [ ] Implement CartPole environment in pure Rust (already env-trait native)
 - [ ] Create web/index.html with Canvas rendering
 - [ ] Create web/cartpole.js for game loop
 - [ ] Build with wasm-pack
@@ -125,16 +126,19 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 - [ ] Nash equilibrium computation
 
 #### Milestone 5: More Environments
+- [x] Multi-agent competitive games (Pong self-play)
+- [x] Continuous-control envs (PendulumSwingUp, ContinuousLqr)
 - [ ] Atari environments (via Rust ALE bindings)
-- [ ] MuJoCo environments (via mujoco-rs)
+- [ ] MuJoCo environments (via mujoco-rs) — now unblocked by SAC
 - [ ] Custom 2D grid worlds
-- [ ] Multi-agent competitive games (Pong, Soccer)
 
 #### Milestone 6: Algorithm Expansion
 - See [`docs/RL_TOYBOX_SURVEY.md`](docs/RL_TOYBOX_SURVEY.md) for ranked port recommendations (replay buffer, DQN, SAC, centralized critic, MCTS) and prioritized follow-up issues.
+- [x] DQN for discrete actions (Double-DQN + Polyak target updates)
+- [x] SAC (Soft Actor-Critic) for continuous control (twin critics, auto-entropy tuning)
+- [x] PSRO with α-rank meta-solver (N-player)
+- [x] NFSP (approximate, N-player, multi-discrete)
 - [ ] A2C (Advantage Actor-Critic)
-- [ ] SAC (Soft Actor-Critic) for continuous control
-- [ ] DQN for discrete actions
 - [ ] Imitation learning (behavioral cloning)
 
 #### Milestone 7: Performance Optimization
@@ -163,40 +167,36 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 - [ ] Evolution strategies
 - [ ] Population-based training (PBT)
 
-## Priority Queue (Next 3 Tasks)
+## Priority Queue (Next Tasks)
 
-1. **Complete Multi-Agent Simulator Run Loop** (1-2 days)
-   - Add crossbeam channels
-   - Implement experience routing
-   - Test with CartPole 4-agent setup
+1. **Research validation on alc-2** (operator-gated, issue #134)
+   - Long-budget PSRO/NFSP training on the Bucket Brigade no-convergence cells
+   - Answers the open research question (do PSRO+α-rank / NFSP beat PPO there?)
+   - Infrastructure is shipped; needs GPU host time + manual artifact promotion
 
-2. **Complete Multi-Agent Learner Training Loop** (1 day)
-   - Implement PPO updates
-   - Add policy synchronization
-   - Benchmark GPU utilization
+2. **A2C trainer** (Milestone 6)
+   - Reuses the existing PPO rollout/GAE path; smaller surface than SAC
+   - Architect → builder decomposition
 
-3. **Create Multi-Agent CartPole Example** (0.5 days)
-   - Simple 4-agent training script
-   - Logging and metrics
-   - Save/load population
+3. **Capitalize on SAC** (Milestone 5)
+   - `train_sac` example + a second continuous env (LunarLanderContinuous, or
+     MuJoCo via `mujoco-rs`) to take SAC from "implemented" to "benchmarked"
+
+4. **WASM demo** — `wasm-bindgen` bindings + browser inference (pure-Rust
+   inference path is already done; no weight-export blocker remains post-Burn)
 
 ## Dependencies & Blockers
 
 ### External Dependencies
-- **tch-rs version compatibility**: Different versions on local vs GPU (acceptable)
-- **PyTorch version**: Must match tch-rs (documented in VERSIONS.md)
-- **WASM target**: Need pure Rust neural net (done)
+- **Burn 0.21**: the sole tensor backend; NdArray (CPU) by default, `wgpu` / `cuda` opt-in
+- **No libtorch / PyTorch**: the pre-v0.1.0 `tch` path was removed (see `docs/BURN_BACKENDS.md`)
+- **WASM target**: pure Rust neural net (done)
 
 ### Known Blockers
-1. **WASM weight export**: tch-rs API unclear for extracting layer weights
-   - Impact: Blocks WASM demo
-   - Workaround: Can use Python script to extract weights
-   - Priority: Medium (not blocking multi-agent work)
-
-2. **BucketBrigade integration**: Need access to Rust environment
-   - Impact: Blocks validation of multi-agent design
-   - Workaround: Use CartPole multi-agent first
-   - Priority: Low (can validate with CartPole)
+1. **Research validation (#134)**: needs operator GPU time on alc-2 (multi-hour
+   runs, manual artifact promotion). Labeled `loom:blocked` — not automatable.
+   - Impact: the headline research question stays unanswered until run
+   - Priority: High value, operator-gated
 
 ## Success Metrics
 
