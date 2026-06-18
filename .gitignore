@@ -29,8 +29,6 @@ node_modules/
 .loom/health-metrics.json
 .loom/spawn-loop-state.json
 .loom/interventions/
-.loom/worktrees/
-.loom/state.json
 .loom/mcp-command.json
 .loom/activity.db
 .loom/claims/
@@ -46,8 +44,6 @@ node_modules/
 .loom/metrics/
 .loom/usage-cache.json
 .loom/claude-config/
-.loom/*.log
-.loom/*.sock
 .loom/logs/
 
 # direnv configs (incl. variants like .envrc.libtorch from pre-Burn era)
@@ -57,3 +53,7 @@ node_modules/
 # Python venvs (used pre-Burn for libtorch sourcing)
 venv/
 .venv/
+.loom/worktrees/
+.loom/state.json
+.loom/*.log
+.loom/*.sock
