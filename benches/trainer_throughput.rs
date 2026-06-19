@@ -2,9 +2,9 @@
 //!
 //! Measures steps/sec and per-update wall-clock for the on-policy A2C
 //! ([`A2cTrainer`]) and PPO ([`PPOTrainerBurn`]) trainers and the off-policy
-//! DQN trainer ([`DQNTrainerBurn`]). All benchmarks run on the pure-Rust
-//! `Autodiff<NdArray<f32>>` (CPU) backend and are seeded so the numbers
-//! are comparable run-to-run.
+//! DQN ([`DQNTrainerBurn`]) and SAC ([`SacTrainer`]) trainers. All benchmarks
+//! run on the pure-Rust `Autodiff<NdArray<f32>>` (CPU) backend and are seeded
+//! so the numbers are comparable run-to-run.
 //!
 //! # Fairness caveat: on-policy vs off-policy steps/sec
 //!
@@ -23,7 +23,19 @@
 //! numbers honest, the replay buffer is pre-filled to `min_buffer_size` in
 //! the untimed setup closure so the timed region measures steady-state
 //! throughput (one real update per step) rather than the warmup transient
-//! (env steps whose `train_step` is a `None` no-op).
+//! (env steps whose update is a `None` no-op).
+//!
+//! SAC is the second member of the off-policy class, so its per-update cost
+//! (`sac_train_step`) is in the same cross-class-comparable family as
+//! `dqn_train_step` (though SAC's update is heavier: it backprops a stochastic
+//! actor, twin critics, and an entropy-temperature term per step, versus DQN's
+//! single Q-network). SAC, however, runs on the *continuous* `PendulumSwingUp`
+//! env (obs_dim=3, action_dim=1, action rescaled by `MAX_TORQUE = 2.0`), a
+//! distinct environment from the CartPole groups. The
+//! `sac_pendulum_steps_per_sec` steps/sec number is therefore additionally NOT
+//! comparable across *environments*: it must not be read against the CartPole
+//! `*_steps_per_sec` groups (different env dynamics, obs/action shapes, and
+//! episode lengths).
 //!
 //! Benchmark groups:
 //! - `a2c_cartpole_steps_per_sec` — a full rollout-collect (CartPole env
@@ -43,6 +55,15 @@
 //! - `dqn_cartpole_steps_per_sec` — a full DQN env-loop (one CartPole step +
 //!   buffer push + one gradient update per env step), reported in
 //!   environment-steps/sec. Comparable within the off-policy class only.
+//! - `sac_train_step` — a single [`SacTrainer::train`] update on a replay
+//!   minibatch (buffer pre-filled and `learning_starts` satisfied untimed in
+//!   setup), isolating the off-policy continuous-control per-update cost.
+//!   Cross-class comparable against the other `*_train_step` groups.
+//! - `sac_pendulum_steps_per_sec` — a full SAC env-loop on the continuous
+//!   `PendulumSwingUp` env (one env step + `scale_action` + buffer push + one
+//!   gradient update per env step), reported in environment-steps/sec.
+//!   Comparable within the off-policy class only, and NOT across environments
+//!   (Pendulum, not CartPole).
 //!
 //! Run quickly with, e.g.:
 //! ```text
@@ -60,10 +81,14 @@ use burn::{
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rand::{SeedableRng, rngs::StdRng};
 use thrust_rl::{
-    env::{Environment, games::cartpole::CartPole},
+    env::{
+        Environment,
+        games::{cartpole::CartPole, pendulum::PendulumSwingUp},
+    },
     policy::{mlp::MlpBurnPolicy, q_network::QNetworkBurn},
     train::{
         A2cConfig, A2cTrainer, BurnOptimizer, DQNConfig, DQNTrainerBurn, PPOConfig, PPOTrainerBurn,
+        SacConfig, SacTrainer,
     },
 };
 
@@ -95,6 +120,33 @@ const DQN_BUFFER_CAPACITY: usize = 4_096;
 // Number of timed env steps in the DQN full-loop benchmark. Each step is one
 // CartPole transition + buffer push + one gradient update.
 const DQN_LOOP_STEPS: usize = 16;
+
+// SAC runs on the continuous PendulumSwingUp env: 3-dim observation
+// (cosθ, sinθ, θ̇), 1-dim action. The actor emits a tanh-squashed action in
+// (-1, 1) which is rescaled by `SAC_MAX_TORQUE` before the env step.
+const SAC_OBS_DIM: usize = 3;
+const SAC_ACTION_DIM: usize = 1;
+const SAC_MAX_TORQUE: f32 = 2.0;
+
+// SAC replay/minibatch shape. `SAC_BATCH` is the per-update minibatch sampled
+// from the replay buffer; `SAC_MIN_BUFFER` is the warmup threshold below which
+// `train()` is a no-op (`Ok(None)`). `SAC_LEARNING_STARTS` is the random-action
+// warmup window — the fixtures advance `total_env_steps` past it so the actor
+// (not uniform noise) drives `select_action`. The fixtures pre-fill the buffer
+// to `SAC_MIN_BUFFER` so every timed `train()` performs a real gradient update.
+// `hidden_dim`/`num_hidden_layers` are kept small relative to the SAC default
+// (256-wide, 2 layers) so each CPU iteration completes quickly while still
+// exercising the full actor + twin-critic + alpha backward path.
+const SAC_BATCH: usize = 64;
+const SAC_MIN_BUFFER: usize = 256;
+const SAC_BUFFER_CAPACITY: usize = 4_096;
+const SAC_LEARNING_STARTS: usize = 128;
+const SAC_HIDDEN_DIM: usize = 64;
+const SAC_NUM_HIDDEN_LAYERS: usize = 2;
+
+// Number of timed env steps in the SAC full-loop benchmark. Each step is one
+// Pendulum transition + buffer push + one gradient update.
+const SAC_LOOP_STEPS: usize = 16;
 
 /// Build a fresh, seeded A2C trainer on the CPU backend.
 fn make_a2c_trainer()
@@ -553,6 +605,154 @@ fn bench_dqn_cartpole_steps_per_sec(c: &mut Criterion) {
     group.finish();
 }
 
+/// Build a fresh, seeded SAC trainer on the CPU backend for the continuous
+/// PendulumSwingUp task (obs_dim=3, action_dim=1).
+///
+/// Replay / minibatch / network sizes are shrunk from the SAC defaults (see
+/// the `SAC_*` constants) so each CPU iteration completes quickly while still
+/// driving the full actor + twin-critic + alpha backward path.
+fn make_sac_trainer() -> SacTrainer<B> {
+    let device: NdArrayDevice = Default::default();
+    let config = SacConfig::new()
+        .batch_size(SAC_BATCH)
+        .buffer_capacity(SAC_BUFFER_CAPACITY)
+        .min_buffer_size(SAC_MIN_BUFFER)
+        .learning_starts(SAC_LEARNING_STARTS)
+        .hidden_dim(SAC_HIDDEN_DIM)
+        .num_hidden_layers(SAC_NUM_HIDDEN_LAYERS)
+        .seed(0);
+    SacTrainer::<B>::new(config, SAC_OBS_DIM, SAC_ACTION_DIM, device).expect("valid SAC config")
+}
+
+/// A single deterministic synthetic Pendulum-shaped transition derived from a
+/// step index. Mirrors the SAC trainer's own unit-test fixture so the pushed
+/// data is plausible: a unit-circle (cosθ, sinθ) plus a bounded angular
+/// velocity, a tanh-range action in (-1, 1), a negative quadratic reward, and
+/// periodic dones.
+fn sac_synthetic_transition(
+    i: usize,
+) -> ([f32; SAC_OBS_DIM], [f32; SAC_ACTION_DIM], f32, [f32; SAC_OBS_DIM], bool) {
+    let phase = (i as f32) * 0.1;
+    let obs = [phase.cos(), phase.sin(), phase * 0.2];
+    let next_obs = [(phase + 0.1).cos(), (phase + 0.1).sin(), phase * 0.2];
+    let action = [phase.sin().clamp(-0.99, 0.99)];
+    let reward = -(phase * phase);
+    let done = i % 5 == 4;
+    (obs, action, reward, next_obs, done)
+}
+
+/// Pre-fill a SAC trainer's replay buffer with `n` seeded synthetic Pendulum
+/// transitions so `train()` performs a real gradient update instead of the
+/// warmup `None` no-op.
+fn sac_prefill_buffer(trainer: &mut SacTrainer<B>, n: usize) {
+    for i in 0..n {
+        let (obs, action, reward, next_obs, done) = sac_synthetic_transition(i);
+        trainer.buffer_mut().push(&obs, &action, reward, &next_obs, done);
+    }
+}
+
+/// Rescale a tanh-squashed actor action in `(-1, 1)` to the Pendulum torque
+/// range `[-SAC_MAX_TORQUE, SAC_MAX_TORQUE]` (mirrors the `train_sac` example's
+/// `scale_action`).
+fn sac_scale_action(action: &[f32]) -> Vec<f32> {
+    action.iter().map(|a| a * SAC_MAX_TORQUE).collect()
+}
+
+/// `sac_train_step` — isolated single SAC gradient step on a replay minibatch.
+/// The `iter_batched` setup closure (untimed) builds a fresh seeded trainer,
+/// pre-fills its replay buffer past `min_buffer_size`, and advances
+/// `total_env_steps` past `learning_starts`, so every timed `train()` performs
+/// exactly one real gradient update (never `None`). This is the off-policy
+/// continuous-control per-update number, cross-class comparable against the
+/// other `*_train_step` groups (SAC's update is heavier than DQN's — see the
+/// module header).
+fn bench_sac_train_step(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sac_train_step");
+    group.throughput(Throughput::Elements(SAC_BATCH as u64));
+    group.bench_function("replay_minibatch", |b| {
+        b.iter_batched(
+            || {
+                let mut trainer = make_sac_trainer();
+                sac_prefill_buffer(&mut trainer, SAC_MIN_BUFFER);
+                // Advance past learning_starts so the trainer is in its
+                // steady-state regime (not the random-action warmup window).
+                for _ in 0..SAC_LEARNING_STARTS {
+                    trainer.increment_env_step();
+                }
+                trainer
+            },
+            |mut trainer| {
+                let stats = trainer
+                    .train()
+                    .expect("SAC train()")
+                    .expect("buffer pre-filled, train() must update (not None)");
+                black_box(stats)
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
+/// `sac_pendulum_steps_per_sec` — full SAC env-loop on the continuous
+/// PendulumSwingUp env: select an action, rescale it by `SAC_MAX_TORQUE`, step
+/// the env, push the (unscaled) transition, and run one gradient update per env
+/// step (mirroring the `train_sac` example). The buffer is pre-filled to
+/// `min_buffer_size` and `total_env_steps` advanced past `learning_starts` in
+/// the untimed setup so the timed region measures steady-state throughput (one
+/// real update per step), not the warmup transient. Reported in
+/// environment-steps/sec; comparable within the off-policy class only and NOT
+/// across environments (Pendulum, not CartPole — see module header).
+fn bench_sac_pendulum_steps_per_sec(c: &mut Criterion) {
+    let mut group = c.benchmark_group("sac_pendulum_steps_per_sec");
+    group.throughput(Throughput::Elements(SAC_LOOP_STEPS as u64));
+    group.bench_function("env_step_plus_update", |b| {
+        b.iter_batched(
+            || {
+                let mut trainer = make_sac_trainer();
+                sac_prefill_buffer(&mut trainer, SAC_MIN_BUFFER);
+                for _ in 0..SAC_LEARNING_STARTS {
+                    trainer.increment_env_step();
+                }
+                let mut env = PendulumSwingUp::with_seed(0);
+                env.reset();
+                (trainer, env)
+            },
+            |(mut trainer, mut env)| {
+                let mut obs = env.get_observation();
+                for _ in 0..SAC_LOOP_STEPS {
+                    let action = trainer.select_action(&obs);
+                    let result = env.step(sac_scale_action(&action));
+                    let done = result.terminated || result.truncated;
+                    trainer.buffer_mut().push(
+                        &obs,
+                        &action,
+                        result.reward,
+                        &result.observation,
+                        done,
+                    );
+                    trainer.increment_env_step();
+
+                    let stats = trainer
+                        .train()
+                        .expect("SAC train()")
+                        .expect("buffer pre-filled, train() must update (not None)");
+                    black_box(stats);
+
+                    if done {
+                        env.reset();
+                        obs = env.get_observation();
+                    } else {
+                        obs = result.observation;
+                    }
+                }
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_a2c_train_step,
@@ -561,5 +761,7 @@ criterion_group!(
     bench_ppo_cartpole_steps_per_sec,
     bench_dqn_train_step,
     bench_dqn_cartpole_steps_per_sec,
+    bench_sac_train_step,
+    bench_sac_pendulum_steps_per_sec,
 );
 criterion_main!(benches);
