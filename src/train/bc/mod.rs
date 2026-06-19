@@ -11,10 +11,15 @@
 //!   mirroring [`crate::train::a2c::A2cConfig`] (#164).
 //! - [`Demonstrations`] — the fixed expert dataset serving seeded minibatches
 //!   (#164).
-//! - The cross-entropy loss and `BcTrainer` epoch loop land in #167.
+//! - [`compute_bc_loss`] — the supervised cross-entropy loss, and [`BcTrainer`]
+//!   — the supervised epoch loop over the dataset (#167).
 
 pub mod config;
 pub mod dataset;
+pub mod loss;
+pub mod trainer;
 
 pub use config::BcConfig;
 pub use dataset::Demonstrations;
+pub use loss::compute_bc_loss;
+pub use trainer::{BcEpochStats, BcTrainer};
