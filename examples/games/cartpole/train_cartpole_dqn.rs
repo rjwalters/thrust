@@ -29,6 +29,27 @@
 //!
 //! Expected: avg return over the last 100 episodes climbs well above
 //! the random baseline (~22) within ~30k env steps.
+//!
+//! # Learning-curve CSV (opt-in)
+//!
+//! Set `CURVE_CSV=<path>` to emit one `env_steps,mean_episode_reward` row
+//! per logging interval (header row first). The Q-network weight init
+//! (`QNetworkBurn::with_seed`) and the action/replay sampling (`StdRng`) are
+//! both seeded, so a run is reproducible up to the `Autodiff<NdArray<f32>>`
+//! backend's own run-to-run float-reduction nondeterminism (the same caveat
+//! the A2C/PPO curve examples carry on this backend). DQN runs on the SAME
+//! CartPole env/seed/budget as the A2C (`train_cartpole_a2c.rs`) and PPO
+//! (`train_cartpole_modern.rs`) examples, so its curve overlays directly on
+//! theirs for the benchmark comparison. CartPole reward is +1/step, so mean
+//! episode reward == mean episode length, matching the A2C/PPO semantics.
+//! When `CURVE_CSV` is unset, no file is written and behavior is unchanged.
+//!
+//! ```bash
+//! CURVE_CSV=/tmp/dqn.csv cargo run --example train_cartpole_dqn \
+//!     --features training --release
+//! ```
+
+use std::io::Write;
 
 use anyhow::Result;
 use burn::{
@@ -50,6 +71,10 @@ type B = Autodiff<NdArray<f32>>;
 
 const DEFAULT_TIMESTEPS: usize = 60_000;
 const HIDDEN_DIM: usize = 64;
+/// Seed for reproducible runs. Threaded through the Q-network weight init
+/// (`QNetworkBurn::with_seed`) so that, together with the seeded action/replay
+/// `StdRng`, the learning curve is identical run-to-run.
+const SEED: u64 = 0;
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
@@ -76,8 +101,10 @@ fn main() -> Result<()> {
 
     let device: NdArrayDevice = Default::default();
 
-    // Online Q-network.
-    let online = QNetworkBurn::<B>::new(obs_dim, n_actions as usize, HIDDEN_DIM, &device);
+    // Online Q-network. Seeded weight init so runs are reproducible (the
+    // action/replay sampling is seeded separately via `StdRng` below).
+    let online =
+        QNetworkBurn::<B>::with_seed(obs_dim, n_actions as usize, HIDDEN_DIM, SEED, &device);
 
     let config = DQNConfig::new()
         .learning_rate(1e-3)
@@ -103,6 +130,12 @@ fn main() -> Result<()> {
     env.reset();
     let mut obs = env.get_observation();
     let mut rng = StdRng::seed_from_u64(0xC0FFEE);
+
+    // Optional learning-curve CSV (issue #160). When CURVE_CSV is set we write
+    // one `env_steps,mean_episode_reward` row per logging interval. CartPole
+    // reward is +1/step, so mean episode reward == mean episode length,
+    // matching the A2C/PPO examples so curves overlay on the same env/budget.
+    let mut curve_csv = open_curve_csv()?;
 
     let mut episode_return: f32 = 0.0;
     let mut episode_returns: Vec<f32> = Vec::new();
@@ -174,6 +207,11 @@ fn main() -> Result<()> {
             } else {
                 0.0
             };
+            // Emit one learning-curve row per logging interval when CURVE_CSV
+            // is set. `step` is monotonic and increases by `log_interval`.
+            if let Some(w) = curve_csv.as_mut() {
+                writeln!(w, "{},{:.4}", step, recent_avg)?;
+            }
             tracing::info!(
                 "step={:>6}  episodes={:>4}  avg(last≤100)={:7.2}  ε={:.3}  buf={:>6}",
                 step,
@@ -183,6 +221,10 @@ fn main() -> Result<()> {
                 trainer.buffer_len(),
             );
         }
+    }
+
+    if let Some(mut w) = curve_csv.take() {
+        w.flush()?;
     }
 
     let final_avg = if !episode_returns.is_empty() {
@@ -202,4 +244,23 @@ fn main() -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Open the opt-in learning-curve CSV writer.
+///
+/// Returns `Ok(Some(writer))` with the header row already written when the
+/// `CURVE_CSV` env var names a path, or `Ok(None)` when it is unset (no file
+/// written, no behavior change). Mirrors the helper in `train_cartpole_a2c.rs`
+/// so DQN/A2C/PPO curves share the `env_steps,mean_episode_reward` schema.
+fn open_curve_csv() -> Result<Option<std::io::BufWriter<std::fs::File>>> {
+    match std::env::var("CURVE_CSV") {
+        Ok(path) if !path.is_empty() => {
+            let file = std::fs::File::create(&path)?;
+            let mut w = std::io::BufWriter::new(file);
+            writeln!(w, "env_steps,mean_episode_reward")?;
+            tracing::info!("Writing learning-curve CSV to {}", path);
+            Ok(Some(w))
+        }
+        _ => Ok(None),
+    }
 }
