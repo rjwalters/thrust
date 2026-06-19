@@ -177,6 +177,15 @@ name = "train_cartpole_dqn"
 path = "examples/games/cartpole/train_cartpole_dqn.rs"
 required-features = ["training"]
 
+# A2C CartPole trainer (issue #153, PR C of the A2C epic #150). Same
+# EnvPool rollout + GAE pattern as train_cartpole_modern but with the
+# single-update-per-rollout A2cTrainer. Emits an opt-in learning-curve
+# CSV via CURVE_CSV for overlay comparison with the PPO example.
+[[example]]
+name = "train_cartpole_a2c"
+path = "examples/games/cartpole/train_cartpole_a2c.rs"
+required-features = ["training"]
+
 # Multi-agent / self-play trainers resurrected from the pre-Burn
 # deletion (PR #98) per issue #101.
 [[example]]
