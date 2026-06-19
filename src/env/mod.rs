@@ -181,8 +181,8 @@ pub mod games;
 
 // Re-export game environments for backwards compatibility
 pub use games::{
-    CartPole, ContinuousLqr, PendulumSwingUp, Pong, SimpleBandit, SnakeEnv, cartpole,
-    continuous_lqr, pendulum, pong, simple_bandit, snake,
+    CartPole, ContinuousLqr, MountainCarContinuous, PendulumSwingUp, Pong, SimpleBandit, SnakeEnv,
+    cartpole, continuous_lqr, mountain_car_continuous, pendulum, pong, simple_bandit, snake,
 };
 
 // Training utilities. Gated on the `training` feature because the env
