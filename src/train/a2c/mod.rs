@@ -10,9 +10,15 @@
 //!
 //! This module is built incrementally by the A2C decomposition (#150):
 //! - [`A2cConfig`] — hyperparameters (builder + `validate()`), mirroring
-//!   [`crate::train::ppo::PPOConfig`] (this PR, #151).
-//! - the A2C trainer + loss math arrive in #152.
+//!   [`crate::train::ppo::PPOConfig`] (#151).
+//! - [`loss`] — the un-clipped policy-gradient + plain-MSE value loss
+//!   ([`compute_a2c_policy_loss`], [`compute_a2c_value_loss`]) and the
+//!   [`A2cTrainer`] single-update-per-rollout loop (#152).
 
 pub mod config;
+pub mod loss;
+pub mod trainer;
 
 pub use config::A2cConfig;
+pub use loss::{compute_a2c_policy_loss, compute_a2c_value_loss};
+pub use trainer::{A2cStats, A2cTrainer};

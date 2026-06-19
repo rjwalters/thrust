@@ -13,7 +13,7 @@ pub mod dqn;
 pub mod ppo;
 pub mod sac;
 
-pub use a2c::A2cConfig;
+pub use a2c::{A2cConfig, A2cStats, A2cTrainer, compute_a2c_policy_loss, compute_a2c_value_loss};
 pub use dqn::{DQNConfig, DQNStepStatsBurn, DQNTrainerBurn};
 pub use optimizer::{BackendOptimizer, BurnOptimizer};
 pub use ppo::{
