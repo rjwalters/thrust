@@ -10,6 +10,10 @@
 //! - PendulumSwingUp: in-tree `Pendulum-v1` swing-up task; the canonical
 //!   continuous-control SAC benchmark (issue #139, length-1 `Vec<f32>` torque
 //!   action, 3-dim `[cos θ, sin θ, θ̇]` observation)
+//! - MountainCarContinuous: in-tree `MountainCarContinuous-v0` classic-control
+//!   task; a sparse/deceptive-reward continuous-control benchmark (issue #166,
+//!   length-1 `Vec<f32>` force action, 2-dim `[position, velocity]`
+//!   observation, real terminal state at the goal)
 //! - BucketBrigade (feature `env-bucket-brigade`): Slepian-Wolf MARL research
 //!   env wrapping `bucket_brigade_core` with the versioned scenario registry
 //!   from bucket-brigade PR #379
@@ -25,6 +29,7 @@ pub mod cartpole;
 pub mod continuous_lqr;
 #[cfg(feature = "training")]
 pub mod matching_pennies;
+pub mod mountain_car_continuous;
 #[cfg(feature = "training")]
 pub mod n_player_matching_pennies;
 pub mod pendulum;
@@ -42,6 +47,7 @@ pub use cartpole::CartPole;
 pub use continuous_lqr::ContinuousLqr;
 #[cfg(feature = "training")]
 pub use matching_pennies::MatchingPennies;
+pub use mountain_car_continuous::MountainCarContinuous;
 #[cfg(feature = "training")]
 pub use n_player_matching_pennies::NPlayerMatchingPennies;
 pub use pendulum::PendulumSwingUp;
