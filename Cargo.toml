@@ -187,6 +187,14 @@ name = "train_cartpole_a2c"
 path = "examples/games/cartpole/train_cartpole_a2c.rs"
 required-features = ["training"]
 
+# Seeded SAC trainer on the continuous PendulumSwingUp env (issue #162,
+# epic #159). Runnable counterpart of tests/test_sac_pendulum.rs; emits
+# an opt-in negative-return learning curve via CURVE_CSV.
+[[example]]
+name = "train_sac"
+path = "examples/games/pendulum/train_sac.rs"
+required-features = ["training"]
+
 # Multi-agent / self-play trainers resurrected from the pre-Burn
 # deletion (PR #98) per issue #101.
 [[example]]
