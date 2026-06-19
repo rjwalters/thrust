@@ -1,6 +1,6 @@
 # Thrust Development Roadmap
 
-**Last Updated**: 2026-06-17
+**Last Updated**: 2026-06-19
 
 ## Vision
 
@@ -21,7 +21,7 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 ### ✅ Completed Foundation
 
 **Core Infrastructure**
-- [x] `Environment` trait (discrete + continuous actions) with CartPole, Pendulum, LQR, Snake, Pong, bandit, matching-pennies
+- [x] `Environment` trait (discrete + continuous actions) with CartPole, Pendulum, MountainCarContinuous, LQR, Snake, Pong, bandit, matching-pennies
 - [x] EnvPool for parallel environments
 - [x] RolloutBuffer with GAE (on-policy) + ReplayBuffer / ContinuousReplayBuffer (off-policy)
 - [x] Burn-backed policy networks (`MlpBurnPolicy`, multi-discrete, Q-networks, SAC actor/critics)
@@ -29,9 +29,11 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 - [x] PPO trainer with clipping (single- and multi-agent)
 - [x] Burn NdArray CPU backend by default; `wgpu` / `cuda` GPU backends opt-in
 - [x] CartPole solved: 301.6 avg steps/episode (target: 195+)
+- [x] Benchmark harness (`benches/trainer_throughput.rs`, criterion) — per-update + full-loop steps/sec for PPO/A2C/DQN/SAC; opt-in `CURVE_CSV` learning curves on every example
 
 **Algorithms** (see the Algorithms section below)
-- [x] PPO, DQN (Double-DQN + Polyak), SAC (continuous control)
+- [x] PPO, A2C, DQN (Double-DQN + Polyak), SAC (continuous control)
+- [x] Behavioral cloning (supervised imitation from demonstrations)
 - [x] PSRO with α-rank meta-solver (N-player), NFSP (N-player, multi-discrete)
 
 **WASM Infrastructure (Partial)**
@@ -51,10 +53,18 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 1. **Research validation (operator-gated)** — long-budget PSRO/NFSP training +
    evaluation on the Bucket Brigade no-convergence cells (issue #134). Needs
    GPU host time on alc-2; the *infrastructure* is shipped, the multi-hour
-   *runs* are pending an operator.
+   *runs* are pending an operator. This is the single highest-value open item.
 
 2. **WASM Visualization** — pure Rust inference is ready; remaining work is the
    `wasm-bindgen` bindings and a browser demo. Files: needs `src/wasm.rs`.
+
+### ✅ Recently completed
+- **ROADMAP Milestone 6 (Algorithm Expansion) — DONE.** A2C and behavioral
+  cloning landed (epics #150, #161), joining DQN/SAC/PSRO/NFSP.
+- **Benchmark coverage (epic #159)** — DQN + SAC added to the throughput harness;
+  learning-curve CSV across all single-agent examples.
+- **MountainCarContinuous (epic #163)** — second in-tree continuous-control
+  benchmark; SAC reaches the +90 published solved bar.
 
 ## Roadmap
 
@@ -78,20 +88,19 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 
 ---
 
-#### Milestone 2: BucketBrigade Integration 🎯
+#### Milestone 2: BucketBrigade Integration 🎯 (largely complete)
 **Goal**: Validate multi-agent training with cooperative game
 
 **Tasks**:
-- [ ] Clone/reference bucket-brigade repo
-- [ ] Implement MultiAgentEnvironment for BucketBrigade
-- [ ] Create examples/train_bucket_brigade.rs
-- [ ] Train population of 8 agents
-- [ ] Compare to Python baseline performance
-- [ ] Analyze emergent strategies
+- [x] Reference bucket-brigade repo (pure-Rust `bucket-brigade-core` dep, opt-in feature)
+- [x] Implement the BucketBrigade env adapter (`JointEnv` + per-agent observations)
+- [x] Training examples (`examples/games/bucket_brigade/train_psro.rs`, `train_nfsp.rs`)
+- [x] PSRO (α-rank) + NFSP integration with `gap_closed` metric
+- [ ] Long-budget training + Python-baseline comparison + strategy analysis
+      → **operator-gated, tracked in #134** (needs alc-2 GPU time)
 
-**Deliverable**: Research-ready multi-agent training
-
-**Estimated Effort**: 3-4 days
+**Deliverable**: Research-ready multi-agent training — *infrastructure shipped;
+the validation run is the remaining piece (#134).*
 
 ---
 
@@ -127,26 +136,27 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 
 #### Milestone 5: More Environments
 - [x] Multi-agent competitive games (Pong self-play)
-- [x] Continuous-control envs (PendulumSwingUp, ContinuousLqr)
+- [x] Continuous-control envs (PendulumSwingUp, ContinuousLqr, MountainCarContinuous)
 - [ ] Atari environments (via Rust ALE bindings)
 - [ ] MuJoCo environments (via mujoco-rs) — now unblocked by SAC
 - [ ] Custom 2D grid worlds
 
-#### Milestone 6: Algorithm Expansion
+#### Milestone 6: Algorithm Expansion ✅ COMPLETE
 - See [`docs/RL_TOYBOX_SURVEY.md`](docs/RL_TOYBOX_SURVEY.md) for ranked port recommendations (replay buffer, DQN, SAC, centralized critic, MCTS) and prioritized follow-up issues.
 - [x] DQN for discrete actions (Double-DQN + Polyak target updates)
 - [x] SAC (Soft Actor-Critic) for continuous control (twin critics, auto-entropy tuning)
+- [x] A2C (Advantage Actor-Critic)
+- [x] Imitation learning (behavioral cloning)
 - [x] PSRO with α-rank meta-solver (N-player)
 - [x] NFSP (approximate, N-player, multi-discrete)
-- [ ] A2C (Advantage Actor-Critic)
-- [x] Imitation learning (behavioral cloning)
 
 #### Milestone 7: Performance Optimization
+- [x] Benchmark suite (criterion throughput harness for PPO/A2C/DQN/SAC; see `benches/trainer_throughput.rs`)
 - [ ] Multi-GPU data parallelism
 - [ ] Mixed precision training (FP16)
 - [ ] JIT compilation for environments
 - [ ] CUDA kernel optimization
-- [ ] Benchmark suite
+- [ ] GPU-backend (wgpu/cuda) training benchmarks vs the CPU NdArray baseline
 
 ---
 
@@ -169,21 +179,31 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 
 ## Priority Queue (Next Tasks)
 
+With Milestone 6 (algorithm expansion) complete and the benchmark harness in
+place, the meaningful next moves are:
+
 1. **Research validation on alc-2** (operator-gated, issue #134)
    - Long-budget PSRO/NFSP training on the Bucket Brigade no-convergence cells
    - Answers the open research question (do PSRO+α-rank / NFSP beat PPO there?)
-   - Infrastructure is shipped; needs GPU host time + manual artifact promotion
+   - Infrastructure is shipped; needs GPU host time + manual artifact promotion.
+     The single highest-value open item — not automatable.
 
-2. **A2C trainer** (Milestone 6)
-   - Reuses the existing PPO rollout/GAE path; smaller surface than SAC
-   - Architect → builder decomposition
+2. **WASM demo** (Milestone 3)
+   - `wasm-bindgen` bindings + browser inference + a Canvas CartPole demo
+   - Pure-Rust inference path is already done; no weight-export blocker remains
+     post-Burn. Highest-visibility "train in Rust, deploy to web" showcase.
 
-3. **Capitalize on SAC** (Milestone 5)
-   - `train_sac` example + a second continuous env (LunarLanderContinuous, or
-     MuJoCo via `mujoco-rs`) to take SAC from "implemented" to "benchmarked"
+3. **GPU-backend benchmarking** (Milestone 7)
+   - Run the new throughput harness on the `wgpu` / `cuda` backends and compare
+     to the CPU NdArray baseline; the harness exists, the GPU numbers don't yet.
 
-4. **WASM demo** — `wasm-bindgen` bindings + browser inference (pure-Rust
-   inference path is already done; no weight-export blocker remains post-Burn)
+4. **More environments** (Milestone 5)
+   - The next env adds breadth: a discrete grid world, an Atari/ALE binding, or
+     MuJoCo via `mujoco-rs` (now that SAC + two continuous envs are proven).
+
+5. **Library polish toward crates.io** (Milestone 8)
+   - The algorithm surface is now broad enough to be worth packaging: API docs,
+     an example gallery, and a first published release.
 
 ## Dependencies & Blockers
 
