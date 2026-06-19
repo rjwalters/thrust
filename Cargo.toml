@@ -144,9 +144,10 @@ env-bucket-brigade = ["bucket-brigade-core"]
 criterion = "0.5"
 tempfile = "3.8"
 
-# [[bench]]
-# name = "benchmarks"
-# harness = false
+[[bench]]
+name = "trainer_throughput"
+harness = false
+required-features = ["training"]
 
 [profile.release]
 opt-level = 3
