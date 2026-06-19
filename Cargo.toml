@@ -195,6 +195,16 @@ name = "train_sac"
 path = "examples/games/pendulum/train_sac.rs"
 required-features = ["training"]
 
+# Seeded SAC trainer on the continuous MountainCarContinuous env (issue
+# #168, epic #163). Deceptive-reward sibling of the Pendulum SAC example;
+# runnable counterpart of tests/test_sac_mountain_car.rs. Emits an opt-in
+# learning curve via CURVE_CSV. The actor action needs no rescaling: the
+# env's force range is already [-1, 1].
+[[example]]
+name = "train_sac_mountain_car"
+path = "examples/games/mountain_car/train_sac_mountain_car.rs"
+required-features = ["training"]
+
 # Multi-agent / self-play trainers resurrected from the pre-Burn
 # deletion (PR #98) per issue #101.
 [[example]]
