@@ -40,7 +40,7 @@ use burn::{
     tensor::{Tensor, activation, backend::Backend},
 };
 
-use super::mlp::linear_with_init;
+use super::mlp::{derive_layer_seed, linear_from_weights, linear_with_init, seeded_layer_weights};
 
 /// Configuration for [`QNetworkBurn`] architecture.
 ///
@@ -56,11 +56,34 @@ pub struct QNetworkBurnConfig {
     /// (gain `sqrt(2)`) and the Q-head with `gain = 0.01`. Set
     /// `false` for Burn's stock Kaiming-uniform default.
     pub use_orthogonal_init: bool,
+    /// Optional construction seed. When `Some`, every layer is built from a
+    /// deterministically-derived host-side RNG stream (see
+    /// [`crate::policy::seeded_init`]) so two constructions with the same seed
+    /// produce **bit-identical** networks. When `None` (the default) Burn's
+    /// unseedable [`Initializer`] path is used verbatim. This mirrors
+    /// [`crate::policy::continuous_q::ContinuousQNetworkConfig::seed`] so the
+    /// discrete and continuous Q-networks share the same reproducibility hook.
+    pub seed: Option<u64>,
 }
 
 impl Default for QNetworkBurnConfig {
     fn default() -> Self {
-        Self { hidden_dim: 64, use_orthogonal_init: true }
+        Self { hidden_dim: 64, use_orthogonal_init: true, seed: None }
+    }
+}
+
+impl QNetworkBurnConfig {
+    /// Set the construction seed, enabling the deterministic host-side init
+    /// path in [`QNetworkBurn::with_config`].
+    ///
+    /// ```
+    /// # use thrust_rl::policy::q_network::QNetworkBurnConfig;
+    /// let cfg = QNetworkBurnConfig::default().with_seed(42);
+    /// assert_eq!(cfg.seed, Some(42));
+    /// ```
+    pub fn with_seed(mut self, seed: u64) -> Self {
+        self.seed = Some(seed);
+        self
     }
 }
 
@@ -83,6 +106,25 @@ impl<B: Backend> QNetworkBurn<B> {
         )
     }
 
+    /// Build a fresh Q-network whose weights are seeded for bit-exact
+    /// reproducibility. Two calls with the same `seed` (and shapes) produce
+    /// byte-identical networks; mirrors
+    /// [`crate::policy::continuous_q::ContinuousQNetwork`].
+    pub fn with_seed(
+        obs_dim: usize,
+        n_actions: usize,
+        hidden_dim: usize,
+        seed: u64,
+        device: &B::Device,
+    ) -> Self {
+        Self::with_config(
+            obs_dim,
+            n_actions,
+            QNetworkBurnConfig { hidden_dim, ..Default::default() }.with_seed(seed),
+            device,
+        )
+    }
+
     /// Build a fresh Q-network with the given configuration.
     pub fn with_config(
         obs_dim: usize,
@@ -90,20 +132,51 @@ impl<B: Backend> QNetworkBurn<B> {
         config: QNetworkBurnConfig,
         device: &B::Device,
     ) -> Self {
-        let hidden_init = if config.use_orthogonal_init {
-            Initializer::Orthogonal { gain: 2.0_f64.sqrt() }
-        } else {
-            Initializer::KaimingUniform { gain: 1.0_f64 / 3.0_f64.sqrt(), fan_out_only: false }
-        };
-        let output_init = if config.use_orthogonal_init {
-            Initializer::Orthogonal { gain: 0.01 }
-        } else {
-            Initializer::KaimingUniform { gain: 1.0_f64 / 3.0_f64.sqrt(), fan_out_only: false }
-        };
+        let hidden = config.hidden_dim;
 
-        let fc1 = linear_with_init::<B>(obs_dim, config.hidden_dim, hidden_init.clone(), device);
-        let fc2 = linear_with_init::<B>(config.hidden_dim, config.hidden_dim, hidden_init, device);
-        let q_head = linear_with_init::<B>(config.hidden_dim, n_actions, output_init, device);
+        let (fc1, fc2, q_head) = if let Some(base_seed) = config.seed {
+            // Seeded host-side init: each layer pulls from a distinct,
+            // deterministically-derived RNG stream so equal-shaped layers
+            // don't collide. Mirrors `ContinuousQNetwork::with_config`.
+            let mut layer_idx = 0u64;
+            let mut next = || {
+                let s = derive_layer_seed(base_seed, layer_idx);
+                layer_idx += 1;
+                s
+            };
+
+            let w1 =
+                seeded_layer_weights(next(), obs_dim, hidden, config.use_orthogonal_init, false);
+            let fc1 = linear_from_weights::<B>(obs_dim, hidden, &w1, device);
+
+            let w2 =
+                seeded_layer_weights(next(), hidden, hidden, config.use_orthogonal_init, false);
+            let fc2 = linear_from_weights::<B>(hidden, hidden, &w2, device);
+
+            let wq =
+                seeded_layer_weights(next(), hidden, n_actions, config.use_orthogonal_init, true);
+            let q_head = linear_from_weights::<B>(hidden, n_actions, &wq, device);
+
+            (fc1, fc2, q_head)
+        } else {
+            // Unseeded: route through Burn's `Initializer` verbatim.
+            let hidden_init = if config.use_orthogonal_init {
+                Initializer::Orthogonal { gain: 2.0_f64.sqrt() }
+            } else {
+                Initializer::KaimingUniform { gain: 1.0_f64 / 3.0_f64.sqrt(), fan_out_only: false }
+            };
+            let output_init = if config.use_orthogonal_init {
+                Initializer::Orthogonal { gain: 0.01 }
+            } else {
+                Initializer::KaimingUniform { gain: 1.0_f64 / 3.0_f64.sqrt(), fan_out_only: false }
+            };
+
+            let fc1 = linear_with_init::<B>(obs_dim, hidden, hidden_init.clone(), device);
+            let fc2 = linear_with_init::<B>(hidden, hidden, hidden_init, device);
+            let q_head = linear_with_init::<B>(hidden, n_actions, output_init, device);
+
+            (fc1, fc2, q_head)
+        };
 
         Self { fc1, fc2, q_head }
     }
@@ -162,6 +235,31 @@ mod tests {
         assert_eq!(q_values.dims(), [8, 3]);
     }
 
+    /// Two seeded constructions with the same seed must yield bit-identical
+    /// Q-values, while different seeds must disagree. Mirrors
+    /// `ContinuousQNetwork`'s `seeded_construction_is_bit_exact`.
+    #[test]
+    fn seeded_construction_is_bit_exact() {
+        let device = Default::default();
+        let a = QNetworkBurn::<B>::with_seed(4, 2, 16, 7, &device);
+        let b = QNetworkBurn::<B>::with_seed(4, 2, 16, 7, &device);
+        let c = QNetworkBurn::<B>::with_seed(4, 2, 16, 8, &device);
+
+        let obs = Tensor::<B, 2>::from_data(
+            burn::tensor::TensorData::new(vec![0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8], [2, 4]),
+            &device,
+        );
+        let qa: Vec<f32> = a.forward(obs.clone()).into_data().to_vec().unwrap();
+        let qb: Vec<f32> = b.forward(obs.clone()).into_data().to_vec().unwrap();
+        let qc: Vec<f32> = c.forward(obs).into_data().to_vec().unwrap();
+
+        assert_eq!(qa, qb, "same seed must yield bit-identical Q-networks");
+        assert!(
+            qa.iter().zip(&qc).any(|(x, y)| (x - y).abs() > 1e-6),
+            "different seeds should yield different Q-networks"
+        );
+    }
+
     /// Mirrors `q_network::tests::test_copy_params_from_byte_equal`
     /// from the tch path: after copying online → target, their forward
     /// outputs must agree exactly.
@@ -171,13 +269,13 @@ mod tests {
         let online = QNetworkBurn::<B>::with_config(
             4,
             2,
-            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false },
+            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false, ..Default::default() },
             &device,
         );
         let target = QNetworkBurn::<B>::with_config(
             4,
             2,
-            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false },
+            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false, ..Default::default() },
             &device,
         );
 
@@ -200,7 +298,7 @@ mod tests {
         let online_for_recall = QNetworkBurn::<B>::with_config(
             4,
             2,
-            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false },
+            QNetworkBurnConfig { hidden_dim: 16, use_orthogonal_init: false, ..Default::default() },
             &device,
         );
         // To compare, we want the sync to make `target` match `online`

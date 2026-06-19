@@ -1,10 +1,29 @@
-//! Throughput / wall-clock benchmarks for the on-policy trainers.
+//! Throughput / wall-clock benchmarks for the trainers.
 //!
-//! Measures steps/sec and per-update wall-clock for the A2C trainer
-//! ([`A2cTrainer`]) and, for an apples-to-apples comparison, the PPO
-//! trainer ([`PPOTrainerBurn`]). All benchmarks run on the pure-Rust
+//! Measures steps/sec and per-update wall-clock for the on-policy A2C
+//! ([`A2cTrainer`]) and PPO ([`PPOTrainerBurn`]) trainers and the off-policy
+//! DQN trainer ([`DQNTrainerBurn`]). All benchmarks run on the pure-Rust
 //! `Autodiff<NdArray<f32>>` (CPU) backend and are seeded so the numbers
 //! are comparable run-to-run.
+//!
+//! # Fairness caveat: on-policy vs off-policy steps/sec
+//!
+//! The `*_steps_per_sec` groups measure full-loop environment throughput and
+//! are comparable WITHIN an algorithm class only (on-policy: A2C-vs-PPO;
+//! off-policy: DQN-vs-SAC). They are NOT comparable across classes, because
+//! the two classes do a different amount of gradient work per environment
+//! step: an on-policy trainer collects `n_steps * num_envs` env interactions
+//! and then amortizes ONE update over all of them, whereas an off-policy
+//! trainer does ONE replay-sampled gradient update (on a `batch_size`
+//! minibatch) for EVERY single env step. So off-policy does roughly
+//! `batch_size` more gradient work per env step than on-policy — a raw
+//! "DQN steps/sec vs A2C steps/sec" comparison is therefore meaningless.
+//! Use the `*_train_step` groups (per-update cost on a fixed batch) as the
+//! only cross-class comparable number. To keep the off-policy steps/sec
+//! numbers honest, the replay buffer is pre-filled to `min_buffer_size` in
+//! the untimed setup closure so the timed region measures steady-state
+//! throughput (one real update per step) rather than the warmup transient
+//! (env steps whose `train_step` is a `None` no-op).
 //!
 //! Benchmark groups:
 //! - `a2c_cartpole_steps_per_sec` — a full rollout-collect (CartPole env
@@ -17,6 +36,13 @@
 //!   synthetic batch, for a head-to-head per-update comparison.
 //! - `ppo_cartpole_steps_per_sec` — a full-loop PPO comparison mirroring the
 //!   A2C full-loop benchmark.
+//! - `dqn_train_step` — a single Double-DQN [`DQNTrainerBurn::train_step`] on a
+//!   replay minibatch (buffer pre-filled untimed in setup), isolating the
+//!   off-policy per-update cost. Cross-class comparable against
+//!   `a2c_train_step` / `ppo_train_step`.
+//! - `dqn_cartpole_steps_per_sec` — a full DQN env-loop (one CartPole step +
+//!   buffer push + one gradient update per env step), reported in
+//!   environment-steps/sec. Comparable within the off-policy class only.
 //!
 //! Run quickly with, e.g.:
 //! ```text
@@ -35,8 +61,10 @@ use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rand::{SeedableRng, rngs::StdRng};
 use thrust_rl::{
     env::{Environment, games::cartpole::CartPole},
-    policy::mlp::MlpBurnPolicy,
-    train::{A2cConfig, A2cTrainer, BurnOptimizer, PPOConfig, PPOTrainerBurn},
+    policy::{mlp::MlpBurnPolicy, q_network::QNetworkBurn},
+    train::{
+        A2cConfig, A2cTrainer, BurnOptimizer, DQNConfig, DQNTrainerBurn, PPOConfig, PPOTrainerBurn,
+    },
 };
 
 /// CPU autodiff backend used for every benchmark.
@@ -55,6 +83,18 @@ const SYNTH_BATCH: usize = 64;
 // Full-loop rollout shape (mirrors A2C defaults: n_steps=5, num_envs=16).
 const ROLLOUT_N_STEPS: usize = 5;
 const ROLLOUT_NUM_ENVS: usize = 16;
+
+// DQN replay/minibatch shape. `DQN_BATCH` is the per-update minibatch sampled
+// from the replay buffer; `DQN_MIN_BUFFER` is the warmup threshold below which
+// `train_step` is a no-op (`Ok(None)`). The fixtures pre-fill the buffer to
+// `DQN_MIN_BUFFER` so every timed `train_step` performs a real gradient update.
+const DQN_BATCH: usize = 64;
+const DQN_MIN_BUFFER: usize = 256;
+const DQN_BUFFER_CAPACITY: usize = 4_096;
+
+// Number of timed env steps in the DQN full-loop benchmark. Each step is one
+// CartPole transition + buffer push + one gradient update.
+const DQN_LOOP_STEPS: usize = 16;
 
 /// Build a fresh, seeded A2C trainer on the CPU backend.
 fn make_a2c_trainer()
@@ -343,11 +383,183 @@ fn bench_ppo_cartpole_steps_per_sec(c: &mut Criterion) {
     group.finish();
 }
 
+/// DQN-specific configuration shared by both DQN benchmark groups.
+///
+/// Small replay buffer / minibatch so each timed iteration completes quickly
+/// on CPU while still exercising the full Double-DQN backward pass. Hard
+/// target sync (no soft update) so the timed region is just the gradient step.
+fn dqn_config() -> DQNConfig {
+    DQNConfig::new()
+        .learning_rate(1e-3)
+        .batch_size(DQN_BATCH)
+        .buffer_capacity(DQN_BUFFER_CAPACITY)
+        .min_buffer_size(DQN_MIN_BUFFER)
+        .target_update_interval(500)
+        .gamma(0.99)
+        .epsilon_start(1.0)
+        .epsilon_end(0.05)
+        .epsilon_decay_steps(10_000)
+}
+
+/// Build a fresh, seeded Burn DQN trainer on the CPU backend.
+fn make_dqn_trainer()
+-> DQNTrainerBurn<B, QNetworkBurn<B>, impl burn::optim::Optimizer<QNetworkBurn<B>, B>> {
+    let device: NdArrayDevice = Default::default();
+    let online = QNetworkBurn::<B>::new(OBS_DIM, ACTION_DIM, HIDDEN_DIM, &device);
+    let inner_opt = AdamConfig::new().init();
+    let config = dqn_config();
+    let burn_opt: BurnOptimizer<B, QNetworkBurn<B>, _> =
+        BurnOptimizer::new(inner_opt, config.learning_rate);
+    DQNTrainerBurn::new(config, online, burn_opt, OBS_DIM, ACTION_DIM as i64, device)
+        .expect("valid DQN config")
+}
+
+/// A single deterministic synthetic CartPole-shaped transition derived from a
+/// step index. Mirrors the trainer's own unit-test fixture so the pushed data
+/// is plausible (bounded floats, alternating actions, periodic dones).
+fn synthetic_transition(i: usize) -> ([f32; OBS_DIM], i64, f32, [f32; OBS_DIM], bool) {
+    let phase = (i as f32) * 0.1;
+    let obs = [phase.sin(), phase.cos(), phase * 0.5, phase * -0.3];
+    let next_obs = [(phase + 0.1).sin(), (phase + 0.1).cos(), phase * 0.5, phase * -0.3];
+    let action = (i % ACTION_DIM) as i64;
+    let reward = if action == 0 { 1.0 } else { -1.0 };
+    let done = i % 32 == 31;
+    (obs, action, reward, next_obs, done)
+}
+
+/// Pre-fill a trainer's replay buffer with `n` seeded synthetic transitions
+/// so `train_step` performs a real gradient update instead of the warmup
+/// `None` no-op.
+fn prefill_buffer(
+    trainer: &mut DQNTrainerBurn<
+        B,
+        QNetworkBurn<B>,
+        impl burn::optim::Optimizer<QNetworkBurn<B>, B>,
+    >,
+    n: usize,
+) {
+    for i in 0..n {
+        let (obs, action, reward, next_obs, done) = synthetic_transition(i);
+        trainer.buffer_mut().push(&obs, action, reward, &next_obs, done);
+    }
+}
+
+/// `dqn_train_step` — isolated single Double-DQN gradient step on a replay
+/// minibatch. The `iter_batched` setup closure (untimed) builds a fresh
+/// seeded trainer and pre-fills its replay buffer past `min_buffer_size`, so
+/// every timed `train_step` performs exactly one real gradient update (never
+/// `None`). This is the off-policy per-update number, cross-class comparable
+/// against `a2c_train_step` / `ppo_train_step`.
+fn bench_dqn_train_step(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dqn_train_step");
+    group.throughput(Throughput::Elements(DQN_BATCH as u64));
+    group.bench_function("replay_minibatch", |b| {
+        b.iter_batched(
+            || {
+                let mut trainer = make_dqn_trainer();
+                prefill_buffer(&mut trainer, DQN_MIN_BUFFER);
+                (trainer, StdRng::seed_from_u64(99))
+            },
+            |(mut trainer, mut rng)| {
+                let stats = trainer
+                    .train_step(
+                        &mut rng,
+                        |q: &QNetworkBurn<B>, o: Tensor<B, 2>| q.forward(o),
+                        |q: &QNetworkBurn<B>, o: Tensor<B, 2>| q.forward(o),
+                    )
+                    .expect("DQN train_step")
+                    .expect("buffer pre-filled, train_step must update (not None)");
+                black_box(stats)
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
+/// `dqn_cartpole_steps_per_sec` — full DQN env-loop: step a seeded CartPole
+/// env, push the transition, and run one gradient update per env step
+/// (mirroring `train_cartpole_dqn`). The buffer is pre-filled to
+/// `min_buffer_size` in the untimed setup so the timed region measures
+/// steady-state throughput (one update per step), not the warmup transient.
+/// Reported in environment-steps/sec; comparable within the off-policy class
+/// only (see module header).
+fn bench_dqn_cartpole_steps_per_sec(c: &mut Criterion) {
+    let device: NdArrayDevice = Default::default();
+
+    let mut group = c.benchmark_group("dqn_cartpole_steps_per_sec");
+    group.throughput(Throughput::Elements(DQN_LOOP_STEPS as u64));
+    group.bench_function("env_step_plus_update", |b| {
+        b.iter_batched(
+            || {
+                let mut trainer = make_dqn_trainer();
+                prefill_buffer(&mut trainer, DQN_MIN_BUFFER);
+                let mut env = CartPole::new();
+                env.reset();
+                (trainer, env, StdRng::seed_from_u64(0xC0FFEE))
+            },
+            |(mut trainer, mut env, mut rng)| {
+                let mut obs = env.get_observation();
+                for _ in 0..DQN_LOOP_STEPS {
+                    let action = trainer.select_action(
+                        &obs,
+                        &mut rng,
+                        |q: &QNetworkBurn<B>, o_host: &[f32]| {
+                            let o_t: Tensor<B, 2> = Tensor::from_data(
+                                TensorData::new(o_host.to_vec(), [1, o_host.len()]),
+                                &device,
+                            );
+                            let q_host: Vec<f32> =
+                                q.forward(o_t).into_data().to_vec().unwrap_or_default();
+                            let mut best = 0_i64;
+                            let mut best_v = f32::NEG_INFINITY;
+                            for (i, &v) in q_host.iter().enumerate() {
+                                if v > best_v {
+                                    best_v = v;
+                                    best = i as i64;
+                                }
+                            }
+                            best
+                        },
+                    );
+
+                    let result = env.step(action);
+                    let next_obs = result.observation.clone();
+                    let done = result.terminated || result.truncated;
+                    trainer.buffer_mut().push(&obs, action, result.reward, &next_obs, done);
+                    obs = next_obs;
+
+                    trainer.increment_env_step();
+
+                    let stats = trainer
+                        .train_step(
+                            &mut rng,
+                            |q: &QNetworkBurn<B>, o: Tensor<B, 2>| q.forward(o),
+                            |q: &QNetworkBurn<B>, o: Tensor<B, 2>| q.forward(o),
+                        )
+                        .expect("DQN train_step")
+                        .expect("buffer pre-filled, train_step must update (not None)");
+                    black_box(stats);
+
+                    if done {
+                        env.reset();
+                        obs = env.get_observation();
+                    }
+                }
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_a2c_train_step,
     bench_ppo_train_step,
     bench_a2c_cartpole_steps_per_sec,
     bench_ppo_cartpole_steps_per_sec,
+    bench_dqn_train_step,
+    bench_dqn_cartpole_steps_per_sec,
 );
 criterion_main!(benches);
