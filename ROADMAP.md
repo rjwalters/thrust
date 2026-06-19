@@ -139,7 +139,7 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 - [x] PSRO with α-rank meta-solver (N-player)
 - [x] NFSP (approximate, N-player, multi-discrete)
 - [ ] A2C (Advantage Actor-Critic)
-- [ ] Imitation learning (behavioral cloning)
+- [x] Imitation learning (behavioral cloning)
 
 #### Milestone 7: Performance Optimization
 - [ ] Multi-GPU data parallelism

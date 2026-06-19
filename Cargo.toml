@@ -187,6 +187,15 @@ name = "train_cartpole_a2c"
 path = "examples/games/cartpole/train_cartpole_a2c.rs"
 required-features = ["training"]
 
+# End-to-end Behavioral Cloning on CartPole (issue #169, epic #161): train an
+# A2C expert, harvest greedy demos, clone a fresh policy with BcTrainer, and
+# report cloned-vs-expert mean episode reward. Runnable counterpart of
+# tests/test_bc_cartpole.rs. Closes ROADMAP Milestone 6 imitation learning.
+[[example]]
+name = "train_bc_cartpole"
+path = "examples/games/cartpole/train_bc_cartpole.rs"
+required-features = ["training"]
+
 # Seeded SAC trainer on the continuous PendulumSwingUp env (issue #162,
 # epic #159). Runnable counterpart of tests/test_sac_pendulum.rs; emits
 # an opt-in negative-return learning curve via CURVE_CSV.
