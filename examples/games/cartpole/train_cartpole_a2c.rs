@@ -1,44 +1,56 @@
-//! Modern CartPole PPO training on the Burn backend.
+//! CartPole A2C training on the Burn backend.
 //!
-//! End-to-end PPO trainer for CartPole-v1 using the
+//! End-to-end synchronous Advantage Actor-Critic (A2C) trainer for
+//! CartPole-v1 using the
 //! [`MlpBurnPolicy`](thrust_rl::policy::mlp::MlpBurnPolicy) +
-//! [`PPOTrainerBurn`](thrust_rl::train::ppo::PPOTrainerBurn) stack on
-//! `Autodiff<NdArray<f32>>` (CPU). This is one of the resurrected
-//! trainers from issue #101 (PR #98 deleted the pre-Burn version).
+//! [`A2cTrainer`](thrust_rl::train::a2c::A2cTrainer) stack on
+//! `Autodiff<NdArray<f32>>` (CPU). This is PR C of the A2C epic (#150,
+//! issue #153) and mirrors the PPO example
+//! (`train_cartpole_modern.rs`): same `EnvPool` rollout-collect + GAE
+//! pattern, swapping `PPOTrainerBurn`/`PPOConfig` for
+//! `A2cTrainer`/`A2cConfig`.
+//!
+//! A2C differs from PPO in two places (see
+//! [`thrust_rl::train::a2c::trainer`]): an un-clipped policy-gradient +
+//! plain-MSE value loss, and exactly **one** gradient step per rollout (no
+//! epoch loop, no minibatch shuffle, no importance ratio — hence
+//! `train_step` takes no `old_log_probs` / `old_values`).
 //!
 //! # Architecture
 //!
 //! - 2-layer MLP, 128 hidden units, ReLU activations, orthogonal init.
 //! - `EnvPool` of 16 parallel CartPole envs.
-//! - `n_steps = 256` rollout, `n_epochs = 10`, `batch_size = 128`.
-//! - Total budget: 200k env steps (≈ 50 PPO updates).
+//! - `n_steps = 5` rollout, single update per rollout.
+//! - `learning_rate = 7e-4`, seeded via `A2cConfig::seed`.
+//! - Total budget: 500k env steps by default.
 //!
 //! # Usage
 //!
 //! ```bash
-//! cargo run --example train_cartpole_modern --features training --release
+//! cargo run --example train_cartpole_a2c --features training --release
 //! ```
 //!
 //! Override the total step budget via the `TOTAL_TIMESTEPS` env var:
 //!
 //! ```bash
-//! TOTAL_TIMESTEPS=50000 cargo run --example train_cartpole_modern \
+//! TOTAL_TIMESTEPS=200000 cargo run --example train_cartpole_a2c \
 //!     --features training --release
 //! ```
 //!
 //! Expected: average episode length climbs well above the random
-//! baseline (~22 steps) within ~100k env steps.
+//! baseline (~22 steps).
 //!
 //! # Learning-curve CSV (opt-in)
 //!
 //! Set `CURVE_CSV=<path>` to emit one `env_steps,mean_episode_reward` row
-//! per logging interval (header row first). The run is seeded, so re-runs
-//! reproduce. This is the comparison curve for the A2C benchmark (issue
-//! #153) — A2C and PPO can be overlaid on the same env/seed/budget. When
-//! `CURVE_CSV` is unset, no file is written and behavior is unchanged.
+//! per logging interval (header row first). The policy init is seeded, so
+//! re-runs reproduce. The same opt-in writer lives on the PPO example, so
+//! A2C and PPO curves can be overlaid on the same env/seed/budget for the
+//! benchmark comparison. When `CURVE_CSV` is unset, no file is written and
+//! behavior is unchanged.
 //!
 //! ```bash
-//! CURVE_CSV=/tmp/ppo.csv cargo run --example train_cartpole_modern \
+//! CURVE_CSV=/tmp/a2c.csv cargo run --example train_cartpole_a2c \
 //!     --features training --release
 //! ```
 
@@ -54,15 +66,14 @@ use thrust_rl::{
     env::{Environment, cartpole::CartPole, pool::EnvPool},
     policy::mlp::{BurnActivation, MlpBurnConfig, MlpBurnPolicy},
     train::{
+        a2c::{A2cConfig, A2cTrainer},
         optimizer::BurnOptimizer,
-        ppo::{PPOConfig, PPOTrainerBurn},
     },
 };
 
 // Concrete backend stack — selected at compile time via Cargo features.
 // `--features "training,wgpu"` swaps the CPU NdArray default for Burn's
-// cross-platform GPU backend (Vulkan / Metal / DX12 / WebGPU). See issue
-// #102 for the GPU validation run.
+// cross-platform GPU backend (Vulkan / Metal / DX12 / WebGPU).
 #[cfg(not(feature = "wgpu"))]
 type InnerBackend = burn::backend::NdArray<f32>;
 #[cfg(feature = "wgpu")]
@@ -75,14 +86,15 @@ const BACKEND_LABEL: &str = "NdArray<f32> + Autodiff (CPU)";
 const BACKEND_LABEL: &str = "Wgpu<f32, i32> + Autodiff (GPU: Vulkan/Metal/DX12/WebGPU)";
 
 const NUM_ENVS: usize = 16;
-const NUM_STEPS: usize = 256;
-const DEFAULT_TIMESTEPS: usize = 200_000;
-const LEARNING_RATE: f64 = 3e-4;
+const NUM_STEPS: usize = 5;
+const DEFAULT_TIMESTEPS: usize = 500_000;
+const LEARNING_RATE: f64 = 7e-4;
 const HIDDEN_DIM: usize = 128;
 const GAMMA: f32 = 0.99;
-const GAE_LAMBDA: f32 = 0.95;
-/// Seed for reproducible policy init + env reset, so the opt-in
-/// learning-curve CSV is reproducible and overlay-comparable with A2C.
+// Classic A2C uses full n-step returns (gae_lambda = 1.0).
+const GAE_LAMBDA: f32 = 1.0;
+/// Seed for reproducible policy init, threaded through both the policy
+/// network init and `A2cConfig::seed`.
 const SEED: u64 = 0;
 
 fn main() -> Result<()> {
@@ -93,7 +105,7 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_TIMESTEPS);
 
-    tracing::info!("Starting Modern CartPole PPO Training (Burn backend: {})", BACKEND_LABEL);
+    tracing::info!("Starting CartPole A2C Training (Burn backend: {})", BACKEND_LABEL);
 
     let training_start = std::time::Instant::now();
 
@@ -122,9 +134,8 @@ fn main() -> Result<()> {
     // length.
     let mut curve_csv = open_curve_csv()?;
 
-    // Policy: 2-layer ReLU MLP, orthogonal init. Seeded for a reproducible
-    // policy initialization so the learning curve is overlay-comparable
-    // with A2C on the same seed.
+    // Policy: 2-layer ReLU MLP, orthogonal init, seeded for reproducible
+    // initialization.
     let policy_config = MlpBurnConfig {
         num_layers: 2,
         hidden_dim: HIDDEN_DIM,
@@ -138,32 +149,28 @@ fn main() -> Result<()> {
     let burn_opt: BurnOptimizer<Backend, MlpBurnPolicy<Backend>, _> =
         BurnOptimizer::new(inner_opt, LEARNING_RATE);
 
-    let ppo_config = PPOConfig::new()
+    let a2c_config = A2cConfig::new()
         .learning_rate(LEARNING_RATE)
-        .n_epochs(10)
-        .batch_size(128)
         .gamma(GAMMA as f64)
         .gae_lambda(GAE_LAMBDA as f64)
-        .clip_range(0.2)
-        .clip_range_vf(0.2)
-        .vf_coef(0.5)
-        .ent_coef(0.01)
+        .value_coef(0.5)
+        .entropy_coef(0.01)
+        .n_steps(NUM_STEPS)
+        .num_envs(NUM_ENVS)
         .max_grad_norm(0.5)
-        // Disable KL early-stop (the trainer's collapse guard handles
-        // pathology; KL early-stop interferes with small-budget runs).
-        .target_kl(1.0);
+        .normalize_advantages(true)
+        .seed(SEED);
 
-    let mut trainer = PPOTrainerBurn::new(ppo_config, policy, burn_opt)?;
+    let mut trainer = A2cTrainer::new(a2c_config, policy, burn_opt)?;
 
     let num_updates = total_timesteps / (NUM_STEPS * NUM_ENVS);
-    tracing::info!("Planned PPO updates: {}", num_updates);
+    tracing::info!("Planned A2C updates: {}", num_updates);
     tracing::info!("------------------------------------------------------------");
 
     // Rollout buffers (host).
     let cap = NUM_STEPS * NUM_ENVS;
     let mut buf_obs: Vec<f32> = Vec::with_capacity(cap * obs_dim);
     let mut buf_actions: Vec<i64> = Vec::with_capacity(cap);
-    let mut buf_log_probs: Vec<f32> = Vec::with_capacity(cap);
     let mut buf_values: Vec<f32> = Vec::with_capacity(cap);
     let mut buf_rewards: Vec<f32> = Vec::with_capacity(cap);
     let mut buf_dones: Vec<f32> = Vec::with_capacity(cap);
@@ -180,7 +187,6 @@ fn main() -> Result<()> {
     for update in 0..num_updates {
         buf_obs.clear();
         buf_actions.clear();
-        buf_log_probs.clear();
         buf_values.clear();
         buf_rewards.clear();
         buf_dones.clear();
@@ -191,14 +197,13 @@ fn main() -> Result<()> {
             let obs_t: Tensor<Backend, 2> =
                 Tensor::from_data(TensorData::new(obs_flat, [NUM_ENVS, obs_dim]), &device);
 
-            let (actions, log_probs, values) = trainer.policy().get_action_host(obs_t);
+            let (actions, _log_probs, values) = trainer.policy().get_action_host(obs_t);
 
             let results = env_pool.step(&actions);
 
             for env_id in 0..NUM_ENVS {
                 buf_obs.extend_from_slice(&observations[env_id]);
                 buf_actions.push(actions[env_id]);
-                buf_log_probs.push(log_probs[env_id]);
                 buf_values.push(values[env_id]);
                 buf_rewards.push(results[env_id].reward);
 
@@ -242,25 +247,17 @@ fn main() -> Result<()> {
             Tensor::from_data(TensorData::new(buf_obs.clone(), [batch, obs_dim]), &device);
         let actions_b: Tensor<Backend, 1, Int> =
             Tensor::from_data(TensorData::new(buf_actions.clone(), [batch]), &device);
-        let old_log_probs_b: Tensor<Backend, 1> =
-            Tensor::from_data(TensorData::new(buf_log_probs.clone(), [batch]), &device);
-        let old_values_b: Tensor<Backend, 1> =
-            Tensor::from_data(TensorData::new(buf_values.clone(), [batch]), &device);
         let advantages_b: Tensor<Backend, 1> =
             Tensor::from_data(TensorData::new(advantages_host, [batch]), &device);
         let returns_b: Tensor<Backend, 1> =
             Tensor::from_data(TensorData::new(returns_host, [batch]), &device);
 
-        // --- Train step --------------------------------------------
-        let stats = trainer.train_step(
-            obs_b,
-            actions_b,
-            old_log_probs_b,
-            old_values_b,
-            advantages_b,
-            returns_b,
-            |p, o, a| p.evaluate_actions(o, a),
-        )?;
+        // --- Train step (single A2C update) ------------------------
+        // A2C drops old_log_probs / old_values: on-policy, one update per
+        // rollout, no importance ratio, no value clipping.
+        let stats = trainer.train_step(obs_b, actions_b, advantages_b, returns_b, |p, o, a| {
+            p.evaluate_actions(o, a)
+        })?;
 
         // --- Log progress ------------------------------------------
         if !completed_episode_lengths.is_empty() {
@@ -270,20 +267,25 @@ fn main() -> Result<()> {
             last_avg_len = sum as f32 / recent.len() as f32;
         }
 
-        // Emit one learning-curve row per update when CURVE_CSV is set.
+        // Emit one learning-curve row per logging interval when CURVE_CSV
+        // is set. A2C runs many short updates, so we throttle to keep the
+        // CSV manageable while still dense.
         if let Some(w) = curve_csv.as_mut() {
-            writeln!(w, "{},{:.4}", total_env_steps, last_avg_len)?;
+            if update % 20 == 0 || update == num_updates - 1 {
+                writeln!(w, "{},{:.4}", total_env_steps, last_avg_len)?;
+            }
         }
 
-        if update % 5 == 0 || update == num_updates - 1 {
+        if update % 200 == 0 || update == num_updates - 1 {
             tracing::info!(
-                "update {:>3}/{}  env_steps={:>7}  episodes={:>4}  avg_len(last≤100)={:6.1}  policy_loss={:7.4}  entropy={:5.3}",
+                "update {:>5}/{}  env_steps={:>7}  episodes={:>5}  avg_len(last≤100)={:6.1}  policy_loss={:8.4}  value_loss={:8.4}  entropy={:5.3}",
                 update + 1,
                 num_updates,
                 total_env_steps,
                 trainer.total_episodes(),
                 last_avg_len,
                 stats.policy_loss,
+                stats.value_loss,
                 stats.entropy,
             );
         }
