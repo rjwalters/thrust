@@ -213,12 +213,55 @@ of `benches/trainer_throughput.rs`.)
   convolution-heavy workloads. Treat these benches as a relative harness, not an
   absolute GPU endorsement.
 
-### Committing the numbers
+### Measured CPU-vs-GPU throughput (issue #184)
 
-Capturing and committing the actual CPU-vs-GPU throughput table requires running
-the harness on operator GPU hardware, which is **operator-gated** and tracked
-separately (issue #184). This document intentionally ships only the run
-instructions; the measured numbers land via that issue.
+Run on an operator GPU host (the alc-2 workstation):
+
+- **CPU**: Intel Core i9-14900K (32 threads)
+- **GPU**: NVIDIA GeForce RTX 4090 (24 GB), driver 580.126.09
+- **OS**: Ubuntu 24.04.1 LTS, kernel 6.14
+- **Stack**: Burn 0.21, `ndarray` (CPU) vs `wgpu` → **Vulkan** (GPU)
+- **Command**: `cargo bench --features "training,wgpu" --bench trainer_throughput -- --warm-up-time 2 --measurement-time 10`
+
+Median per-iteration wall-clock, lower is better. "CPU faster ×" is `wgpu / ndarray`:
+
+| Benchmark group | NdArray (CPU) | wgpu (RTX 4090) | CPU faster × |
+| --- | --- | --- | --- |
+| `a2c_train_step` (per update) | 261 µs | 1.265 ms | 4.8× |
+| `ppo_train_step` (per update) | 296 µs | 1.890 ms | 6.4× |
+| `dqn_train_step` (per update) | 37.9 ms | 172.9 ms | 4.6× |
+| `sac_train_step` (per update) | 653 µs | 3.666 ms | 5.6× |
+| `a2c_cartpole_steps_per_sec` (full loop) | 477 µs | 2.973 ms | 6.2× |
+| `ppo_cartpole_steps_per_sec` (full loop) | 620 µs | 5.883 ms | 9.5× |
+| `dqn_cartpole_steps_per_sec` (full loop) | 43.4 ms | 188.7 ms | 4.4× |
+| `sac_pendulum_steps_per_sec` (full loop) | 10.7 ms | 65.8 ms | 6.2× |
+
+(`cuda` was not run — the alc-2 host has the NVIDIA driver but no CUDA toolkit /
+`nvcc`, which `cubecl-cuda` needs to compile. The `wgpu` → Vulkan path drives the
+same 4090 and is the portable GPU backend; the cuda column is left for a future
+toolkit-equipped run.)
+
+### Interpretation
+
+**The CPU NdArray backend wins every group by 4.4–9.5×.** This is the expected
+result at these sizes, not a misconfiguration — `nvidia-smi` sampled the 4090 at
+only **38–41 % utilization / ~150 MB** during the wgpu run, confirming Vulkan
+genuinely drove the discrete GPU (not a software/`lavapipe` fallback) but left it
+almost entirely idle. The benches use 64-unit MLPs with ≤256-row batches, so each
+op is dominated by GPU kernel-launch + host↔device transfer overhead rather than
+the matmul itself — there simply isn't enough arithmetic per launch to amortize
+the dispatch cost. The off-policy `*_train_step` groups (DQN/SAC) close the gap
+slightly (4.6× / 5.6×) because their larger replay minibatches give the GPU a
+bit more to chew on, which is the trend you'd expect.
+
+**What would flip the conclusion:** materially wider/deeper networks (e.g. CNN
+policies for image envs), much larger batch sizes, or many parallel environments
+batched into a single device dispatch — anything that raises arithmetic-per-launch
+above the dispatch-overhead floor. Until Thrust's default workloads grow in that
+direction, **NdArray (CPU) remains the right default**, and the GPU backends are
+best reserved for large-model / high-parallelism configurations. This is the
+quantified version of the [Performance note](#performance-note) and the
+validation-run observations above.
 
 ## Why Burn instead of libtorch?
 
