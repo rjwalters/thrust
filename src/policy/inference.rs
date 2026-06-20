@@ -6,8 +6,6 @@
 //! on Burn; weights are exported as JSON and consumed here for browser
 //! inference. See `crate::inference` module docs and `WASM_ROADMAP.md`.
 
-use std::collections::HashMap;
-
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -390,7 +388,7 @@ impl InferenceModel {
 
         // Value head: hidden_dim -> 1
         let mut value = 0.0;
-        for (i, row) in self.value_weight.iter().enumerate() {
+        for row in self.value_weight.iter() {
             for (j, &val) in hidden2.iter().enumerate() {
                 value += row[j] * val;
             }

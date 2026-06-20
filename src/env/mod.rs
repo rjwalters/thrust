@@ -60,8 +60,6 @@
 //! reproduction is deterministic only across steps that do not draw
 //! from the RNG. Per-env docs spell out the exact guarantee.
 
-use anyhow::Result;
-
 /// Core trait for RL environments
 pub trait Environment {
     /// Action type accepted by [`Environment::step`].
