@@ -38,7 +38,17 @@ This will download and compile all dependencies. First build may take a few minu
 cargo test
 ```
 
-### 4. Build Documentation
+### 4. Run an Example
+
+```bash
+cargo run --release --features training --example train_simple_bandit
+```
+
+This is one of twelve runnable trainers. Browse the full
+[Example Gallery](EXAMPLES.md) for a trainer per algorithm (PPO, A2C, DQN, SAC,
+BC, PSRO, NFSP) across every environment, with copy-paste run commands.
+
+### 5. Build Documentation
 
 ```bash
 cargo doc --open
@@ -54,9 +64,9 @@ thrust/
 │   ├── buffer/       # Experience buffers
 │   ├── train/        # Training algorithms
 │   └── utils/        # Helper functions
-├── examples/         # Example programs (coming soon)
-├── benches/          # Performance benchmarks (coming soon)
-├── tests/            # Integration tests (coming soon)
+├── examples/         # Runnable trainers (see docs/EXAMPLES.md)
+├── benches/          # Performance benchmarks
+├── tests/            # Integration tests
 └── docs/             # Additional documentation
 ```
 

@@ -33,13 +33,18 @@ Our goal is to create the fastest, safest, and most ergonomic reinforcement lear
 
 ## 🚧 Project Status
 
-**🎯 Alpha** - Core training infrastructure complete. Working on production features.
+**🎯 v0.1.0 (initial release)** — The training stack is complete and runnable
+end-to-end: five single-agent algorithms (PPO, A2C, DQN, SAC, BC), two
+multi-agent meta-solvers (PSRO, NFSP), eight environments, and twelve runnable
+[examples](docs/EXAMPLES.md). Public-API surface is documented (`docs.rs`),
+warning-free, and packaged for crates.io.
 
-**Current milestone:** Phase 2 - Multi-Agent & WASM (60% complete)
-**Latest:** Universal inference system, live demos, multiple environments
-**Progress:** Phase 1 Complete ✅
+Still ahead: complete WASM bindings, a public live-demo deployment, and the
+broader Phase 3/4 feature set.
 
-See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
+See [CHANGELOG.md](CHANGELOG.md) for release notes, [docs/RELEASING.md](docs/RELEASING.md)
+for the publish process, and [ROADMAP.md](ROADMAP.md) for the detailed
+development schedule.
 
 ## 🎯 Roadmap
 
@@ -68,9 +73,9 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 
 ### Phase 3: Features
 - [x] SAC for continuous control (twin critics, auto-entropy, Polyak targets)
-- [x] Continuous-control environments (PendulumSwingUp, ContinuousLqr)
-- [ ] A2C (Advantage Actor-Critic)
-- [ ] Behavioral cloning / imitation learning
+- [x] Continuous-control environments (PendulumSwingUp, ContinuousLqr, MountainCarContinuous)
+- [x] A2C (Advantage Actor-Critic)
+- [x] Behavioral cloning / imitation learning
 - [ ] LSTM policy support
 - [ ] Prioritized experience replay
 - [ ] V-trace importance sampling
@@ -107,6 +112,7 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 
 - **CartPole** ✅ - Classic control benchmark (solved: 301.6 avg reward)
 - **PendulumSwingUp** ✅ - Continuous-control benchmark (Gym `Pendulum-v1`; SAC's reference env)
+- **MountainCarContinuous** ✅ - Deceptive-reward continuous-control benchmark (SAC)
 - **ContinuousLqr** ✅ - Linear-quadratic regulator (continuous-action trait existence proof)
 - **Snake** ✅ - Multi-agent grid world with torus wrapping
 - **Pong** ✅ - Two-player competitive self-play
@@ -118,11 +124,14 @@ See [ROADMAP.md](ROADMAP.md) for detailed development schedule.
 ## 🧠 Algorithms
 
 - **PPO** ✅ - Proximal Policy Optimization (on-policy, actor-critic; single- and multi-agent)
+- **A2C** ✅ - Advantage Actor-Critic (synchronous, on-policy; un-clipped policy gradient + MSE value, one update per rollout)
 - **DQN** ✅ - Deep Q-Network (off-policy, replay buffer + target network), including **Double-DQN** target computation and optional **Polyak (soft) target updates**
 - **SAC** ✅ - Soft Actor-Critic (off-policy, continuous control; twin critics, automatic entropy tuning, Polyak target updates)
+- **BC** ✅ - Behavioral Cloning (supervised imitation learning from expert demonstrations)
 - **PSRO** ✅ - Policy-Space Response Oracles with **α-rank** meta-solver (multi-agent, N-player)
 - **NFSP** ✅ - Neural Fictitious Self-Play (approximate, N-player, multi-discrete actions)
-- More coming soon (A2C, behavioral cloning — see [ROADMAP.md](ROADMAP.md))
+
+See the [example gallery](docs/EXAMPLES.md) for a runnable trainer per algorithm.
 
 ## 📚 Inspiration
 
@@ -155,6 +164,13 @@ cargo run --release --features "training,wgpu" --example train_simple_bandit
 # CUDA (Linux + NVIDIA)
 cargo run --release --features "training,cuda" --example train_simple_bandit
 ```
+
+### More Examples
+
+The bandit trainer is just one of **twelve** runnable examples. See the
+**[Example Gallery](docs/EXAMPLES.md)** for the full set — a trainer per
+algorithm (PPO, A2C, DQN, SAC, BC, PSRO, NFSP) across all environments, with
+copy-paste run commands and the env vars each one honors.
 
 ### Library Usage (Coming Soon)
 
