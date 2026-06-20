@@ -18,7 +18,6 @@
 //! Based on OpenAI Gym CartPole-v1:
 //! <https://github.com/openai/gym/blob/master/gym/envs/classic_control/cartpole.py>
 
-use anyhow::Result;
 use rand::Rng;
 
 use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};

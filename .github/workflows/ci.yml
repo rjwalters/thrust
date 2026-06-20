@@ -85,6 +85,61 @@ jobs:
       - name: cargo doc --no-deps --all-features
         run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
+  # Publish dry-run gate. Validates that the crate actually packages and
+  # that no non-library assets (model checkpoints, the web app, the
+  # bucket-brigade submodule, tooling) leak into the tarball. This catches
+  # `exclude = [...]` regressions and path-dependency slips at PR time
+  # instead of at hand-publish time. CI-safe: `--dry-run` never uploads and
+  # needs no crates.io token.
+  #
+  # `bucket-brigade-core` is a path-only dependency behind the optional
+  # `env-bucket-brigade` feature. `cargo publish` rejects *any* path
+  # dependency (even an optional, unselected one), so this job applies the
+  # same Cargo.toml edits that docs/RELEASING.md Step 2.5 prescribes for a
+  # real publish: comment out the path dep + its feature and re-add the
+  # `unexpected_cfgs` lint shim. The runner is ephemeral, so these edits
+  # are throwaway (no revert needed). `--no-default-features` keeps the
+  # verification rebuild fast by skipping the Burn training stack.
+  publish_dry_run:
+    name: Publish dry-run + tarball audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Disable env-bucket-brigade for publish (RELEASING.md Step 2.5)
+        run: |
+          set -euo pipefail
+          sed -i \
+            's|^bucket-brigade-core = { path = "envs/bucket-brigade/bucket-brigade-core", default-features = false, optional = true }|# &|' \
+            Cargo.toml
+          sed -i \
+            's|^env-bucket-brigade = \["bucket-brigade-core"\]|# &|' \
+            Cargo.toml
+          # Re-add the unexpected_cfgs shim so the now-disabled feature's
+          # #[cfg(feature = "env-bucket-brigade")] gates don't warn. printf
+          # (not a YAML-indented heredoc) keeps the appended TOML flush-left.
+          printf '\n[lints.rust]\nunexpected_cfgs = { level = "warn", check-cfg = ['"'"'cfg(feature, values("env-bucket-brigade"))'"'"'] }\n' >> Cargo.toml
+          # Fail loudly if the expected lines were not found (manifest drift).
+          grep -q '^# bucket-brigade-core = { path' Cargo.toml
+          grep -q '^# env-bucket-brigade = ' Cargo.toml
+      - name: Assert tarball excludes non-library assets
+        run: |
+          set -euo pipefail
+          # --allow-dirty: we just edited Cargo.toml above (a real publish
+          # commits these edits first; here the runner is throwaway).
+          cargo package --list --no-default-features --allow-dirty > /tmp/pkg-files.txt
+          echo "Tarball contains $(wc -l < /tmp/pkg-files.txt) files:"
+          cat /tmp/pkg-files.txt
+          if grep -E '(^|/)models/|\.safetensors$|\.pt$|\.onnx$|(^|/)web/|(^|/)envs/|(^|/)scripts/|(^|/)\.loom/|(^|/)\.claude/|(^|/)\.github/' /tmp/pkg-files.txt; then
+            echo "::error::Publish tarball includes excluded non-library assets (see matches above). Fix the exclude = [...] list in Cargo.toml."
+            exit 1
+          fi
+          echo "Tarball content audit passed: no excluded assets present."
+      - name: cargo publish --dry-run (no-default-features)
+        run: cargo publish --dry-run --no-default-features --allow-dirty
+
   # Security audit
   security_audit:
     name: Security Audit

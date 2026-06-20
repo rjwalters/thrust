@@ -133,7 +133,6 @@ impl Minibatch {
 /// Useful for training loops that process data incrementally.
 pub struct MinibatchIterator<'a> {
     buffer: &'a RolloutBuffer,
-    batch_size: usize,
     indices: Vec<Vec<usize>>,
     current_batch: usize,
 }
@@ -157,7 +156,7 @@ impl<'a> MinibatchIterator<'a> {
                 .collect()
         };
 
-        Self { buffer, batch_size, indices, current_batch: 0 }
+        Self { buffer, indices, current_batch: 0 }
     }
 }
 
@@ -208,7 +207,7 @@ pub fn train_val_split(buffer: &RolloutBuffer, train_ratio: f32) -> (Vec<usize>,
     let total_size = buffer.len();
     let train_size = ((total_size as f32) * train_ratio) as usize;
 
-    let mut indices: Vec<usize> = (0..total_size).collect();
+    let indices: Vec<usize> = (0..total_size).collect();
     // Note: In a real implementation, you'd want to shuffle here
     // but we'll keep it deterministic for reproducibility
 

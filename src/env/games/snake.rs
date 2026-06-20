@@ -11,14 +11,10 @@
 // #[cfg(feature = "training")]
 // use crate::multi_agent::environment::{MultiAgentEnvironment,
 // MultiAgentResult};
-use anyhow::Result;
 pub use environment::SnakeEnv;
-use rand::Rng;
 pub use snake::{Food, Snake};
 // Re-export main components
 pub use types::{Cell, Direction, GameState, Position};
-
-use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 // TODO: Re-enable after fixing multi-agent code
 // #[cfg(feature = "training")]
 // pub use multi_agent::MultiAgentSnakeEnv;

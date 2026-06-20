@@ -3,7 +3,6 @@
 //! This module implements the SnakeEnv struct and the Environment trait
 //! for both single-agent and multi-agent snake games.
 
-use anyhow::Result;
 use rand::Rng;
 
 use super::{
