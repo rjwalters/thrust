@@ -2,9 +2,32 @@
 //!
 //! Measures steps/sec and per-update wall-clock for the on-policy A2C
 //! ([`A2cTrainer`]) and PPO ([`PPOTrainerBurn`]) trainers and the off-policy
-//! DQN ([`DQNTrainerBurn`]) and SAC ([`SacTrainer`]) trainers. All benchmarks
-//! run on the pure-Rust `Autodiff<NdArray<f32>>` (CPU) backend and are seeded
-//! so the numbers are comparable run-to-run.
+//! DQN ([`DQNTrainerBurn`]) and SAC ([`SacTrainer`]) trainers. The harness is
+//! **generic over the Burn backend** `B: AutodiffBackend`: every fixture
+//! builder, data builder, and `bench_*` function is parameterized over `B` and
+//! takes an explicit `&B::Device`, so the exact same bench bodies can be run on
+//! any compiled backend with no logic duplication. The trainers/policies are
+//! themselves already generic over `B: AutodiffBackend`.
+//!
+//! # Backend registration
+//!
+//! [`register_all`] runs the whole eight-group suite for one backend, tagging
+//! each criterion group with a `suffix` (e.g. `a2c_train_step/ndarray`) so
+//! different backends produce distinct, side-by-side groups. The driver
+//! registers the CPU baseline unconditionally:
+//!
+//! ```text
+//! type Cpu = Autodiff<NdArray<f32>>;
+//! register_all::<Cpu>(c, &default_burn_device::<Cpu>(), "ndarray");
+//! ```
+//!
+//! This is the only place a concrete `NdArray` backend appears. The default
+//! `cargo bench --features training` path therefore always emits the same eight
+//! logical groups as before, now suffixed `/ndarray`. A later PR can add
+//! cfg-gated `register_all::<Gpu>(..)` calls (wgpu/cuda) at this seam without
+//! touching any bench body; this PR adds no GPU code.
+//!
+//! All benchmarks are seeded so the numbers are comparable run-to-run.
 //!
 //! # Fairness caveat: on-policy vs off-policy steps/sec
 //!
@@ -37,7 +60,7 @@
 //! `*_steps_per_sec` groups (different env dynamics, obs/action shapes, and
 //! episode lengths).
 //!
-//! Benchmark groups:
+//! Benchmark groups (each suffixed with the backend tag, e.g. `/ndarray`):
 //! - `a2c_cartpole_steps_per_sec` — a full rollout-collect (CartPole env
 //!   stepping + host-side action sampling) plus exactly one A2C update,
 //!   reported via `Throughput::Elements(n_steps * num_envs)` so criterion
@@ -74,9 +97,9 @@
 use std::hint::black_box;
 
 use burn::{
-    backend::{Autodiff, NdArray, ndarray::NdArrayDevice},
+    backend::{Autodiff, NdArray},
     optim::AdamConfig,
-    tensor::{Int, Tensor, TensorData},
+    tensor::{Int, Tensor, TensorData, backend::AutodiffBackend},
 };
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use rand::{SeedableRng, rngs::StdRng};
@@ -90,10 +113,8 @@ use thrust_rl::{
         A2cConfig, A2cTrainer, BurnOptimizer, DQNConfig, DQNTrainerBurn, PPOConfig, PPOTrainerBurn,
         SacConfig, SacTrainer,
     },
+    utils::cuda::default_burn_device,
 };
-
-/// CPU autodiff backend used for every benchmark.
-type B = Autodiff<NdArray<f32>>;
 
 // CartPole is a 4-dim observation, 2-action discrete control task.
 const OBS_DIM: usize = 4;
@@ -148,26 +169,26 @@ const SAC_NUM_HIDDEN_LAYERS: usize = 2;
 // Pendulum transition + buffer push + one gradient update.
 const SAC_LOOP_STEPS: usize = 16;
 
-/// Build a fresh, seeded A2C trainer on the CPU backend.
-fn make_a2c_trainer()
--> A2cTrainer<B, MlpBurnPolicy<B>, impl burn::optim::Optimizer<MlpBurnPolicy<B>, B>> {
-    let device = Default::default();
-    let policy = MlpBurnPolicy::<B>::new(OBS_DIM, ACTION_DIM, HIDDEN_DIM, &device);
+/// Build a fresh, seeded A2C trainer on backend `B`.
+fn make_a2c_trainer<B: AutodiffBackend>(
+    device: &B::Device,
+) -> A2cTrainer<B, MlpBurnPolicy<B>, impl burn::optim::Optimizer<MlpBurnPolicy<B>, B>> {
+    let policy = MlpBurnPolicy::<B>::new(OBS_DIM, ACTION_DIM, HIDDEN_DIM, device);
     let inner_opt = AdamConfig::new().init();
     let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner_opt, 7e-4);
     let config = A2cConfig::default();
     A2cTrainer::new(config, policy, burn_opt).expect("valid A2C config")
 }
 
-/// Build a fresh, seeded PPO trainer on the CPU backend.
+/// Build a fresh, seeded PPO trainer on backend `B`.
 ///
 /// `n_epochs = 1` keeps the PPO per-update cost a like-for-like single
 /// gradient pass against A2C's single update; the surrogate clip / value
 /// clip remain to reflect PPO's real per-step overhead.
-fn make_ppo_trainer()
--> PPOTrainerBurn<B, MlpBurnPolicy<B>, impl burn::optim::Optimizer<MlpBurnPolicy<B>, B>> {
-    let device = Default::default();
-    let policy = MlpBurnPolicy::<B>::new(OBS_DIM, ACTION_DIM, HIDDEN_DIM, &device);
+fn make_ppo_trainer<B: AutodiffBackend>(
+    device: &B::Device,
+) -> PPOTrainerBurn<B, MlpBurnPolicy<B>, impl burn::optim::Optimizer<MlpBurnPolicy<B>, B>> {
+    let policy = MlpBurnPolicy::<B>::new(OBS_DIM, ACTION_DIM, HIDDEN_DIM, device);
     let inner_opt = AdamConfig::new().init();
     let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner_opt, 3e-4);
     let config = PPOConfig::new().n_epochs(1);
@@ -177,8 +198,9 @@ fn make_ppo_trainer()
 /// A deterministic synthetic training batch shared by the isolated
 /// `train_step` benchmarks. Returns
 /// `(observations, actions, old_log_probs, old_values, advantages, returns)`.
-fn synthetic_batch(
-    device: &NdArrayDevice,
+#[allow(clippy::type_complexity)]
+fn synthetic_batch<B: AutodiffBackend>(
+    device: &B::Device,
 ) -> (
     Tensor<B, 2>,
     Tensor<B, 1, Int>,
@@ -220,7 +242,7 @@ fn synthetic_batch(
 
 /// One rollout's worth of transitions collected from `num_envs` CartPole
 /// instances stepped `n_steps` times under the given policy.
-struct Rollout {
+struct Rollout<B: AutodiffBackend> {
     observations: Tensor<B, 2>,
     actions: Tensor<B, 1, Int>,
     old_log_probs: Tensor<B, 1>,
@@ -234,7 +256,11 @@ struct Rollout {
 /// n-step (Monte-Carlo, `gamma`-discounted) returns and advantages so the
 /// downstream `train_step` has well-formed inputs. This is the env-bound
 /// portion of the full-loop benchmark.
-fn collect_rollout(policy: &MlpBurnPolicy<B>, device: &NdArrayDevice, rng: &mut StdRng) -> Rollout {
+fn collect_rollout<B: AutodiffBackend>(
+    policy: &MlpBurnPolicy<B>,
+    device: &B::Device,
+    rng: &mut StdRng,
+) -> Rollout<B> {
     const GAMMA: f32 = 0.99;
 
     let mut envs: Vec<CartPole> = (0..ROLLOUT_NUM_ENVS)
@@ -315,15 +341,14 @@ fn collect_rollout(policy: &MlpBurnPolicy<B>, device: &NdArrayDevice, rng: &mut 
 }
 
 /// `a2c_train_step` — isolated single A2C gradient step on a synthetic batch.
-fn bench_a2c_train_step(c: &mut Criterion) {
-    let device = Default::default();
-    let (obs, actions, _old_lp, _old_v, advantages, returns) = synthetic_batch(&device);
+fn bench_a2c_train_step<B: AutodiffBackend>(c: &mut Criterion, device: &B::Device, suffix: &str) {
+    let (obs, actions, _old_lp, _old_v, advantages, returns) = synthetic_batch::<B>(device);
 
-    let mut group = c.benchmark_group("a2c_train_step");
+    let mut group = c.benchmark_group(format!("a2c_train_step/{suffix}"));
     group.throughput(Throughput::Elements(SYNTH_BATCH as u64));
     group.bench_function("synthetic_batch", |b| {
         b.iter_batched(
-            make_a2c_trainer,
+            || make_a2c_trainer::<B>(device),
             |mut trainer| {
                 let stats = trainer
                     .train_step(
@@ -344,15 +369,14 @@ fn bench_a2c_train_step(c: &mut Criterion) {
 
 /// `ppo_train_step` — isolated single PPO gradient step on the *same*
 /// synthetic batch, for a head-to-head per-update comparison.
-fn bench_ppo_train_step(c: &mut Criterion) {
-    let device = Default::default();
-    let (obs, actions, old_lp, old_v, advantages, returns) = synthetic_batch(&device);
+fn bench_ppo_train_step<B: AutodiffBackend>(c: &mut Criterion, device: &B::Device, suffix: &str) {
+    let (obs, actions, old_lp, old_v, advantages, returns) = synthetic_batch::<B>(device);
 
-    let mut group = c.benchmark_group("ppo_train_step");
+    let mut group = c.benchmark_group(format!("ppo_train_step/{suffix}"));
     group.throughput(Throughput::Elements(SYNTH_BATCH as u64));
     group.bench_function("synthetic_batch", |b| {
         b.iter_batched(
-            make_ppo_trainer,
+            || make_ppo_trainer::<B>(device),
             |mut trainer| {
                 let stats = trainer
                     .train_step(
@@ -375,17 +399,20 @@ fn bench_ppo_train_step(c: &mut Criterion) {
 
 /// `a2c_cartpole_steps_per_sec` — full rollout collection + one A2C update,
 /// reported in environment-steps/sec via `Throughput::Elements`.
-fn bench_a2c_cartpole_steps_per_sec(c: &mut Criterion) {
-    let device = NdArrayDevice::default();
+fn bench_a2c_cartpole_steps_per_sec<B: AutodiffBackend>(
+    c: &mut Criterion,
+    device: &B::Device,
+    suffix: &str,
+) {
     let total_steps = (ROLLOUT_N_STEPS * ROLLOUT_NUM_ENVS) as u64;
 
-    let mut group = c.benchmark_group("a2c_cartpole_steps_per_sec");
+    let mut group = c.benchmark_group(format!("a2c_cartpole_steps_per_sec/{suffix}"));
     group.throughput(Throughput::Elements(total_steps));
     group.bench_function("rollout_plus_update", |b| {
         b.iter_batched(
-            || (make_a2c_trainer(), StdRng::seed_from_u64(777)),
+            || (make_a2c_trainer::<B>(device), StdRng::seed_from_u64(777)),
             |(mut trainer, mut rng)| {
-                let rollout = collect_rollout(trainer.policy(), &device, &mut rng);
+                let rollout = collect_rollout::<B>(trainer.policy(), device, &mut rng);
                 let stats = trainer
                     .train_step(
                         rollout.observations,
@@ -405,17 +432,20 @@ fn bench_a2c_cartpole_steps_per_sec(c: &mut Criterion) {
 
 /// `ppo_cartpole_steps_per_sec` — full-loop PPO comparison mirroring the
 /// A2C full-loop benchmark.
-fn bench_ppo_cartpole_steps_per_sec(c: &mut Criterion) {
-    let device = NdArrayDevice::default();
+fn bench_ppo_cartpole_steps_per_sec<B: AutodiffBackend>(
+    c: &mut Criterion,
+    device: &B::Device,
+    suffix: &str,
+) {
     let total_steps = (ROLLOUT_N_STEPS * ROLLOUT_NUM_ENVS) as u64;
 
-    let mut group = c.benchmark_group("ppo_cartpole_steps_per_sec");
+    let mut group = c.benchmark_group(format!("ppo_cartpole_steps_per_sec/{suffix}"));
     group.throughput(Throughput::Elements(total_steps));
     group.bench_function("rollout_plus_update", |b| {
         b.iter_batched(
-            || (make_ppo_trainer(), StdRng::seed_from_u64(777)),
+            || (make_ppo_trainer::<B>(device), StdRng::seed_from_u64(777)),
             |(mut trainer, mut rng)| {
-                let rollout = collect_rollout(trainer.policy(), &device, &mut rng);
+                let rollout = collect_rollout::<B>(trainer.policy(), device, &mut rng);
                 let stats = trainer
                     .train_step(
                         rollout.observations,
@@ -453,16 +483,16 @@ fn dqn_config() -> DQNConfig {
         .epsilon_decay_steps(10_000)
 }
 
-/// Build a fresh, seeded Burn DQN trainer on the CPU backend.
-fn make_dqn_trainer()
--> DQNTrainerBurn<B, QNetworkBurn<B>, impl burn::optim::Optimizer<QNetworkBurn<B>, B>> {
-    let device: NdArrayDevice = Default::default();
-    let online = QNetworkBurn::<B>::new(OBS_DIM, ACTION_DIM, HIDDEN_DIM, &device);
+/// Build a fresh, seeded Burn DQN trainer on backend `B`.
+fn make_dqn_trainer<B: AutodiffBackend>(
+    device: &B::Device,
+) -> DQNTrainerBurn<B, QNetworkBurn<B>, impl burn::optim::Optimizer<QNetworkBurn<B>, B>> {
+    let online = QNetworkBurn::<B>::new(OBS_DIM, ACTION_DIM, HIDDEN_DIM, device);
     let inner_opt = AdamConfig::new().init();
     let config = dqn_config();
     let burn_opt: BurnOptimizer<B, QNetworkBurn<B>, _> =
         BurnOptimizer::new(inner_opt, config.learning_rate);
-    DQNTrainerBurn::new(config, online, burn_opt, OBS_DIM, ACTION_DIM as i64, device)
+    DQNTrainerBurn::new(config, online, burn_opt, OBS_DIM, ACTION_DIM as i64, device.clone())
         .expect("valid DQN config")
 }
 
@@ -482,7 +512,7 @@ fn synthetic_transition(i: usize) -> ([f32; OBS_DIM], i64, f32, [f32; OBS_DIM], 
 /// Pre-fill a trainer's replay buffer with `n` seeded synthetic transitions
 /// so `train_step` performs a real gradient update instead of the warmup
 /// `None` no-op.
-fn prefill_buffer(
+fn prefill_buffer<B: AutodiffBackend>(
     trainer: &mut DQNTrainerBurn<
         B,
         QNetworkBurn<B>,
@@ -502,14 +532,14 @@ fn prefill_buffer(
 /// every timed `train_step` performs exactly one real gradient update (never
 /// `None`). This is the off-policy per-update number, cross-class comparable
 /// against `a2c_train_step` / `ppo_train_step`.
-fn bench_dqn_train_step(c: &mut Criterion) {
-    let mut group = c.benchmark_group("dqn_train_step");
+fn bench_dqn_train_step<B: AutodiffBackend>(c: &mut Criterion, device: &B::Device, suffix: &str) {
+    let mut group = c.benchmark_group(format!("dqn_train_step/{suffix}"));
     group.throughput(Throughput::Elements(DQN_BATCH as u64));
     group.bench_function("replay_minibatch", |b| {
         b.iter_batched(
             || {
-                let mut trainer = make_dqn_trainer();
-                prefill_buffer(&mut trainer, DQN_MIN_BUFFER);
+                let mut trainer = make_dqn_trainer::<B>(device);
+                prefill_buffer::<B>(&mut trainer, DQN_MIN_BUFFER);
                 (trainer, StdRng::seed_from_u64(99))
             },
             |(mut trainer, mut rng)| {
@@ -536,16 +566,18 @@ fn bench_dqn_train_step(c: &mut Criterion) {
 /// steady-state throughput (one update per step), not the warmup transient.
 /// Reported in environment-steps/sec; comparable within the off-policy class
 /// only (see module header).
-fn bench_dqn_cartpole_steps_per_sec(c: &mut Criterion) {
-    let device: NdArrayDevice = Default::default();
-
-    let mut group = c.benchmark_group("dqn_cartpole_steps_per_sec");
+fn bench_dqn_cartpole_steps_per_sec<B: AutodiffBackend>(
+    c: &mut Criterion,
+    device: &B::Device,
+    suffix: &str,
+) {
+    let mut group = c.benchmark_group(format!("dqn_cartpole_steps_per_sec/{suffix}"));
     group.throughput(Throughput::Elements(DQN_LOOP_STEPS as u64));
     group.bench_function("env_step_plus_update", |b| {
         b.iter_batched(
             || {
-                let mut trainer = make_dqn_trainer();
-                prefill_buffer(&mut trainer, DQN_MIN_BUFFER);
+                let mut trainer = make_dqn_trainer::<B>(device);
+                prefill_buffer::<B>(&mut trainer, DQN_MIN_BUFFER);
                 let mut env = CartPole::new();
                 env.reset();
                 (trainer, env, StdRng::seed_from_u64(0xC0FFEE))
@@ -559,7 +591,7 @@ fn bench_dqn_cartpole_steps_per_sec(c: &mut Criterion) {
                         |q: &QNetworkBurn<B>, o_host: &[f32]| {
                             let o_t: Tensor<B, 2> = Tensor::from_data(
                                 TensorData::new(o_host.to_vec(), [1, o_host.len()]),
-                                &device,
+                                device,
                             );
                             let q_host: Vec<f32> =
                                 q.forward(o_t).into_data().to_vec().unwrap_or_default();
@@ -605,14 +637,13 @@ fn bench_dqn_cartpole_steps_per_sec(c: &mut Criterion) {
     group.finish();
 }
 
-/// Build a fresh, seeded SAC trainer on the CPU backend for the continuous
+/// Build a fresh, seeded SAC trainer on backend `B` for the continuous
 /// PendulumSwingUp task (obs_dim=3, action_dim=1).
 ///
 /// Replay / minibatch / network sizes are shrunk from the SAC defaults (see
 /// the `SAC_*` constants) so each CPU iteration completes quickly while still
 /// driving the full actor + twin-critic + alpha backward path.
-fn make_sac_trainer() -> SacTrainer<B> {
-    let device: NdArrayDevice = Default::default();
+fn make_sac_trainer<B: AutodiffBackend>(device: &B::Device) -> SacTrainer<B> {
     let config = SacConfig::new()
         .batch_size(SAC_BATCH)
         .buffer_capacity(SAC_BUFFER_CAPACITY)
@@ -621,7 +652,8 @@ fn make_sac_trainer() -> SacTrainer<B> {
         .hidden_dim(SAC_HIDDEN_DIM)
         .num_hidden_layers(SAC_NUM_HIDDEN_LAYERS)
         .seed(0);
-    SacTrainer::<B>::new(config, SAC_OBS_DIM, SAC_ACTION_DIM, device).expect("valid SAC config")
+    SacTrainer::<B>::new(config, SAC_OBS_DIM, SAC_ACTION_DIM, device.clone())
+        .expect("valid SAC config")
 }
 
 /// A single deterministic synthetic Pendulum-shaped transition derived from a
@@ -644,7 +676,7 @@ fn sac_synthetic_transition(
 /// Pre-fill a SAC trainer's replay buffer with `n` seeded synthetic Pendulum
 /// transitions so `train()` performs a real gradient update instead of the
 /// warmup `None` no-op.
-fn sac_prefill_buffer(trainer: &mut SacTrainer<B>, n: usize) {
+fn sac_prefill_buffer<B: AutodiffBackend>(trainer: &mut SacTrainer<B>, n: usize) {
     for i in 0..n {
         let (obs, action, reward, next_obs, done) = sac_synthetic_transition(i);
         trainer.buffer_mut().push(&obs, &action, reward, &next_obs, done);
@@ -666,14 +698,14 @@ fn sac_scale_action(action: &[f32]) -> Vec<f32> {
 /// continuous-control per-update number, cross-class comparable against the
 /// other `*_train_step` groups (SAC's update is heavier than DQN's — see the
 /// module header).
-fn bench_sac_train_step(c: &mut Criterion) {
-    let mut group = c.benchmark_group("sac_train_step");
+fn bench_sac_train_step<B: AutodiffBackend>(c: &mut Criterion, device: &B::Device, suffix: &str) {
+    let mut group = c.benchmark_group(format!("sac_train_step/{suffix}"));
     group.throughput(Throughput::Elements(SAC_BATCH as u64));
     group.bench_function("replay_minibatch", |b| {
         b.iter_batched(
             || {
-                let mut trainer = make_sac_trainer();
-                sac_prefill_buffer(&mut trainer, SAC_MIN_BUFFER);
+                let mut trainer = make_sac_trainer::<B>(device);
+                sac_prefill_buffer::<B>(&mut trainer, SAC_MIN_BUFFER);
                 // Advance past learning_starts so the trainer is in its
                 // steady-state regime (not the random-action warmup window).
                 for _ in 0..SAC_LEARNING_STARTS {
@@ -703,14 +735,18 @@ fn bench_sac_train_step(c: &mut Criterion) {
 /// real update per step), not the warmup transient. Reported in
 /// environment-steps/sec; comparable within the off-policy class only and NOT
 /// across environments (Pendulum, not CartPole — see module header).
-fn bench_sac_pendulum_steps_per_sec(c: &mut Criterion) {
-    let mut group = c.benchmark_group("sac_pendulum_steps_per_sec");
+fn bench_sac_pendulum_steps_per_sec<B: AutodiffBackend>(
+    c: &mut Criterion,
+    device: &B::Device,
+    suffix: &str,
+) {
+    let mut group = c.benchmark_group(format!("sac_pendulum_steps_per_sec/{suffix}"));
     group.throughput(Throughput::Elements(SAC_LOOP_STEPS as u64));
     group.bench_function("env_step_plus_update", |b| {
         b.iter_batched(
             || {
-                let mut trainer = make_sac_trainer();
-                sac_prefill_buffer(&mut trainer, SAC_MIN_BUFFER);
+                let mut trainer = make_sac_trainer::<B>(device);
+                sac_prefill_buffer::<B>(&mut trainer, SAC_MIN_BUFFER);
                 for _ in 0..SAC_LEARNING_STARTS {
                     trainer.increment_env_step();
                 }
@@ -753,15 +789,31 @@ fn bench_sac_pendulum_steps_per_sec(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_a2c_train_step,
-    bench_ppo_train_step,
-    bench_a2c_cartpole_steps_per_sec,
-    bench_ppo_cartpole_steps_per_sec,
-    bench_dqn_train_step,
-    bench_dqn_cartpole_steps_per_sec,
-    bench_sac_train_step,
-    bench_sac_pendulum_steps_per_sec,
-);
-criterion_main!(benches);
+/// Run the full eight-group throughput suite for backend `B`, tagging every
+/// criterion group with `suffix` (e.g. `"ndarray"`) so distinct backends
+/// produce side-by-side, non-colliding groups. This is the single seam through
+/// which a backend is registered — a future PR can call this once more behind a
+/// `#[cfg(feature = "wgpu")]` / `#[cfg(feature = "cuda")]` gate without
+/// touching any bench body.
+fn register_all<B: AutodiffBackend>(c: &mut Criterion, device: &B::Device, suffix: &str) {
+    bench_a2c_train_step::<B>(c, device, suffix);
+    bench_ppo_train_step::<B>(c, device, suffix);
+    bench_a2c_cartpole_steps_per_sec::<B>(c, device, suffix);
+    bench_ppo_cartpole_steps_per_sec::<B>(c, device, suffix);
+    bench_dqn_train_step::<B>(c, device, suffix);
+    bench_dqn_cartpole_steps_per_sec::<B>(c, device, suffix);
+    bench_sac_train_step::<B>(c, device, suffix);
+    bench_sac_pendulum_steps_per_sec::<B>(c, device, suffix);
+}
+
+/// Criterion driver. Registers the CPU baseline unconditionally; this is the
+/// only place a concrete backend type appears. GPU backends (wgpu/cuda) are
+/// added at this seam in a later PR behind cfg gates and are NOT referenced
+/// here — the default `cargo bench --features training` path is CPU-only.
+fn benches(c: &mut Criterion) {
+    type Cpu = Autodiff<NdArray<f32>>;
+    register_all::<Cpu>(c, &default_burn_device::<Cpu>(), "ndarray");
+}
+
+criterion_group!(benches_group, benches);
+criterion_main!(benches_group);
