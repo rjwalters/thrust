@@ -10,10 +10,48 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,no_run
+//! The [`prelude`] re-exports the types you need to stand up a training
+//! run: the [`Environment`](crate::env::Environment) trait and a couple of
+//! built-in environments, the
+//! [`MlpBurnPolicy`](crate::policy::mlp::MlpBurnPolicy) actor-critic network,
+//! and the trainer configs/trainers (A2C, PPO, DQN, SAC, BC). The example below
+//! builds a CartPole env, an A2C config, and a policy on Burn's CPU `NdArray`
+//! backend — the same pieces the `train_cartpole_a2c` example wires into a full
+//! rollout/update loop.
+//!
+//! ```rust
+//! # #[cfg(feature = "training")]
+//! # fn main() {
+//! use burn::backend::{Autodiff, NdArray};
 //! use thrust_rl::prelude::*;
 //!
-//! // Coming soon: Simple training example
+//! type Backend = Autodiff<NdArray<f32>>;
+//!
+//! // 1. Build an environment and read its observation / action dims.
+//! let env = CartPole::new();
+//! let obs_dim = env.observation_space().shape[0];
+//! let action_dim = match env.action_space().space_type {
+//!     SpaceType::Discrete(n) => n,
+//!     SpaceType::Box => panic!("CartPole is discrete"),
+//! };
+//!
+//! // 2. Construct the actor-critic policy on the CPU backend.
+//! let device = Default::default();
+//! let policy = MlpBurnPolicy::<Backend>::with_config(
+//!     obs_dim,
+//!     action_dim,
+//!     MlpBurnConfig { hidden_dim: 64, ..Default::default() },
+//!     &device,
+//! );
+//! let _ = policy;
+//!
+//! // 3. Pick a trainer config. See the `train_cartpole_a2c` example for
+//! //    the full rollout-collect + GAE + `A2cTrainer::train_step` loop.
+//! let config = A2cConfig { num_envs: 16, n_steps: 5, ..Default::default() };
+//! assert_eq!(config.num_envs, 16);
+//! # }
+//! # #[cfg(not(feature = "training"))]
+//! # fn main() {}
 //! ```
 
 #![warn(missing_docs)]
@@ -58,11 +96,44 @@ pub mod inference;
 #[cfg(feature = "wasm")]
 pub mod wasm;
 
-/// Prelude module for convenient imports
+/// Prelude module for convenient imports.
 ///
-/// This module re-exports commonly used types and traits for convenience.
+/// Brings the highest-value public types into scope with a single
+/// `use thrust_rl::prelude::*;`. The set is curated, not a blanket glob:
+///
+/// - **Environment API** (always available): the
+///   [`Environment`](crate::env::Environment) trait plus
+///   [`StepResult`](crate::env::StepResult),
+///   [`SpaceInfo`](crate::env::SpaceInfo),
+///   [`SpaceType`](crate::env::SpaceType), and the built-in
+///   [`CartPole`](crate::env::CartPole) /
+///   [`SimpleBandit`](crate::env::SimpleBandit) environments.
+/// - **Training stack** (requires the `training` feature): the
+///   [`MlpBurnPolicy`](crate::policy::mlp::MlpBurnPolicy) actor-critic network
+///   and its [`MlpBurnConfig`](crate::policy::mlp::MlpBurnConfig), the trainer
+///   configs/trainers (A2C, PPO, DQN, SAC, BC), and the
+///   [`RolloutBuffer`](crate::buffer::rollout::RolloutBuffer) /
+///   [`ReplayBuffer`](crate::buffer::replay::ReplayBuffer) experience buffers.
+///
+/// Training-only re-exports are `#[cfg(feature = "training")]`-gated so
+/// `--no-default-features` still compiles.
 pub mod prelude {
-    // Re-export key types here as we build them
+    // The `crate::env::*` re-export is unconditional; every other line is
+    // `#[cfg(feature = "training")]`-gated so `--no-default-features` still
+    // compiles. (`cargo fmt` alphabetizes the block, so the env import lands
+    // in the middle rather than first.)
+    #[cfg(feature = "training")]
+    pub use crate::buffer::replay::ReplayBuffer;
+    #[cfg(feature = "training")]
+    pub use crate::buffer::rollout::RolloutBuffer;
+    pub use crate::env::{CartPole, Environment, SimpleBandit, SpaceInfo, SpaceType, StepResult};
+    #[cfg(feature = "training")]
+    pub use crate::policy::mlp::{BurnActivation, MlpBurnConfig, MlpBurnPolicy};
+    #[cfg(feature = "training")]
+    pub use crate::train::{
+        A2cConfig, A2cTrainer, BcConfig, BcTrainer, DQNConfig, DQNTrainerBurn, PPOConfig,
+        PPOTrainerBurn, SacConfig, SacTrainer,
+    };
 }
 
 /// Current version of thrust-rl
