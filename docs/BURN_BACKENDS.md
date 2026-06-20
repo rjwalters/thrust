@@ -141,6 +141,85 @@ also inflates the wall-clock numbers above. Real wins on wgpu show up
 for larger nets, bigger batches, or convolution-heavy workloads
 (Snake CNN, image envs) — see issue #65 follow-ups.
 
+## Throughput benchmarking on GPU backends
+
+The `trainer_throughput` criterion harness (`benches/trainer_throughput.rs`) is
+generic over the Burn backend, so the exact same bench bodies run on CPU and
+GPU. The CPU `ndarray` baseline is **always** registered; the wgpu and cuda
+variants are added behind Cargo-feature gates. A single run therefore produces a
+paired CPU-vs-GPU comparison.
+
+### Running
+
+```bash
+# CPU only (default — what CI runs). Emits the `/ndarray` groups.
+cargo bench --features training --bench trainer_throughput
+
+# wgpu (cross-platform GPU: Vulkan/Metal/DX12/WebGPU).
+# Emits BOTH the `/ndarray` baseline AND the `/wgpu` groups in one run.
+cargo bench --features "training,wgpu" --bench trainer_throughput
+
+# cuda (Linux + NVIDIA + CUDA toolkit).
+# Emits BOTH the `/ndarray` baseline AND the `/cuda` groups in one run.
+cargo bench --features "training,cuda" --bench trainer_throughput
+```
+
+A quick smoke run (short warm-up / measurement windows) is:
+
+```bash
+cargo bench --features "training,wgpu" --bench trainer_throughput -- \
+    --warm-up-time 1 --measurement-time 3
+```
+
+### Reading the results
+
+Every benchmark group is suffixed with its backend tag, so the eight logical
+groups appear once per compiled backend, side by side:
+
+| Logical group | CPU group id | wgpu group id | cuda group id |
+| --- | --- | --- | --- |
+| A2C per-update | `a2c_train_step/ndarray` | `a2c_train_step/wgpu` | `a2c_train_step/cuda` |
+| PPO per-update | `ppo_train_step/ndarray` | `ppo_train_step/wgpu` | `ppo_train_step/cuda` |
+| DQN per-update | `dqn_train_step/ndarray` | `dqn_train_step/wgpu` | `dqn_train_step/cuda` |
+| SAC per-update | `sac_train_step/ndarray` | `sac_train_step/wgpu` | `sac_train_step/cuda` |
+| A2C full loop | `a2c_cartpole_steps_per_sec/ndarray` | …`/wgpu` | …`/cuda` |
+| PPO full loop | `ppo_cartpole_steps_per_sec/ndarray` | …`/wgpu` | …`/cuda` |
+| DQN full loop | `dqn_cartpole_steps_per_sec/ndarray` | …`/wgpu` | …`/cuda` |
+| SAC full loop | `sac_pendulum_steps_per_sec/ndarray` | …`/wgpu` | …`/cuda` |
+
+To compare a backend against the CPU baseline, read the matching `/ndarray` and
+`/wgpu` (or `/cuda`) groups from the same run. (The same fairness caveats as the
+CPU benches apply: `*_train_step` groups are cross-algorithm comparable;
+`*_steps_per_sec` groups are comparable only within an algorithm class, and the
+SAC Pendulum loop is not comparable across environments — see the module header
+of `benches/trainer_throughput.rs`.)
+
+### Caveats
+
+- **GPU toolchain required to compile.** The GPU registration code only compiles
+  when its feature is on. `wgpu` uses Metal on macOS and generally builds on a
+  developer laptop; `cuda` requires Linux + an NVIDIA GPU + the CUDA toolkit and
+  will not build elsewhere. CI is CPU-host only and never sets these features, so
+  the default `cargo bench --features training` path is unaffected.
+- **No graceful skip.** Criterion has no skip primitive, and there is no runtime
+  adapter probe. If a GPU feature is compiled on a host with no adapter, Burn
+  panics on first device use. This is acceptable because the feature is opt-in
+  and only enabled on GPU hosts.
+- **Small nets favour the CPU.** As with the validation runs above, autotune and
+  kernel-launch overhead dominate per-op latency on the small (4-input,
+  64-unit) MLPs these benches use, so wgpu/Metal can look slower than the
+  SIMD-friendly NdArray path. See the [Performance note](#performance-note)
+  above — real GPU wins show up for larger nets, bigger batches, or
+  convolution-heavy workloads. Treat these benches as a relative harness, not an
+  absolute GPU endorsement.
+
+### Committing the numbers
+
+Capturing and committing the actual CPU-vs-GPU throughput table requires running
+the harness on operator GPU hardware, which is **operator-gated** and tracked
+separately (issue #184). This document intentionally ships only the run
+instructions; the measured numbers land via that issue.
+
 ## Why Burn instead of libtorch?
 
 The pre-v0.1.0 trainer stack used `tch` (Rust bindings to libtorch).
