@@ -35,7 +35,7 @@ Our goal is to create the fastest, safest, and most ergonomic reinforcement lear
 
 **🎯 v0.1.0 (initial release)** — The training stack is complete and runnable
 end-to-end: five single-agent algorithms (PPO, A2C, DQN, SAC, BC), two
-multi-agent meta-solvers (PSRO, NFSP), eight environments, and twelve runnable
+multi-agent meta-solvers (PSRO, NFSP), nine environments, and twelve runnable
 [examples](docs/EXAMPLES.md). Public-API surface is documented (`docs.rs`),
 warning-free, and packaged for crates.io.
 
