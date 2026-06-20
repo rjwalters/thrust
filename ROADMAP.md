@@ -156,7 +156,7 @@ the validation run is the remaining piece (#134).*
 - [ ] Mixed precision training (FP16)
 - [ ] JIT compilation for environments
 - [ ] CUDA kernel optimization
-- [ ] GPU-backend (wgpu/cuda) training benchmarks vs the CPU NdArray baseline
+- [x] GPU-backend (wgpu) training benchmarks vs the CPU NdArray baseline — measured on RTX 4090; CPU wins 4.4–9.5× at current small-net sizes (see `docs/BURN_BACKENDS.md` → "Measured CPU-vs-GPU throughput")
 
 ---
 
@@ -193,9 +193,11 @@ place, the meaningful next moves are:
    - Pure-Rust inference path is already done; no weight-export blocker remains
      post-Burn. Highest-visibility "train in Rust, deploy to web" showcase.
 
-3. **GPU-backend benchmarking** (Milestone 7)
-   - Run the new throughput harness on the `wgpu` / `cuda` backends and compare
-     to the CPU NdArray baseline; the harness exists, the GPU numbers don't yet.
+3. **GPU-backend benchmarking** (Milestone 7) — ✅ done for `wgpu`
+   - Measured on an RTX 4090: CPU NdArray wins every group by 4.4–9.5× at the
+     harness's small-net sizes (kernel-launch/transfer overhead dominates). See
+     `docs/BURN_BACKENDS.md`. Remaining: a `cuda`-toolkit run, and re-measuring
+     once larger-net / high-parallelism workloads exist.
 
 4. **More environments** (Milestone 5)
    - The next env adds breadth: a discrete grid world, an Atari/ALE binding, or
