@@ -2,6 +2,9 @@
 //!
 //! This module contains various game environments for reinforcement learning:
 //! - CartPole: Classic cart-pole balancing task
+//! - GridWorld: in-tree `4x4` FrozenLake-style sparse-reward navigation task
+//!   (issue #182, `i64` discrete action `0=Up/1=Right/2=Down/3=Left`, 16-dim
+//!   one-hot observation, absorbing goal/hole terminals + step-cap truncation)
 //! - Snake: Snake game with configurable grid size
 //! - SimpleBandit: Simple multi-armed bandit for testing
 //! - Pong: Single-player Pong vs rule-based opponent
@@ -27,6 +30,7 @@
 
 pub mod cartpole;
 pub mod continuous_lqr;
+pub mod grid_world;
 #[cfg(feature = "training")]
 pub mod matching_pennies;
 pub mod mountain_car_continuous;
@@ -45,6 +49,7 @@ pub mod bucket_brigade;
 pub use bucket_brigade::BucketBrigadeMaEnv;
 pub use cartpole::CartPole;
 pub use continuous_lqr::ContinuousLqr;
+pub use grid_world::GridWorld;
 #[cfg(feature = "training")]
 pub use matching_pennies::MatchingPennies;
 pub use mountain_car_continuous::MountainCarContinuous;
