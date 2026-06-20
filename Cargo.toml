@@ -178,6 +178,16 @@ name = "train_cartpole_dqn"
 path = "examples/games/cartpole/train_cartpole_dqn.rs"
 required-features = ["training"]
 
+# DQN on GridWorld (issue #185, PR B of the more-environments epic #180).
+# Seeded Double-DQN on the 4x4 FrozenLake-style GridWorld env (16-dim one-hot
+# obs, 4 discrete actions). Emits an opt-in learning-curve CSV via CURVE_CSV,
+# mirroring train_cartpole_dqn. Runnable counterpart of
+# tests/test_dqn_grid_world.rs.
+[[example]]
+name = "train_dqn_grid_world"
+path = "examples/games/grid_world/train_dqn_grid_world.rs"
+required-features = ["training"]
+
 # A2C CartPole trainer (issue #153, PR C of the A2C epic #150). Same
 # EnvPool rollout + GAE pattern as train_cartpole_modern but with the
 # single-update-per-rollout A2cTrainer. Emits an opt-in learning-curve
