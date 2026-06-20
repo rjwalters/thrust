@@ -21,11 +21,22 @@
 //! register_all::<Cpu>(c, &default_burn_device::<Cpu>(), "ndarray");
 //! ```
 //!
-//! This is the only place a concrete `NdArray` backend appears. The default
-//! `cargo bench --features training` path therefore always emits the same eight
-//! logical groups as before, now suffixed `/ndarray`. A later PR can add
-//! cfg-gated `register_all::<Gpu>(..)` calls (wgpu/cuda) at this seam without
-//! touching any bench body; this PR adds no GPU code.
+//! The CPU `NdArray` baseline is always registered. GPU backends are added at
+//! the same seam behind Cargo-feature gates, reusing the exact same generic
+//! bench bodies with no logic duplication:
+//!
+//! ```text
+//! #[cfg(feature = "wgpu")]
+//! { type Gpu = Autodiff<Wgpu<f32, i32>>;
+//!   register_all::<Gpu>(c, &default_burn_device::<Gpu>(), "wgpu"); }
+//! ```
+//!
+//! Because CI is CPU-host only and never sets `wgpu`/`cuda`, the default
+//! `cargo bench --features training` path always emits exactly the same eight
+//! logical groups as before, now suffixed `/ndarray`, and never compiles or
+//! constructs a GPU backend. The GPU registration code only compiles when the
+//! corresponding feature is enabled — see the "Throughput benchmarking on GPU
+//! backends" section of `docs/BURN_BACKENDS.md`.
 //!
 //! All benchmarks are seeded so the numbers are comparable run-to-run.
 //!
@@ -96,6 +107,13 @@
 
 use std::hint::black_box;
 
+// GPU backend types are pulled in only when the corresponding feature is
+// enabled, so the default CPU build never references (or compiles) them. CI is
+// CPU-host only and never sets `wgpu`/`cuda` — see the driver `benches()`.
+#[cfg(feature = "cuda")]
+use burn::backend::Cuda;
+#[cfg(feature = "wgpu")]
+use burn::backend::Wgpu;
 use burn::{
     backend::{Autodiff, NdArray},
     optim::AdamConfig,
@@ -806,13 +824,38 @@ fn register_all<B: AutodiffBackend>(c: &mut Criterion, device: &B::Device, suffi
     bench_sac_pendulum_steps_per_sec::<B>(c, device, suffix);
 }
 
-/// Criterion driver. Registers the CPU baseline unconditionally; this is the
-/// only place a concrete backend type appears. GPU backends (wgpu/cuda) are
-/// added at this seam in a later PR behind cfg gates and are NOT referenced
-/// here — the default `cargo bench --features training` path is CPU-only.
+/// Criterion driver. Registers the CPU `ndarray` baseline unconditionally, then
+/// registers the GPU backends behind Cargo-feature gates.
+///
+/// The CPU baseline is always present, so a single run produces the paired
+/// CPU-vs-GPU comparison (e.g. `a2c_train_step/ndarray` alongside
+/// `a2c_train_step/wgpu`). CI is CPU-host only and never sets `wgpu`/`cuda`, so
+/// the default `cargo bench --features training` path compiles and runs only
+/// the `ndarray` registration — the GPU branches below are not compiled.
+///
+/// No runtime adapter detection is performed: criterion has no skip primitive,
+/// and a host without a GPU would never enable the feature in the first place.
+/// If a GPU feature is compiled where no adapter exists, Burn panics on first
+/// device use — acceptable because the feature is opt-in and only compiled on
+/// operator GPU hosts (the actual GPU run is operator-gated, see #184).
 fn benches(c: &mut Criterion) {
     type Cpu = Autodiff<NdArray<f32>>;
     register_all::<Cpu>(c, &default_burn_device::<Cpu>(), "ndarray");
+
+    #[cfg(feature = "wgpu")]
+    {
+        // Cross-platform GPU (Vulkan / Metal / DX12 / WebGPU). Mirrors the
+        // `Wgpu<f32, i32>` InnerBackend alias used in examples/games/**.
+        type Gpu = Autodiff<Wgpu<f32, i32>>;
+        register_all::<Gpu>(c, &default_burn_device::<Gpu>(), "wgpu");
+    }
+
+    #[cfg(feature = "cuda")]
+    {
+        // Linux + NVIDIA. `Cuda` defaults to `<f32, i32>` element/index types.
+        type Gpu = Autodiff<Cuda<f32, i32>>;
+        register_all::<Gpu>(c, &default_burn_device::<Gpu>(), "cuda");
+    }
 }
 
 criterion_group!(benches_group, benches);
