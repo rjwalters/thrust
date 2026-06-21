@@ -131,6 +131,40 @@ Secondary observation: exploitability *increased* across the calibration iterati
 the NFSP non-convergence ([#199](https://github.com/rjwalters/thrust/issues/199)),
 to revisit once the payoff cost is tractable.
 
+### Update (2026-06-21, cont.): payoff-cap calibration — convergence is the real blocker
+
+[#212](https://github.com/rjwalters/thrust/issues/212) shipped an opt-in
+`max_payoff_evals_per_iteration` cap ([#214](https://github.com/rjwalters/thrust/issues/214))
+to bound the boundary-slab cost. Re-calibrated on alc-2 (33 threads, `CELL=beta01`,
+2048 rollout, **cap=64**, 24 iterations requested):
+
+| iter | population | exploitability | iteration wall-clock |
+|------|-----------|----------------|---------------------|
+| 1 | 2 | 6404 | — |
+| 2 | 3 | 9253 | 8m03s |
+| 3 | 4 | 8423 | 13m06s |
+| 4 | 5 | 12029 | 23m18s |
+
+Two conclusions, both decisive for the PSRO half of #134:
+
+1. **The cap is necessary but not sufficient.** From iter 2 on, payoff evals are
+   pinned at 64, yet per-iteration time still grows ~1.6×/iter (8→13→23 min). So the
+   payoff tensor was not the *only* super-linear cost — the remaining growth is the
+   **α-rank stationary-distribution solve over the `population⁴` response graph**
+   (plus best-response training), which the payoff-eval cap does not touch.
+2. **PSRO does not converge here.** Exploitability *increases* (6404 → 12029) rather
+   than decreasing, with or without the cap. Cost optimization is moot if the
+   algorithm doesn't converge on this game.
+
+**Net:** after parallelization (#198), observability (#202), checkpointing (#204),
+and the payoff cap (#212), PSRO on the 4-player bucket-brigade is *both* still slow
+(compounding super-linear costs) *and* non-convergent. The gating question is no
+longer cost but **whether PSRO can converge on these cells at all** — a research
+question, tracked alongside the α-rank-solve cost in
+[#215](https://github.com/rjwalters/thrust/issues/215). This mirrors the NFSP
+non-convergence (#199): **neither trainer converges on the no-convergence cells**,
+which is itself the answer to #134's research question at the budgets explored.
+
 ## Budget note: 8192 rollout is impractical for NFSP on this hardware
 
 The #134-recommended `48 × 8192` budget proved infeasible. At 8192 rollout, NFSP
