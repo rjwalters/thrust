@@ -92,6 +92,7 @@
 use anyhow::{Result, anyhow};
 use burn::{optim::Optimizer, tensor::backend::AutodiffBackend};
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use rayon::prelude::*;
 
 use crate::{
     multi_agent::joint::{
@@ -1294,6 +1295,14 @@ where
     pub fn run<F>(&mut self, mut on_iteration: F) -> Result<PsroStats>
     where
         F: FnMut(&PsroIterationStats),
+        // Bounds required by the rayon-parallel boundary-slab evaluation
+        // (issue #203). Mirror the `EnvPool` Send-bound convention
+        // (pool.rs:58). The parallel payoff result is bit-identical to a
+        // serial sweep because each cell is pure (issue #201).
+        P: Send + Sync,
+        E: Send,
+        FE: Sync,
+        B::Device: Sync,
     {
         let num_agents = self.joint_config.num_agents;
 
@@ -1346,14 +1355,31 @@ where
             // new radix. We iterate flat indices and decompose.
             let total_new = new_k.checked_pow(num_agents as u32).expect("k^N overflow");
             let new_strategy_idx = new_k - 1;
-            for s in 0..total_new {
-                let components = decompose_joint_index(s, num_agents, new_k);
-                let touches_boundary = components.contains(&new_strategy_idx);
-                if !touches_boundary {
-                    continue;
-                }
-                let payoffs = self.evaluate_payoff_joint(&components);
-                self.payoff_cache.set_cell(&components, payoffs);
+
+            // Gather the boundary cells (those whose per-agent index
+            // vector includes the newest strategy) in deterministic flat
+            // order. This is the `population^N` slab that dominates PSRO
+            // cost on large N (issue #198).
+            let boundary: Vec<Vec<usize>> = (0..total_new)
+                .filter_map(|s| {
+                    let components = decompose_joint_index(s, num_agents, new_k);
+                    components.contains(&new_strategy_idx).then_some(components)
+                })
+                .collect();
+
+            // Evaluate every boundary cell in parallel. Each cell is a
+            // pure function of `(config.seed, joint)` (issue #201), so
+            // the parallel result is **bit-identical** to a serial sweep
+            // regardless of thread count or scheduling: cells share no
+            // mutable state, each clones its joint policies and builds a
+            // fresh env via `env_factory`, and seeds a local `StdRng`.
+            // Results are collected by index (not push order), then
+            // written into the cache serially below, so the cache is
+            // populated in the same deterministic order as the old serial
+            // loop. See `evaluate_payoff_boundary_parallel`.
+            let evaluated = self.evaluate_payoff_boundary_parallel(&boundary);
+            for (components, payoffs) in boundary.iter().zip(evaluated) {
+                self.payoff_cache.set_cell(components, payoffs);
             }
 
             // Step 4: re-solve the meta-Nash on the post-append cache
@@ -1381,7 +1407,13 @@ where
     /// iteration callback. Use this when per-iteration observation is
     /// not needed (mirrors
     /// [`NfspTrainer::run_silent`](crate::multi_agent::nfsp::NfspTrainer::run_silent)).
-    pub fn run_silent(&mut self) -> Result<PsroStats> {
+    pub fn run_silent(&mut self) -> Result<PsroStats>
+    where
+        P: Send + Sync,
+        E: Send,
+        FE: Sync,
+        B::Device: Sync,
+    {
         self.run(|_| {})
     }
 
@@ -1634,6 +1666,72 @@ where
             &self.env_factory,
             &self.device,
         )
+    }
+
+    /// Evaluate a batch of boundary payoff cells **in parallel** with
+    /// rayon, returning one payoff vector per input cell in the **same
+    /// order** as `boundary`.
+    ///
+    /// # Bit-identity with the serial path (issue #203)
+    ///
+    /// Each cell delegates to [`evaluate_payoff_joint_pure`], which seeds
+    /// a local [`StdRng`] purely from `(config.seed, joint)` and touches
+    /// no shared trainer RNG (issue #201). The cell payoff is therefore a
+    /// pure function of `(joint, config, policies, env_factory)`, so this
+    /// `par_iter` result is **bit-identical** to evaluating the same
+    /// cells serially in any order, *regardless of thread count or
+    /// scheduling*. Results are gathered by index via
+    /// [`ParallelIterator::collect`] (rayon preserves input order), never
+    /// by push order, and the caller writes them into the cache serially.
+    ///
+    /// # Thread-safety
+    ///
+    /// No mutable state crosses threads. Each task:
+    /// - reads `self.populations` / `self.config` / `self.device` /
+    ///   `self.env_factory` through shared `&` borrows (no `&mut self`),
+    /// - clones the joint's per-agent policies (`P: Clone`) so the autodiff
+    ///   modules are owned per task,
+    /// - builds a fresh env via `env_factory` (which already yields a new
+    ///   instance per call).
+    ///
+    /// The `Send`/`Sync` bounds mirror the [`EnvPool`](crate::env::pool)
+    /// convention (`E: Send`): `P: Send + Sync` (shared by `&`, cloned
+    /// per task), `E: Send` (moved into each task), and the factory /
+    /// device are shared by `&` (`FE: Sync`, `B::Device: Sync`). No
+    /// `Mutex` is introduced, so the hot loop is never serialized.
+    fn evaluate_payoff_boundary_parallel(&self, boundary: &[Vec<usize>]) -> Vec<Vec<f32>>
+    where
+        P: Send + Sync,
+        E: Send,
+        FE: Sync,
+        B::Device: Sync,
+    {
+        let num_agents = self.joint_config.num_agents;
+        // Bind only the Sync field borrows into locals so the rayon
+        // closures capture *these* references and NOT the whole `&self`
+        // (which also holds the non-`Sync` `Box<dyn MetaSolver>` and the
+        // `FP`/`FO` factory closures). Capturing the whole `&self` would
+        // require the entire trainer to be `Sync`; capturing only the
+        // payoff-relevant fields keeps the bounds minimal and correct.
+        let populations = &self.populations;
+        let config = &self.config;
+        let env_factory = &self.env_factory;
+        let device = &self.device;
+        boundary
+            .par_iter()
+            .map(|joint| {
+                debug_assert_eq!(joint.len(), num_agents);
+                let policies: Vec<P> =
+                    (0..num_agents).map(|a| populations[a][joint[a]].clone()).collect();
+                evaluate_payoff_joint_pure::<B, P, _, _>(
+                    joint,
+                    config,
+                    &policies,
+                    env_factory,
+                    device,
+                )
+            })
+            .collect()
     }
 }
 
@@ -2494,7 +2592,7 @@ mod tests {
 
         // Run one PSRO iteration so each agent has a 2-policy
         // population (indices 0 and 1) to form a 2×2 joint tensor.
-        trainer.run().expect("PSRO run should not error");
+        trainer.run_silent().expect("PSRO run should not error");
         assert!(trainer.populations(0).len() >= 2, "need >=2 policies per agent");
         assert!(trainer.populations(1).len() >= 2, "need >=2 policies per agent");
 
@@ -2530,6 +2628,123 @@ mod tests {
         // And it must match the value computed during the full-tensor
         // sweep (cell [1, 0] is index 1 in `joints`).
         assert_eq!(once, forward[1], "single-cell value must match the swept value");
+    }
+
+    /// Rayon-parallel boundary-slab evaluation is **bit-identical** to a
+    /// serial sweep (issue #203).
+    ///
+    /// After growing both agents' populations to size ≥ 2 we evaluate the
+    /// full boundary slab two ways — serially cell-by-cell via
+    /// `evaluate_payoff_joint`, and in parallel via
+    /// `evaluate_payoff_boundary_parallel` — and assert the two payoff
+    /// vectors match cell-for-cell exactly. To prove the result is
+    /// invariant to thread scheduling we additionally run the parallel
+    /// path inside rayon thread pools of size 1 and 4 and assert both
+    /// equal the serial reference. This is the load-bearing determinism
+    /// guarantee of #198 PR C and is fully CPU-CI-testable (no cluster
+    /// hardware required).
+    #[test]
+    fn test_payoff_boundary_parallel_matches_serial_bit_identically() {
+        let device: NdArrayDevice = Default::default();
+        let psro_config = PsroConfig {
+            max_iterations: 1,
+            max_population_size: 50,
+            br_train_steps_per_iteration: 2,
+            payoff_eval_episodes: 4,
+            seed: 0xC0FF_EE12,
+        };
+        let joint_config = JointTrainerConfig {
+            num_agents: 2,
+            rollout_steps: 32,
+            n_epochs: 1,
+            minibatch_size: 32,
+            ..Default::default()
+        };
+        let mut trainer = PsroTrainer::new(
+            psro_config,
+            joint_config,
+            Box::new(FictitiousPlayMetaSolver::new(200)) as Box<dyn MetaSolver>,
+            device,
+            |dev: &NdArrayDevice, seed: u64| {
+                MlpBurnPolicy::<B>::new_seeded(
+                    MatchingPennies::OBS_DIM,
+                    MatchingPennies::ACTION_DIM,
+                    16,
+                    seed,
+                    dev,
+                )
+            },
+            || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
+            MatchingPennies::new,
+        )
+        .expect("PsroTrainer::new should succeed");
+
+        // One PSRO iteration grows each agent's population to size 2,
+        // forming a 2×2 joint tensor whose boundary slab we re-evaluate.
+        trainer.run_silent().expect("PSRO run should not error");
+        let k = trainer.populations(0).len();
+        assert!(k >= 2, "need >=2 policies per agent to form a non-trivial slab");
+
+        // Full boundary slab in deterministic flat order.
+        let new_strategy_idx = k - 1;
+        let total = k.checked_pow(2).expect("k^2 overflow");
+        let boundary: Vec<Vec<usize>> = (0..total)
+            .filter_map(|s| {
+                let c = decompose_joint_index(s, 2, k);
+                c.contains(&new_strategy_idx).then_some(c)
+            })
+            .collect();
+        assert!(!boundary.is_empty(), "boundary slab must be non-empty");
+
+        // Serial reference: cell-by-cell via the pure single-cell path.
+        let serial: Vec<Vec<f32>> =
+            boundary.iter().map(|j| trainer.evaluate_payoff_joint(j)).collect();
+
+        // Parallel path under the ambient (global) rayon pool.
+        let parallel = trainer.evaluate_payoff_boundary_parallel(&boundary);
+        assert_eq!(
+            serial, parallel,
+            "rayon-parallel boundary payoff must be bit-identical to the serial sweep"
+        );
+
+        // Thread-count invariance: the seeding scheme makes the result
+        // independent of how many threads execute it. Run the parallel
+        // evaluation inside dedicated 1-thread and 4-thread pools and
+        // assert both match the serial reference exactly. We bind the
+        // Sync field borrows into locals so the `install` closure does
+        // not capture the whole (non-`Send`) trainer, then drive the same
+        // `evaluate_payoff_joint_pure` cell function the production path
+        // uses.
+        let populations = &trainer.populations;
+        let config = &trainer.config;
+        let env_factory = &trainer.env_factory;
+        let device = &trainer.device;
+        for threads in [1_usize, 4] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .expect("build rayon pool");
+            let got: Vec<Vec<f32>> = pool.install(|| {
+                boundary
+                    .par_iter()
+                    .map(|joint| {
+                        let policies: Vec<MlpBurnPolicy<B>> =
+                            (0..2).map(|a| populations[a][joint[a]].clone()).collect();
+                        evaluate_payoff_joint_pure::<B, _, _, _>(
+                            joint,
+                            config,
+                            &policies,
+                            env_factory,
+                            device,
+                        )
+                    })
+                    .collect()
+            });
+            assert_eq!(
+                serial, got,
+                "parallel payoff must be bit-identical to serial with {threads} thread(s)"
+            );
+        }
     }
 
     /// `splitmix64` is a deterministic permutation-like mixer: distinct
