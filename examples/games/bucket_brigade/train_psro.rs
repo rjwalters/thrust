@@ -51,8 +51,23 @@
 //! - `psro_<cell>_final_meta_nash.json`
 //!
 //! Per-iteration progress is logged live via the PSRO `on_iteration`
-//! callback (NFSP-parity, issue #202). Mid-run intermediate checkpoint
-//! *writing* is tracked separately by issue #204.
+//! callback (NFSP-parity, issue #202).
+//!
+//! # Mid-run checkpointing (issue #204)
+//!
+//! The same `on_iteration` callback also writes **intermediate**
+//! per-agent BR checkpoints every `CHECKPOINT_INTERVAL_ITERATIONS`
+//! iterations *during* `run()`, not only after it returns:
+//! - `psro_<cell>_iter<n>_agent<i>.bin` (Burn binary, per agent)
+//! - `psro_<cell>_iter<n>_meta_nash.json` (α-rank meta-Nash per agent)
+//!
+//! A killed multi-hour run therefore leaves a resumable / partial-result
+//! safe artifact on disk rather than nothing. Set
+//! `CHECKPOINT_INTERVAL_ITERATIONS` (env var) to tune the cadence; `0`
+//! disables mid-run checkpointing. The callback receives the newest BR
+//! policy per agent (`brs[i]`) directly from the trainer, so no
+//! post-hoc accessor or borrow gymnastics are needed. Checkpointing is a
+//! side-effect-only write and does not change the training trajectory.
 //!
 //! # `gap_closed` baseline caveat
 //!
@@ -105,6 +120,11 @@ const SEED: u64 = 42;
 const DEFAULT_TOTAL_ITERATIONS: usize = 50;
 const DEFAULT_ROLLOUT_STEPS: usize = 2048;
 const DEFAULT_CELL: &str = "beta05";
+/// Default mid-run checkpoint cadence: write per-agent BR + meta-Nash
+/// every Nth outer iteration (issue #204). Overridable via the
+/// `CHECKPOINT_INTERVAL_ITERATIONS` env var; `0` disables mid-run
+/// checkpointing (only the final post-run artifacts are written).
+const DEFAULT_CHECKPOINT_INTERVAL_ITERATIONS: usize = 5;
 /// Length of the post-iteration deterministic eval rollout used to log
 /// the running per-step team estimate.
 const EVAL_STEPS: usize = 50;
@@ -179,10 +199,23 @@ fn main() -> Result<()> {
         .unwrap_or(DEFAULT_ROLLOUT_STEPS);
     let cell = std::env::var("CELL").unwrap_or_else(|_| DEFAULT_CELL.to_string());
     let (beta, kappa, cost) = cell_params(&cell);
+    let checkpoint_interval: usize = std::env::var("CHECKPOINT_INTERVAL_ITERATIONS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_CHECKPOINT_INTERVAL_ITERATIONS);
 
     tracing::info!("Starting PSRO bucket-brigade training (Burn backend: {BACKEND_LABEL})");
     tracing::info!("  cell             = {cell} (β={beta}, κ={kappa}, c={cost})");
     tracing::info!("  total_iterations = {total_iterations}");
+    tracing::info!(
+        "  checkpoint_every = {} iters{}",
+        checkpoint_interval,
+        if checkpoint_interval == 0 {
+            " (mid-run checkpointing disabled)"
+        } else {
+            ""
+        }
+    );
     tracing::info!("  rollout_steps    = {rollout_steps}");
     tracing::info!("  num_agents       = {NUM_AGENTS}");
     tracing::info!("  hidden_dim       = {HIDDEN_DIM}");
@@ -245,16 +278,29 @@ fn main() -> Result<()> {
         env_factory,
     )?;
 
+    let bin_recorder = BinFileRecorder::<FullPrecisionSettings>::new();
+    let json_recorder = PrettyJsonFileRecorder::<FullPrecisionSettings>::new();
+
     tracing::info!("------------------------------------------------------------");
     let training_start = std::time::Instant::now();
 
-    // Live per-iteration progress via the PSRO `on_iteration` callback
-    // (NFSP-parity, issue #202). The callback fires once per outer
-    // iteration with that iteration's `PsroIterationStats`, so progress
-    // is observable *during* multi-hour runs rather than only after
-    // `run()` returns. Mid-run checkpoint *writing* is issue #204; this
-    // path logs live and saves the final populations after `run()`.
-    let stats = trainer.run(|iter_stats| {
+    // Live per-iteration progress + mid-run checkpointing via the PSRO
+    // `on_iteration` callback (NFSP-parity, issue #202 + checkpointing,
+    // issue #204). The callback fires once per outer iteration with that
+    // iteration's `PsroIterationStats` AND the newest BR policy per
+    // agent (`brs[i]`), so progress is observable and partial results are
+    // persistable *during* multi-hour runs rather than only after
+    // `run()` returns.
+    //
+    // Every `checkpoint_interval` iterations we write
+    // `psro_<cell>_iter<n>_agent<i>.bin` (one per agent) plus a
+    // `psro_<cell>_iter<n>_meta_nash.json` snapshot. A killed run thus
+    // leaves a resumable / partial-result-safe artifact. Writing is a
+    // pure side effect on a *clone* of each policy and does not perturb
+    // the deterministic training trajectory. If any checkpoint write
+    // fails we log a warning and continue — a transient IO error must not
+    // abort an expensive multi-hour run.
+    let stats = trainer.run(|iter_stats, brs| {
         tracing::info!(
             "iter {:>3}/{}  pop_size={:>3}  exploitability={:>9.4}",
             iter_stats.iteration,
@@ -262,10 +308,36 @@ fn main() -> Result<()> {
             iter_stats.population_size,
             iter_stats.exploitability,
         );
-    })?;
 
-    let bin_recorder = BinFileRecorder::<FullPrecisionSettings>::new();
-    let json_recorder = PrettyJsonFileRecorder::<FullPrecisionSettings>::new();
+        if checkpoint_interval == 0 || iter_stats.iteration % checkpoint_interval != 0 {
+            return;
+        }
+        let n = iter_stats.iteration;
+        for (i, br) in brs.iter().enumerate() {
+            let bin_path = format!("psro_{cell}_iter{n}_agent{i}");
+            if let Err(e) = (*br).clone().save_file(&bin_path, &bin_recorder) {
+                tracing::warn!("checkpoint BIN save failed (iter {n}, agent {i}): {e}");
+            }
+        }
+        // Meta-Nash snapshot (per-agent marginals) alongside the BRs.
+        let mut as_map: HashMap<String, Vec<f32>> = HashMap::new();
+        for (i, dist) in iter_stats.meta_nash_per_agent.iter().enumerate() {
+            as_map.insert(format!("agent{i}"), dist.clone());
+        }
+        match serde_json::to_string_pretty(&as_map) {
+            Ok(json) => {
+                let meta_path = format!("psro_{cell}_iter{n}_meta_nash.json");
+                if let Err(e) = std::fs::write(&meta_path, json) {
+                    tracing::warn!("checkpoint meta-Nash write failed (iter {n}): {e}");
+                }
+            }
+            Err(e) => tracing::warn!("checkpoint meta-Nash serialize failed (iter {n}): {e}"),
+        }
+        tracing::info!(
+            "  checkpoint written: psro_{cell}_iter{n}_agent{{0..{}}}.bin (+ meta_nash.json)",
+            NUM_AGENTS - 1
+        );
+    })?;
 
     tracing::info!("------------------------------------------------------------");
     let final_population_size = stats.iterations.last().map(|s| s.population_size).unwrap_or(0);
