@@ -149,7 +149,7 @@ fn test_psro_n4_converges_to_uniform_on_majority_game() {
     )
     .expect("PsroTrainer::new should succeed for N=4 config");
 
-    let stats = trainer.run().expect("PSRO run should not error");
+    let stats = trainer.run_silent().expect("PSRO run should not error");
     assert_eq!(stats.iterations.len(), max_iterations, "should record 8 iterations");
 
     let final_meta_nash = stats.iterations.last().unwrap().meta_nash_per_agent.clone();
@@ -252,7 +252,7 @@ fn test_psro_n4_nashconv_trend_does_not_blow_up() {
     )
     .expect("PsroTrainer::new should succeed for N=4 config");
 
-    let stats = trainer.run().expect("PSRO run should not error");
+    let stats = trainer.run_silent().expect("PSRO run should not error");
     let expls: Vec<f32> = stats.iterations.iter().map(|it| it.exploitability).collect();
     println!("N=4 NashConv curve: {expls:?}");
     for &e in &expls {

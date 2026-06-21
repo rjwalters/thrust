@@ -68,7 +68,7 @@ fn psro_exploitability_trace(seed: u64) -> Vec<f32> {
         MatchingPennies::new,
     )
     .expect("PsroTrainer::new should succeed");
-    let stats = trainer.run().expect("PSRO run should not error");
+    let stats = trainer.run_silent().expect("PSRO run should not error");
     stats.iterations.iter().map(|it| it.exploitability).collect()
 }
 
