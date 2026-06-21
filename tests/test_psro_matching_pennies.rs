@@ -1,4 +1,17 @@
-//! PSRO smoke test on the matching-pennies env.
+//! PSRO smoke + convergence tests on the matching-pennies env.
+//!
+//! Two tiers, gated per issue #208 to bound per-PR CI cost:
+//!
+//! 1. **`psro_matching_pennies_smoke_runs_and_is_finite`** (always runs) — a
+//!    tiny-budget (2 outer iterations) check that the trainer wires together
+//!    end-to-end and produces FINITE, structurally-valid outputs (per-agent
+//!    meta-Nash marginals are valid simplex distributions, the exploitability
+//!    curve is finite and non-negative). Runs in seconds.
+//! 2. **`test_psro_converges_to_uniform_on_matching_pennies`** and
+//!    **`test_psro_exploitability_non_increasing_trend_on_matching_pennies`**
+//!    (`#[ignore]`) — the full-budget convergence bars, kept verbatim. Run them
+//!    on demand with `cargo test --release --features training --test
+//!    test_psro_matching_pennies -- --ignored`.
 //!
 //! Tracks acceptance criterion 7 from issue #107's curator comment:
 //! after ≥10 PSRO iterations the meta-Nash distribution's marginal
@@ -64,7 +77,80 @@ fn meta_nash_action_marginal(
     marginal
 }
 
+/// Fast, always-on smoke test (issue #208): drive a tiny-budget (2 outer
+/// iterations) PSRO run end-to-end and assert it produces FINITE,
+/// structurally-valid outputs without asserting any convergence bar.
 #[test]
+fn psro_matching_pennies_smoke_runs_and_is_finite() {
+    let device: NdArrayDevice = Default::default();
+    let max_iterations = 2_usize;
+    let psro_config = PsroConfig {
+        max_iterations,
+        max_population_size: 50,
+        br_train_steps_per_iteration: 1,
+        payoff_eval_episodes: 1,
+        seed: 17,
+    };
+    let joint_config = JointTrainerConfig {
+        num_agents: 2,
+        rollout_steps: 32,
+        n_epochs: 1,
+        minibatch_size: 32,
+        ..Default::default()
+    };
+    let meta_solver: Box<dyn MetaSolver> = Box::new(FictitiousPlayMetaSolver::new(1000));
+
+    let mut trainer = PsroTrainer::new(
+        psro_config,
+        joint_config,
+        meta_solver,
+        device,
+        |dev: &NdArrayDevice, seed: u64| {
+            MlpBurnPolicy::<B>::new_seeded(
+                MatchingPennies::OBS_DIM,
+                MatchingPennies::ACTION_DIM,
+                16,
+                seed,
+                dev,
+            )
+        },
+        || {
+            let inner = AdamConfig::new().init();
+            BurnOptimizer::new(inner, 1e-3)
+        },
+        MatchingPennies::new,
+    )
+    .expect("PsroTrainer::new should succeed");
+
+    let stats = trainer.run_silent().expect("PSRO run should not error");
+    assert_eq!(stats.iterations.len(), max_iterations, "smoke run records 2 iterations");
+
+    for it in &stats.iterations {
+        assert!(
+            it.exploitability.is_finite(),
+            "exploitability finite, got {}",
+            it.exploitability
+        );
+        assert!(it.exploitability >= 0.0, "exploitability >= 0, got {}", it.exploitability);
+    }
+
+    // Both per-agent meta-Nash-weighted marginals must be valid
+    // distributions: finite, in `[0, 1]`, summing to ~1.
+    let final_meta_nash = stats.iterations.last().unwrap().meta_nash_row().to_vec();
+    for (label, pop) in [("row", trainer.population_row()), ("col", trainer.population_col())] {
+        let marginal = meta_nash_action_marginal(pop, &final_meta_nash, &Default::default());
+        let mut sum = 0.0_f32;
+        for &p in &marginal {
+            assert!(p.is_finite(), "{label} marginal entry finite, got {p}");
+            assert!((0.0..=1.0001).contains(&p), "{label} marginal entry out of range: {p}");
+            sum += p;
+        }
+        assert!((sum - 1.0).abs() <= 1e-3, "{label} marginal must sum to ~1, got {sum}");
+    }
+}
+
+#[test]
+#[ignore = "multi-iteration PSRO convergence run; opt in with --ignored (prefer --release)"]
 fn test_psro_converges_to_uniform_on_matching_pennies() {
     let device: NdArrayDevice = Default::default();
     let psro_config = PsroConfig {
@@ -190,6 +276,7 @@ fn test_psro_converges_to_uniform_on_matching_pennies() {
 /// `tests/test_seeded_reproducibility.rs`, which checks bit-identity
 /// directly; this test keeps its trend-monotonicity contract.)
 #[test]
+#[ignore = "multi-iteration PSRO convergence run; opt in with --ignored (prefer --release)"]
 fn test_psro_exploitability_non_increasing_trend_on_matching_pennies() {
     let device: NdArrayDevice = Default::default();
     let joint_config = JointTrainerConfig {

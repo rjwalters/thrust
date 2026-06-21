@@ -13,6 +13,19 @@
 //! iterations (post-iteration convergence rather than final-iteration
 //! to absorb the BR/AP oscillation).
 //!
+//! ## CI gating (issue #208)
+//!
+//! A fast always-on smoke test
+//! (`nfsp_n4_smoke_runs_and_is_finite`, tiny 2-iteration budget) keeps
+//! the trainer wired up on every CI run. The full-budget convergence
+//! (AC E) and η-mixing aggregate tests are `#[ignore]`d and run on
+//! demand:
+//!
+//! ```text
+//! cargo test --release --features training \
+//!     --test test_nfsp_n_player_matching_pennies -- --ignored
+//! ```
+//!
 //! Tracking issue: #119 (PR 2 of #117's chain).
 
 #![cfg(feature = "training")]
@@ -99,8 +112,40 @@ fn build_n_player_trainer(
     .expect("NfspTrainer::new should succeed for N-player config")
 }
 
+/// Fast, always-on smoke test (issue #208): a tiny-budget (2 outer
+/// iterations) N=4 NFSP run executes end-to-end and produces FINITE,
+/// structurally-valid outputs — every per-agent AP action marginal is
+/// a valid simplex distribution. No convergence bar.
+#[test]
+fn nfsp_n4_smoke_runs_and_is_finite() {
+    let num_agents = 4_usize;
+    let max_iterations = 2_usize;
+    let mut trainer = build_n_player_trainer(num_agents, max_iterations, 0.1, 19);
+    let stats = trainer.run_silent().expect("NFSP run should not error");
+    assert_eq!(stats.iterations.len(), max_iterations, "smoke run records 2 iterations");
+
+    let last = stats.iterations.last().unwrap();
+    for agent in 0..num_agents {
+        let m = last.avg_action_marginal[agent]
+            .as_ref()
+            .expect("AP marginal should be present on N-player matching pennies");
+        let mut sum = 0.0_f32;
+        for &p in m {
+            assert!(p.is_finite(), "agent {agent} AP marginal entry finite, got {p}");
+            assert!(
+                (0.0..=1.0001).contains(&p),
+                "agent {agent} AP marginal entry out of range: {p}"
+            );
+            sum += p;
+        }
+        assert!((sum - 1.0).abs() <= 1e-3, "agent {agent} AP marginal must sum to ~1, got {sum}");
+    }
+}
+
 /// AC item E: NFSP per-agent AP marginals converge to `(0.5, 0.5)`
 /// within `0.05` TV averaged over the last 3 outer iterations.
+///
+/// `#[ignore]`d in CI per issue #208 (run with `--ignored`).
 ///
 /// **Calibration**: The 5-run release-mode sweep (`cargo test
 /// --features training --release --test test_nfsp_n_player_matching_pennies`)
@@ -109,6 +154,7 @@ fn build_n_player_trainer(
 /// `0.05` bar is therefore met with the documented seed and
 /// hyperparameter set.
 #[test]
+#[ignore = "multi-iteration NFSP convergence run; opt in with --ignored (prefer --release)"]
 fn test_nfsp_n4_converges_to_uniform_on_majority_game() {
     let num_agents = 4_usize;
     let max_iterations = 10_usize;
@@ -145,7 +191,10 @@ fn test_nfsp_n4_converges_to_uniform_on_majority_game() {
 /// Reservoir / push-rate sanity: with η = 0.1 and 128 rollout steps
 /// per iteration over 10 iterations, the total BR push count across
 /// all 4 agents should be `4 × 128 × 10 × 0.1 ≈ 512 ± 4σ`.
+///
+/// `#[ignore]`d in CI per issue #208 (run with `--ignored`).
 #[test]
+#[ignore = "multi-iteration NFSP run; opt in with --ignored (prefer --release)"]
 fn test_nfsp_n4_eta_mixing_rate_in_aggregate() {
     let num_agents = 4_usize;
     let max_iterations = 10_usize;
