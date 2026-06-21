@@ -374,6 +374,7 @@ fn test_psro_beats_ppo_on_no_convergence_cells() {
             // is the canonical episode length so a single rollout is
             // already a stable estimate.
             payoff_eval_episodes: 1,
+            max_payoff_evals_per_iteration: None,
             seed: SEED.wrapping_add(cell_idx as u64),
         };
         let joint_config = JointTrainerConfig {

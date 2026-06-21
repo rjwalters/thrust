@@ -139,6 +139,7 @@ fn run_psro_n4(
         max_population_size: 50,
         br_train_steps_per_iteration: 1,
         payoff_eval_episodes: 1,
+        max_payoff_evals_per_iteration: None,
         seed,
     };
     let joint_config = JointTrainerConfig {

@@ -89,6 +89,7 @@ fn psro_matching_pennies_smoke_runs_and_is_finite() {
         max_population_size: 50,
         br_train_steps_per_iteration: 1,
         payoff_eval_episodes: 1,
+        max_payoff_evals_per_iteration: None,
         seed: 17,
     };
     let joint_config = JointTrainerConfig {
@@ -166,6 +167,7 @@ fn test_psro_converges_to_uniform_on_matching_pennies() {
         // mechanics don't *break* uniformity.
         br_train_steps_per_iteration: 1,
         payoff_eval_episodes: 2,
+        max_payoff_evals_per_iteration: None,
         seed: 17,
     };
     let joint_config = JointTrainerConfig {
@@ -296,6 +298,7 @@ fn test_psro_exploitability_non_increasing_trend_on_matching_pennies() {
             max_population_size: 50,
             br_train_steps_per_iteration: 2,
             payoff_eval_episodes: 4,
+            max_payoff_evals_per_iteration: None,
             seed,
         };
         let mut trainer = PsroTrainer::new(

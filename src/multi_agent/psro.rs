@@ -691,6 +691,79 @@ pub(crate) fn compose_joint_index(components: &[usize], k: usize) -> usize {
     s
 }
 
+/// Decide which boundary cells to actually roll out this iteration, and
+/// how to fill the rest, given an optional per-iteration evaluation cap
+/// (issue #212).
+///
+/// Returns `(to_evaluate, fill_from)`:
+/// - `to_evaluate` is the deterministic subset of `boundary` cells to roll out
+///   (in the *same relative order* as `boundary`, so the downstream rayon
+///   evaluation and cache writes stay deterministic).
+/// - `fill_from` is a list of `(boundary_dst_index, to_evaluate_src_index)`
+///   pairs: boundary cell `boundary[dst]` (which was *not* selected) is to be
+///   filled by copying the payoff of the selected cell evaluated at
+///   `to_evaluate[src]`.
+///
+/// # Selection scheme
+///
+/// - `cap == None`, or `boundary.len() <= cap`: **all** cells are selected and
+///   `fill_from` is empty. This is the default path and is **bit-identical** to
+///   evaluating the whole boundary (the pre-#212 behavior).
+/// - `Some(cap)` with `boundary.len() > cap >= 1`: select `cap` cells by an
+///   evenly-spaced deterministic stride over the boundary index range (`sel_idx
+///   = floor(j * len / cap)` for `j in 0..cap`), guaranteeing a stratified,
+///   reproducible cover that always includes the first cell. Every non-selected
+///   cell is filled from the nearest *preceding* selected cell (the largest
+///   selected index `<= its index`), which is well-defined because index 0 is
+///   always selected. Selection depends only on `(boundary.len(), cap)` — never
+///   on RNG or thread order — so the subsampled meta-game is itself fully
+///   deterministic.
+///
+/// `cap == Some(0)` is treated as `Some(1)` (always roll out at least one
+/// cell) so the boundary is never left entirely unevaluated.
+#[allow(clippy::type_complexity)]
+fn select_boundary_to_evaluate(
+    boundary: &[Vec<usize>],
+    cap: Option<usize>,
+) -> (Vec<Vec<usize>>, Vec<(usize, usize)>) {
+    let len = boundary.len();
+    let cap = match cap {
+        None => return (boundary.to_vec(), Vec::new()),
+        Some(c) => c.max(1),
+    };
+    if len <= cap {
+        return (boundary.to_vec(), Vec::new());
+    }
+    // Evenly-spaced stratified selection over [0, len). `selected[j]` is
+    // the boundary index chosen as the j-th sample; strictly increasing
+    // and always starts at 0.
+    let mut selected: Vec<usize> = Vec::with_capacity(cap);
+    for j in 0..cap {
+        let idx = (j * len) / cap;
+        // Guard against a repeated index from integer flooring (cannot
+        // happen for len > cap >= 1, but keep the invariant explicit).
+        if selected.last().copied() != Some(idx) {
+            selected.push(idx);
+        }
+    }
+    // Map each boundary index to the src position (within `to_evaluate`)
+    // of the nearest preceding selected cell.
+    let to_evaluate: Vec<Vec<usize>> = selected.iter().map(|&i| boundary[i].clone()).collect();
+    let mut fill_from: Vec<(usize, usize)> = Vec::with_capacity(len - selected.len());
+    let mut src = 0_usize; // position within `selected` / `to_evaluate`
+    for dst in 0..len {
+        // Advance `src` while the next selected index is still <= dst.
+        while src + 1 < selected.len() && selected[src + 1] <= dst {
+            src += 1;
+        }
+        if selected[src] == dst {
+            continue; // this cell is itself evaluated; nothing to fill
+        }
+        fill_from.push((dst, src));
+    }
+    (to_evaluate, fill_from)
+}
+
 /// Numerically-stable sigmoid `1 / (1 + exp(-x))`.
 #[allow(dead_code)]
 fn sigmoid(x: f32) -> f32 {
@@ -794,6 +867,35 @@ pub struct PsroConfig {
     /// Number of payoff-evaluation episodes per `(row, col)` cell in
     /// the empirical-payoff matrix.
     pub payoff_eval_episodes: usize,
+    /// Optional cap on the number of *fresh* payoff-cell evaluations
+    /// performed per outer iteration (issue #212).
+    ///
+    /// PSRO grows each agent's population by one policy per iteration,
+    /// so the only cells that need (re)evaluation are the **boundary
+    /// slab**: joint strategies in which at least one agent plays its
+    /// brand-new policy. Interior cells (between pre-existing policies)
+    /// are already cached across iterations and never recomputed — see
+    /// [`PayoffCache::resize_for_boundary`]. The boundary slab itself
+    /// still grows as `(k+1)^N − k^N ≈ N·k^(N-1)` cells, which for the
+    /// 4-player bucket-brigade game (`N = 4`) is super-linear and
+    /// dominates long-run cost even with the rayon-parallel evaluation
+    /// (#203) — see the 2026-06-21 calibration in
+    /// `docs/research/2026-06-bucket-brigade-validation.md`.
+    ///
+    /// When set to `Some(cap)` and an iteration's boundary slab has more
+    /// than `cap` cells, the trainer **deterministically subsamples**
+    /// `cap` boundary cells to actually roll out (preserving the
+    /// rayon-parallel evaluation for those), and fills each un-sampled
+    /// boundary cell from the nearest already-evaluated sampled cell in
+    /// the deterministic flat ordering. This bounds per-iteration cost
+    /// at the price of an **approximate** meta-game on the subsampled
+    /// boundary.
+    ///
+    /// `None` (the default) evaluates the entire boundary slab and is
+    /// therefore **bit-identical** to the pre-#212 behavior. The
+    /// subsampling path is purely opt-in; existing callers and the
+    /// determinism discipline (#201) are unaffected.
+    pub max_payoff_evals_per_iteration: Option<usize>,
     /// RNG seed for opponent sampling and deterministic tests.
     pub seed: u64,
 }
@@ -805,6 +907,7 @@ impl Default for PsroConfig {
             max_population_size: 50,
             br_train_steps_per_iteration: 1,
             payoff_eval_episodes: 8,
+            max_payoff_evals_per_iteration: None,
             seed: 0,
         }
     }
@@ -1004,6 +1107,41 @@ impl PayoffCache {
         let s = compose_joint_index(joint, self.per_role_k);
         self.cells[s] = payoffs;
         self.eval_count += 1;
+    }
+
+    /// Set the per-agent payoffs at joint strategy `joint` **without**
+    /// bumping `eval_count`.
+    ///
+    /// Used by the issue-#212 boundary-subsampling path to fill an
+    /// un-sampled boundary cell with a reused payoff (copied from an
+    /// already-evaluated sampled neighbour). Such a fill performs **no
+    /// fresh rollout**, so it must not be counted as an evaluation —
+    /// `eval_count` continues to reflect only the cells that were
+    /// actually rolled out. Same bounds/asserts as [`Self::set_cell`].
+    pub fn set_cell_no_count(&mut self, joint: &[usize], payoffs: Vec<f32>) {
+        assert_eq!(
+            joint.len(),
+            self.num_agents,
+            "joint strategy length {} must equal num_agents = {}",
+            joint.len(),
+            self.num_agents
+        );
+        assert_eq!(
+            payoffs.len(),
+            self.num_agents,
+            "payoffs length {} must equal num_agents = {}",
+            payoffs.len(),
+            self.num_agents
+        );
+        for (a, &idx) in joint.iter().enumerate() {
+            assert!(
+                idx < self.per_role_k,
+                "joint[{a}] = {idx} >= per_role_k = {}",
+                self.per_role_k
+            );
+        }
+        let s = compose_joint_index(joint, self.per_role_k);
+        self.cells[s] = payoffs;
     }
 
     /// Grow storage from `(per_role_k)^N` to `(new_per_role_k)^N`
@@ -1379,19 +1517,41 @@ where
                 })
                 .collect();
 
-            // Evaluate every boundary cell in parallel. Each cell is a
-            // pure function of `(config.seed, joint)` (issue #201), so
-            // the parallel result is **bit-identical** to a serial sweep
-            // regardless of thread count or scheduling: cells share no
-            // mutable state, each clones its joint policies and builds a
-            // fresh env via `env_factory`, and seeds a local `StdRng`.
+            // Optionally subsample the boundary slab to bound
+            // per-iteration cost (issue #212). With `None` (default) the
+            // entire boundary is evaluated, which is **bit-identical** to
+            // the pre-#212 behavior; with `Some(cap)` and a boundary
+            // larger than `cap`, only a deterministically-chosen `cap`
+            // cells are rolled out and the rest are filled by reuse — see
+            // `select_boundary_to_evaluate`.
+            let (to_evaluate, fill_from) =
+                select_boundary_to_evaluate(&boundary, self.config.max_payoff_evals_per_iteration);
+
+            // Evaluate the selected boundary cells in parallel. Each cell
+            // is a pure function of `(config.seed, joint)` (issue #201),
+            // so the parallel result is **bit-identical** to a serial
+            // sweep regardless of thread count or scheduling: cells share
+            // no mutable state, each clones its joint policies and builds
+            // a fresh env via `env_factory`, and seeds a local `StdRng`.
             // Results are collected by index (not push order), then
             // written into the cache serially below, so the cache is
             // populated in the same deterministic order as the old serial
             // loop. See `evaluate_payoff_boundary_parallel`.
-            let evaluated = self.evaluate_payoff_boundary_parallel(&boundary);
-            for (components, payoffs) in boundary.iter().zip(evaluated) {
-                self.payoff_cache.set_cell(components, payoffs);
+            let evaluated = self.evaluate_payoff_boundary_parallel(&to_evaluate);
+            // Write the freshly-evaluated cells first so the fill step can
+            // read their payoffs back out of the cache. `to_evaluate` is a
+            // prefix-stable deterministic subset of `boundary`.
+            for (components, payoffs) in to_evaluate.iter().zip(&evaluated) {
+                self.payoff_cache.set_cell(components, payoffs.clone());
+            }
+            // Fill the un-sampled boundary cells from their nearest
+            // already-evaluated sampled neighbour (deterministic; no fresh
+            // rollouts, so these do NOT bump `eval_count`). When the cap is
+            // `None` or not exceeded, `fill_from` is empty and this loop is
+            // a no-op, keeping the default path bit-identical.
+            for &(dst_idx, src_idx) in &fill_from {
+                let payoffs = evaluated[src_idx].clone();
+                self.payoff_cache.set_cell_no_count(&boundary[dst_idx], payoffs);
             }
 
             // Step 4: re-solve the meta-Nash on the post-append cache
@@ -2332,6 +2492,7 @@ mod tests {
             max_population_size: 50,
             br_train_steps_per_iteration: 2,
             payoff_eval_episodes: 4,
+            max_payoff_evals_per_iteration: None,
             seed: 0,
         };
         let joint_config = JointTrainerConfig {
@@ -2678,6 +2839,7 @@ mod tests {
             max_population_size: 50,
             br_train_steps_per_iteration: 2,
             payoff_eval_episodes: 4,
+            max_payoff_evals_per_iteration: None,
             seed: 12345,
         };
         let joint_config = JointTrainerConfig {
@@ -2767,6 +2929,7 @@ mod tests {
             max_population_size: 50,
             br_train_steps_per_iteration: 2,
             payoff_eval_episodes: 4,
+            max_payoff_evals_per_iteration: None,
             seed: 0xC0FF_EE12,
         };
         let joint_config = JointTrainerConfig {
@@ -2876,5 +3039,146 @@ mod tests {
         assert_ne!(a, c);
         // Deterministic.
         assert_eq!(a, splitmix64(0));
+    }
+
+    /// Boundary subsampling selection (issue #212) is correct and
+    /// deterministic. Pure-function unit test — no env, no rollouts.
+    #[test]
+    fn test_select_boundary_to_evaluate() {
+        // Helper: a fake boundary of `n` distinguishable single-element
+        // joints [0], [1], ..., [n-1].
+        let make = |n: usize| -> Vec<Vec<usize>> { (0..n).map(|i| vec![i]).collect() };
+
+        // cap = None -> evaluate everything, no fills (default path is
+        // bit-identical to the full-boundary sweep).
+        let b = make(5);
+        let (to_eval, fill) = select_boundary_to_evaluate(&b, None);
+        assert_eq!(to_eval, b);
+        assert!(fill.is_empty());
+
+        // cap >= len -> evaluate everything, no fills.
+        let (to_eval, fill) = select_boundary_to_evaluate(&b, Some(5));
+        assert_eq!(to_eval, b);
+        assert!(fill.is_empty());
+        let (to_eval, fill) = select_boundary_to_evaluate(&b, Some(99));
+        assert_eq!(to_eval, b);
+        assert!(fill.is_empty());
+
+        // cap < len -> stratified selection. len=6, cap=3 selects
+        // indices floor(j*6/3) = 0, 2, 4.
+        let b = make(6);
+        let (to_eval, fill) = select_boundary_to_evaluate(&b, Some(3));
+        assert_eq!(to_eval, vec![vec![0], vec![2], vec![4]]);
+        // Non-selected cells (1, 3, 5) fill from nearest preceding
+        // selected (src positions into to_eval: 0->[0], 1->[2], 2->[4]).
+        // dst 1 <- src 0 ([0]); dst 3 <- src 1 ([2]); dst 5 <- src 2 ([4]).
+        assert_eq!(fill, vec![(1, 0), (3, 1), (5, 2)]);
+
+        // Every boundary index is accounted for exactly once: either it
+        // is a selected index or it appears as a `dst` in `fill`.
+        let selected_dsts: std::collections::BTreeSet<usize> =
+            [0_usize, 2, 4].into_iter().collect();
+        let fill_dsts: std::collections::BTreeSet<usize> = fill.iter().map(|&(d, _)| d).collect();
+        let mut all: std::collections::BTreeSet<usize> = selected_dsts.clone();
+        all.extend(&fill_dsts);
+        assert_eq!(all, (0..6).collect());
+        assert!(selected_dsts.is_disjoint(&fill_dsts));
+
+        // cap = Some(0) is treated as Some(1): exactly one cell, the
+        // first, is evaluated; everything else fills from it.
+        let (to_eval, fill) = select_boundary_to_evaluate(&b, Some(0));
+        assert_eq!(to_eval, vec![vec![0]]);
+        assert_eq!(fill, vec![(1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]);
+
+        // Determinism: identical inputs yield identical outputs.
+        let again = select_boundary_to_evaluate(&b, Some(3));
+        assert_eq!(again, select_boundary_to_evaluate(&b, Some(3)));
+    }
+
+    /// **Load-bearing bit-identity test (issue #212).**
+    ///
+    /// The opt-in boundary-subsampling cap must not perturb the default
+    /// (uncapped) behavior. We run PSRO three ways from the *same seed* —
+    /// `max_payoff_evals_per_iteration: None` (default / pre-#212),
+    /// `Some(cap)` with `cap` larger than any iteration's boundary, and
+    /// `Some(usize::MAX)` — and assert the resulting payoff tensor,
+    /// per-cell `eval_count`, and full exploitability trace are
+    /// **bit-for-bit equal** across all three. This pins that the
+    /// cache/subsampling plumbing is a no-op whenever the cap is not
+    /// actually exceeded — preserving the #201 determinism guarantee and
+    /// the #203 parallel bit-identity.
+    #[test]
+    fn test_subsampling_cap_unreached_is_bit_identical_to_uncapped() {
+        // Build three trainers from the same config except for the cap.
+        // K=3 PSRO iters on matching pennies: max boundary is at the
+        // final growth k=3->4 with (4^2 - 3^2) = 7 cells, so any cap >= 7
+        // leaves every iteration's boundary fully evaluated.
+        let run = |cap: Option<usize>| -> (Vec<Vec<f32>>, usize, Vec<f32>) {
+            let mut trainer =
+                build_matching_pennies_trainer(Box::new(FictitiousPlayMetaSolver::new(200)), 3);
+            trainer.config.max_payoff_evals_per_iteration = cap;
+            let stats = trainer.run_silent().expect("PSRO run should not error");
+            let tensor = trainer.payoff_cache.payoff_tensor().to_vec();
+            let evals = trainer.payoff_cache.eval_count;
+            let trace: Vec<f32> = stats.iterations.iter().map(|s| s.exploitability).collect();
+            (tensor, evals, trace)
+        };
+
+        let (tensor_none, evals_none, trace_none) = run(None);
+        let (tensor_big, evals_big, trace_big) = run(Some(1_000));
+        let (tensor_max, evals_max, trace_max) = run(Some(usize::MAX));
+
+        assert_eq!(tensor_none, tensor_big, "payoff tensor: None vs large cap must be identical");
+        assert_eq!(tensor_none, tensor_max, "payoff tensor: None vs MAX cap must be identical");
+        assert_eq!(evals_none, evals_big, "eval_count: None vs large cap must be identical");
+        assert_eq!(evals_none, evals_max, "eval_count: None vs MAX cap must be identical");
+        assert_eq!(trace_none, trace_big, "exploitability trace: None vs large cap must match");
+        assert_eq!(trace_none, trace_max, "exploitability trace: None vs MAX cap must match");
+    }
+
+    /// An *exceeded* subsampling cap bounds the number of fresh
+    /// evaluations per iteration while still fully populating the payoff
+    /// tensor (no zero/unfilled cells), and is deterministic across runs
+    /// from the same seed (issue #212).
+    #[test]
+    fn test_subsampling_cap_bounds_evals_and_fills_tensor() {
+        let run_capped = || -> (usize, Vec<Vec<f32>>) {
+            let mut trainer =
+                build_matching_pennies_trainer(Box::new(FictitiousPlayMetaSolver::new(200)), 3);
+            // Cap at 3 fresh evals/iter. The initial 1^N seed (1 eval) is
+            // unconditional; thereafter each iteration's boundary is
+            // 2k+1 (N=2), exceeding 3 from the k=2->3 growth (5 cells)
+            // onward, so the cap is actually exercised.
+            trainer.config.max_payoff_evals_per_iteration = Some(3);
+            trainer.run_silent().expect("PSRO run should not error");
+            let evals = trainer.payoff_cache.eval_count;
+            let tensor = trainer.payoff_cache.payoff_tensor().to_vec();
+            (evals, tensor)
+        };
+
+        let (evals, tensor) = run_capped();
+
+        // Uncapped would be 1 + K² + 2K = 16 evals for K=3 (see
+        // `test_payoff_cache_only_evaluates_new_boundary`). Capping fresh
+        // rollouts at 3/iter must yield strictly fewer evaluations: the
+        // initial seed (1) + at most 3 per iteration × 3 iters = at most
+        // 10, and < 16.
+        assert!(evals <= 1 + 3 * 3, "capped eval_count {evals} must respect the per-iter cap");
+        assert!(evals < 16, "capped eval_count {evals} must be fewer than the uncapped 16");
+
+        // Every cell of the final 4×4 tensor is populated (the fill step
+        // copies a real evaluated payoff into each un-sampled boundary
+        // cell, so no cell is left at its resize-zeroed [0, 0] value for
+        // matching pennies, whose payoffs are ±1).
+        assert_eq!(tensor.len(), 16, "final tensor is 4^2 cells");
+        for (s, cell) in tensor.iter().enumerate() {
+            assert_eq!(cell.len(), 2, "cell {s} has per-agent payoffs");
+        }
+
+        // Determinism: same seed + same cap -> identical eval_count and
+        // tensor (selection is a pure function of (boundary.len(), cap)).
+        let (evals2, tensor2) = run_capped();
+        assert_eq!(evals, evals2, "capped run must be deterministic in eval_count");
+        assert_eq!(tensor, tensor2, "capped run must be deterministic in payoff tensor");
     }
 }
