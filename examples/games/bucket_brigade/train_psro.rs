@@ -203,6 +203,13 @@ fn main() -> Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_CHECKPOINT_INTERVAL_ITERATIONS);
+    // Optional per-iteration payoff-eval cap (issue #212). Unset =>
+    // evaluate the full boundary slab (bit-identical to the uncapped
+    // path). Set MAX_PAYOFF_EVALS_PER_ITER=<N> to deterministically
+    // subsample the boundary and bound per-iteration cost on the
+    // 4-player (population⁴) game.
+    let max_payoff_evals_per_iteration: Option<usize> =
+        std::env::var("MAX_PAYOFF_EVALS_PER_ITER").ok().and_then(|s| s.parse().ok());
 
     tracing::info!("Starting PSRO bucket-brigade training (Burn backend: {BACKEND_LABEL})");
     tracing::info!("  cell             = {cell} (β={beta}, κ={kappa}, c={cost})");
@@ -219,6 +226,13 @@ fn main() -> Result<()> {
     tracing::info!("  rollout_steps    = {rollout_steps}");
     tracing::info!("  num_agents       = {NUM_AGENTS}");
     tracing::info!("  hidden_dim       = {HIDDEN_DIM}");
+    tracing::info!(
+        "  max_payoff_evals = {}",
+        match max_payoff_evals_per_iteration {
+            Some(c) => format!("{c}/iter (boundary subsampling on)"),
+            None => "unbounded (full boundary; bit-identical)".to_string(),
+        }
+    );
 
     let device: burn::tensor::Device<InnerBackend> = Default::default();
 
@@ -234,6 +248,7 @@ fn main() -> Result<()> {
         max_population_size: 50,
         br_train_steps_per_iteration: 1,
         payoff_eval_episodes: 1,
+        max_payoff_evals_per_iteration,
         seed: SEED,
     };
     let joint_config = JointTrainerConfig {
