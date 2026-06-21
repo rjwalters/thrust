@@ -113,7 +113,7 @@ fn test_psro_converges_to_uniform_on_matching_pennies() {
     )
     .expect("PsroTrainer::new should succeed");
 
-    let stats = trainer.run().expect("PSRO run should not error");
+    let stats = trainer.run_silent().expect("PSRO run should not error");
     assert_eq!(stats.iterations.len(), 10, "should record 10 iterations");
 
     // Acceptance criterion 7: marginal mean over actions has TV ≤ 0.10
@@ -230,7 +230,7 @@ fn test_psro_exploitability_non_increasing_trend_on_matching_pennies() {
         )
         .expect("PsroTrainer::new should succeed");
 
-        let stats = trainer.run().expect("PSRO run should not error");
+        let stats = trainer.run_silent().expect("PSRO run should not error");
         let expls: Vec<f32> = stats.iterations.iter().map(|it| it.exploitability).collect();
         println!("seed={seed} exploitability curve: {:?}", expls);
 

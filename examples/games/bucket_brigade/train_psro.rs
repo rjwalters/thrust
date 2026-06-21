@@ -50,9 +50,9 @@
 //! Final α-rank meta-Nash distribution per agent is written to:
 //! - `psro_<cell>_final_meta_nash.json`
 //!
-//! Intermediate checkpoints every `CHECKPOINT_INTERVAL_ITERATIONS`
-//! outer iterations land at:
-//! - `psro_<cell>_iter<n>_agent<i>.bin`
+//! Per-iteration progress is logged live via the PSRO `on_iteration`
+//! callback (NFSP-parity, issue #202). Mid-run intermediate checkpoint
+//! *writing* is tracked separately by issue #204.
 //!
 //! # `gap_closed` baseline caveat
 //!
@@ -105,8 +105,6 @@ const SEED: u64 = 42;
 const DEFAULT_TOTAL_ITERATIONS: usize = 50;
 const DEFAULT_ROLLOUT_STEPS: usize = 2048;
 const DEFAULT_CELL: &str = "beta05";
-/// Outer iterations between intermediate per-agent BR checkpoints.
-const CHECKPOINT_INTERVAL_ITERATIONS: usize = 10;
 /// Length of the post-iteration deterministic eval rollout used to log
 /// the running per-step team estimate.
 const EVAL_STEPS: usize = 50;
@@ -250,70 +248,24 @@ fn main() -> Result<()> {
     tracing::info!("------------------------------------------------------------");
     let training_start = std::time::Instant::now();
 
-    // PSRO's `run()` is opaque — we cannot easily inject a per-iter
-    // callback the way NFSP supports. Run the full outer loop, then
-    // walk the stats history to log per-iteration progress and write
-    // intermediate checkpoints from the final populations. (The
-    // populations are monotonically-growing, so `populations[i][k]` is
-    // the BR trained on PSRO iteration `k+1`.)
-    let stats = trainer.run()?;
-
-    // --- Per-iteration progress + intermediate checkpoints ----------
-    let bin_recorder = BinFileRecorder::<FullPrecisionSettings>::new();
-    let json_recorder = PrettyJsonFileRecorder::<FullPrecisionSettings>::new();
-    for (iter_idx, iter_stats) in stats.iterations.iter().enumerate() {
-        let iter = iter_idx + 1;
-        // Each agent's `populations[i][iter_idx]` is the freshly-added
-        // BR from this outer iteration (the initial random policy is
-        // index 0 in the slice but iteration 1 grew the population by
-        // 1, so iter_idx==0 corresponds to populations[i][1]). We
-        // sample the most-recent BR per agent for the eval rollout.
-        let snapshot_brs: Vec<MultiDiscreteMlpBurnPolicy<B>> = (0..NUM_AGENTS)
-            .map(|i| {
-                let pop = trainer.populations(i);
-                // The newly-added BR is the second-to-last entry on
-                // intermediate iterations; the *very* last entry was
-                // added on the final iteration. For per-iter logging
-                // we read the BR that corresponds to this iteration's
-                // index, capped at population length.
-                let target_idx = (iter_idx + 1).min(pop.len() - 1);
-                pop[target_idx].clone()
-            })
-            .collect();
-        let recent_eval = eval_per_step_team_reward(
-            &snapshot_brs,
-            &device,
-            obs_dim,
-            beta,
-            kappa,
-            cost,
-            0xEE1 ^ iter as u64,
-        );
-        let recent_gc = gap_closed(recent_eval);
+    // Live per-iteration progress via the PSRO `on_iteration` callback
+    // (NFSP-parity, issue #202). The callback fires once per outer
+    // iteration with that iteration's `PsroIterationStats`, so progress
+    // is observable *during* multi-hour runs rather than only after
+    // `run()` returns. Mid-run checkpoint *writing* is issue #204; this
+    // path logs live and saves the final populations after `run()`.
+    let stats = trainer.run(|iter_stats| {
         tracing::info!(
-            "iter {:>3}/{}  pop_size={:>3}  exploitability={:>9.4}  per_step_team≈{:>8.3}  \
-             gap_closed≈{:>7.4}",
-            iter,
-            stats.iterations.len(),
+            "iter {:>3}/{}  pop_size={:>3}  exploitability={:>9.4}",
+            iter_stats.iteration,
+            total_iterations,
             iter_stats.population_size,
             iter_stats.exploitability,
-            recent_eval,
-            recent_gc
         );
+    })?;
 
-        if iter % CHECKPOINT_INTERVAL_ITERATIONS == 0 && iter < stats.iterations.len() {
-            for (i, br) in snapshot_brs.iter().enumerate() {
-                let path = format!("psro_{cell}_iter{iter}_agent{i}");
-                br.clone()
-                    .save_file(&path, &bin_recorder)
-                    .map_err(|e| anyhow::anyhow!("intermediate checkpoint save failed: {e}"))?;
-            }
-            tracing::info!(
-                "  intermediate checkpoint written: psro_{cell}_iter{iter}_agent{{0..{}}}.bin",
-                NUM_AGENTS - 1
-            );
-        }
-    }
+    let bin_recorder = BinFileRecorder::<FullPrecisionSettings>::new();
+    let json_recorder = PrettyJsonFileRecorder::<FullPrecisionSettings>::new();
 
     tracing::info!("------------------------------------------------------------");
     let final_population_size = stats.iterations.last().map(|s| s.population_size).unwrap_or(0);

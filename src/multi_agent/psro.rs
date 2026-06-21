@@ -1277,7 +1277,24 @@ where
     }
 
     /// Run the PSRO outer loop and return the per-iteration history.
-    pub fn run(&mut self) -> Result<PsroStats> {
+    ///
+    /// `on_iteration` is invoked once per outer iteration, immediately
+    /// after that iteration's [`PsroIterationStats`] is constructed and
+    /// before it is pushed onto the returned history. This mirrors
+    /// [`NfspTrainer::run`](crate::multi_agent::nfsp::NfspTrainer::run)
+    /// and lets callers observe per-iteration progress *during* the run
+    /// (live `tracing` logging, mid-run checkpoint triggers, etc.)
+    /// rather than only inspecting the aggregate stats after `run`
+    /// returns. The callback receives `&PsroIterationStats`, whose
+    /// `iteration` field increases monotonically from `1` to
+    /// `config.max_iterations`.
+    ///
+    /// For the common case of "run with no per-iteration hook", use
+    /// [`Self::run_silent`].
+    pub fn run<F>(&mut self, mut on_iteration: F) -> Result<PsroStats>
+    where
+        F: FnMut(&PsroIterationStats),
+    {
         let num_agents = self.joint_config.num_agents;
 
         // Seed the payoff cache with the initial 1×...×1 entry — all
@@ -1347,15 +1364,25 @@ where
             let post_marginals = self.solve_per_agent_marginals();
             let exploitability = self.compute_nashconv(&post_marginals);
 
-            stats.iterations.push(PsroIterationStats {
+            let iter_stats = PsroIterationStats {
                 iteration: iter,
                 population_size: self.populations[0].len(),
                 meta_nash_per_agent: post_marginals,
                 br_stats_per_agent,
                 exploitability,
-            });
+            };
+            on_iteration(&iter_stats);
+            stats.iterations.push(iter_stats);
         }
         Ok(stats)
+    }
+
+    /// Convenience entry point: drives [`Self::run`] with a no-op
+    /// iteration callback. Use this when per-iteration observation is
+    /// not needed (mirrors
+    /// [`NfspTrainer::run_silent`](crate::multi_agent::nfsp::NfspTrainer::run_silent)).
+    pub fn run_silent(&mut self) -> Result<PsroStats> {
+        self.run(|_| {})
     }
 
     /// Most-recent per-agent meta-Nash distributions (one row per
@@ -2150,7 +2177,7 @@ mod tests {
     fn test_psro_runs_on_matching_pennies() {
         let mut trainer =
             build_matching_pennies_trainer(Box::new(FictitiousPlayMetaSolver::new(500)), 3);
-        let stats = trainer.run().expect("PSRO run should not error");
+        let stats = trainer.run_silent().expect("PSRO run should not error");
         assert_eq!(stats.iterations.len(), 3, "should record 3 iterations");
         for (k, it) in stats.iterations.iter().enumerate() {
             assert_eq!(it.iteration, k + 1);
@@ -2162,6 +2189,57 @@ mod tests {
             assert!(it.exploitability.is_finite());
             assert!(it.exploitability >= 0.0, "exploitability must be >= 0");
         }
+    }
+
+    /// The `on_iteration` callback must fire exactly `max_iterations`
+    /// times, once per outer iteration, with monotonically increasing
+    /// `iteration` values matching the entries pushed onto the returned
+    /// history. This is the load-bearing observability guarantee:
+    /// callers (e.g. `train_psro.rs`) rely on the callback firing
+    /// *during* the run, one tick per iteration, in order.
+    #[test]
+    fn test_psro_run_callback_fires_per_iteration() {
+        let max_iterations = 4;
+        let mut trainer = build_matching_pennies_trainer(
+            Box::new(FictitiousPlayMetaSolver::new(500)),
+            max_iterations,
+        );
+
+        let mut observed: Vec<usize> = Vec::new();
+        let stats = trainer
+            .run(|it| observed.push(it.iteration))
+            .expect("PSRO run should not error");
+
+        // Callback fired exactly once per outer iteration.
+        assert_eq!(
+            observed.len(),
+            max_iterations,
+            "callback should fire exactly max_iterations times"
+        );
+        // Iteration indices are 1-based and strictly increasing.
+        let expected: Vec<usize> = (1..=max_iterations).collect();
+        assert_eq!(
+            observed, expected,
+            "callback iteration indices must be monotonically increasing 1..=max_iterations"
+        );
+        // The callback observed the same iteration indices, in order, as
+        // the final returned history.
+        let from_history: Vec<usize> = stats.iterations.iter().map(|s| s.iteration).collect();
+        assert_eq!(observed, from_history, "callback indices must match the pushed history order");
+    }
+
+    /// `run_silent()` must be behaviourally identical to `run(|_| {})`:
+    /// it records the full per-iteration history without requiring a
+    /// callback.
+    #[test]
+    fn test_psro_run_silent_records_full_history() {
+        let max_iterations = 3;
+        let mut trainer = build_matching_pennies_trainer(
+            Box::new(FictitiousPlayMetaSolver::new(500)),
+            max_iterations,
+        );
+        let stats = trainer.run_silent().expect("PSRO run_silent should not error");
+        assert_eq!(stats.iterations.len(), max_iterations);
     }
 
     /// Read the policy_head weight buffer from a policy as a flat
@@ -2268,7 +2346,7 @@ mod tests {
         let k = 3;
         let mut trainer =
             build_matching_pennies_trainer(Box::new(FictitiousPlayMetaSolver::new(200)), k);
-        trainer.run().expect("PSRO run should not error");
+        trainer.run_silent().expect("PSRO run should not error");
         // For N=2: 1 + Σ_{j=1}^{k} ((j+1)² − j²) = 1 + (k+1)² − 1 = (k+1)².
         // With K=3 PSRO iterations starting from k=1, final k = 4, so
         // (k+1)² with final k=4 → 16; equivalently 1 + 3 + 5 + 7 = 16,

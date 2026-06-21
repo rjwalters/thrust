@@ -427,7 +427,7 @@ fn test_psro_beats_ppo_on_no_convergence_cells() {
         )
         .expect("PsroTrainer::new should succeed for bucket-brigade no-convergence cell");
 
-        let stats = trainer.run().expect("PSRO outer loop should not error");
+        let stats = trainer.run_silent().expect("PSRO outer loop should not error");
         assert_eq!(
             stats.iterations.len(),
             MAX_ITERATIONS,
