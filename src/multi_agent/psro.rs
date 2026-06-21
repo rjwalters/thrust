@@ -1588,56 +1588,127 @@ where
     /// `config.payoff_eval_episodes` episodes with policy
     /// `populations[a][joint[a]]` for each agent `a`. Returns the
     /// per-agent mean per-episode returns (length `num_agents`).
-    fn evaluate_payoff_joint(&mut self, joint: &[usize]) -> Vec<f32> {
+    ///
+    /// This is a thin wrapper that gathers the per-joint policies and
+    /// delegates to [`evaluate_payoff_joint_pure`], which is a pure,
+    /// per-cell-seeded function (it does **not** touch `self.rng`). The
+    /// wrapper only borrows `&self` for the population/factory handles,
+    /// so the result is independent of evaluation order and global RNG
+    /// state — see #201.
+    fn evaluate_payoff_joint(&self, joint: &[usize]) -> Vec<f32> {
         let num_agents = self.joint_config.num_agents;
         assert_eq!(joint.len(), num_agents);
-        let mut env = (self.env_factory)();
         let policies: Vec<P> =
             (0..num_agents).map(|a| self.populations[a][joint[a]].clone()).collect();
-        let mut totals = vec![0.0_f64; num_agents];
-        let episodes = self.config.payoff_eval_episodes.max(1);
-        for ep in 0..episodes {
-            // Deterministic per-(joint, ep) seed for the env reset.
-            // Composes joint-strategy components into a stable scalar
-            // via the same little-endian convention as the cache.
-            let mut joint_hash: u64 = 0;
-            for &c in joint {
-                joint_hash = joint_hash.wrapping_mul(53).wrapping_add(c as u64);
-            }
-            let seed = self
-                .config
-                .seed
-                .wrapping_add(joint_hash.wrapping_mul(31).wrapping_add(ep as u64));
-            let mut last_obs = env.reset_joint(Some(seed));
-            let mut ep_returns = vec![0.0_f64; num_agents];
-            // Cap rollout length; rely on env's `done` flag.
-            for _ in 0..1024 {
-                let mut actions: Vec<Vec<i64>> = Vec::with_capacity(num_agents);
-                for (a, obs_a) in last_obs.iter().enumerate().take(num_agents) {
-                    let obs_dim = obs_a.len();
-                    let obs_t = burn::tensor::Tensor::<B, 2>::from_data(
-                        burn::tensor::TensorData::new(obs_a.clone(), [1, obs_dim]),
-                        &self.device,
-                    );
-                    let (a_host, _, _) = policies[a].get_action_host_seeded(obs_t, &mut self.rng);
-                    let num_dims = policies[a].action_dims_joint().len();
-                    actions.push(a_host[..num_dims].to_vec());
-                }
-                let res = env.step_joint(&actions);
-                for (a, ret) in ep_returns.iter_mut().enumerate().take(num_agents) {
-                    *ret += res.rewards[a] as f64;
-                }
-                if res.done {
-                    break;
-                }
-                last_obs[..num_agents].clone_from_slice(&res.observations[..num_agents]);
-            }
-            for (a, total) in totals.iter_mut().enumerate().take(num_agents) {
-                *total += ep_returns[a];
-            }
-        }
-        totals.into_iter().map(|t| (t / episodes as f64) as f32).collect()
+        evaluate_payoff_joint_pure::<B, P, _, _>(
+            joint,
+            &self.config,
+            &policies,
+            &self.env_factory,
+            &self.device,
+        )
     }
+}
+
+/// Mix a `u64` through three rounds of the splitmix64 finalizer so that
+/// adjacent inputs (e.g. neighbouring `joint_hash` values) map to
+/// well-separated `StdRng` seeds. Same family of avalanche constants as
+/// the determinism shims in [`crate::policy::seeded_init`].
+fn splitmix64(mut x: u64) -> u64 {
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}
+
+/// Pure, per-cell-seeded payoff evaluator.
+///
+/// Runs `config.payoff_eval_episodes` episodes of `policies` (one
+/// per agent, already gathered for the target joint cell) in a fresh
+/// env from `env_factory`, and returns the per-agent mean per-episode
+/// returns (length `num_agents`).
+///
+/// # Determinism / order-independence (issue #201)
+///
+/// Unlike the pre-#201 path, this function **does not read or mutate any
+/// shared trainer RNG**. It constructs a single **local
+/// [`StdRng`]** seeded from `(config.seed, joint)` and threads it
+/// through every `get_action_host_seeded` call for the whole cell. The
+/// per-episode env-reset seed is likewise derived deterministically from
+/// `(config.seed, joint, ep)` (the little-endian `joint_hash` scheme
+/// shared with [`PayoffCache`]). Consequently the returned payoff vector
+/// is a pure function of `(joint, config, policies, env_factory)`:
+/// evaluating the same cell twice — or evaluating a set of cells in any
+/// order — yields bit-identical results. This is the determinism
+/// guarantee that lets #203 parallelize the boundary-slab loop with a
+/// result bit-identical to the serial one.
+fn evaluate_payoff_joint_pure<B, P, E, EF>(
+    joint: &[usize],
+    config: &PsroConfig,
+    policies: &[P],
+    env_factory: &EF,
+    device: &B::Device,
+) -> Vec<f32>
+where
+    B: AutodiffBackend,
+    P: JointPolicy<B>,
+    E: JointEnv,
+    EF: Fn() -> E,
+{
+    let num_agents = joint.len();
+    let mut env = env_factory();
+    let mut totals = vec![0.0_f64; num_agents];
+    let episodes = config.payoff_eval_episodes.max(1);
+
+    // Deterministic per-cell hash: composes the joint-strategy
+    // components into a stable scalar via the same little-endian
+    // convention as the cache.
+    let mut joint_hash: u64 = 0;
+    for &c in joint {
+        joint_hash = joint_hash.wrapping_mul(53).wrapping_add(c as u64);
+    }
+
+    // LOCAL action-sampling RNG, seeded purely from (config.seed,
+    // joint). This replaces the shared `&mut self.rng` of the pre-#201
+    // path, making each cell self-contained and order-independent. A
+    // single RNG spans all episodes so the per-cell action-draw stream
+    // is a deterministic function of the cell alone.
+    let per_cell_seed = config.seed ^ splitmix64(joint_hash);
+    let mut rng = StdRng::seed_from_u64(per_cell_seed);
+
+    for ep in 0..episodes {
+        // Per-(joint, ep) env-reset seed (unchanged from the pre-#201
+        // path): deterministic in the cell and episode index.
+        let reset_seed =
+            config.seed.wrapping_add(joint_hash.wrapping_mul(31).wrapping_add(ep as u64));
+        let mut last_obs = env.reset_joint(Some(reset_seed));
+        let mut ep_returns = vec![0.0_f64; num_agents];
+        // Cap rollout length; rely on env's `done` flag.
+        for _ in 0..1024 {
+            let mut actions: Vec<Vec<i64>> = Vec::with_capacity(num_agents);
+            for (a, obs_a) in last_obs.iter().enumerate().take(num_agents) {
+                let obs_dim = obs_a.len();
+                let obs_t = burn::tensor::Tensor::<B, 2>::from_data(
+                    burn::tensor::TensorData::new(obs_a.clone(), [1, obs_dim]),
+                    device,
+                );
+                let (a_host, _, _) = policies[a].get_action_host_seeded(obs_t, &mut rng);
+                let num_dims = policies[a].action_dims_joint().len();
+                actions.push(a_host[..num_dims].to_vec());
+            }
+            let res = env.step_joint(&actions);
+            for (a, ret) in ep_returns.iter_mut().enumerate().take(num_agents) {
+                *ret += res.rewards[a] as f64;
+            }
+            if res.done {
+                break;
+            }
+            last_obs[..num_agents].clone_from_slice(&res.observations[..num_agents]);
+        }
+        for (a, total) in totals.iter_mut().enumerate().take(num_agents) {
+            *total += ep_returns[a];
+        }
+    }
+    totals.into_iter().map(|t| (t / episodes as f64) as f32).collect()
 }
 
 /// Sample an index from a length-`n` probability vector with the given RNG.
@@ -2295,5 +2366,106 @@ mod tests {
         // construction the result is bit-identical. We assert the
         // legacy formula returns 0 here as the canonical numerical
         // anchor.
+    }
+
+    /// Order-independence / purity of per-cell payoff evaluation
+    /// (issue #201).
+    ///
+    /// After growing both agents' populations to size 2, we evaluate
+    /// the full 2×2 boundary tensor in a forward joint order and again
+    /// in the reverse order, and re-evaluate one cell twice. Because
+    /// each cell seeds its own local `StdRng` from `(config.seed,
+    /// joint)` (no shared trainer RNG), every cell's payoff vector MUST
+    /// be **bit-identical** regardless of evaluation order — the
+    /// guarantee that lets #203 parallelize the boundary-slab loop.
+    #[test]
+    fn test_payoff_cell_eval_is_order_independent() {
+        let device: NdArrayDevice = Default::default();
+        let psro_config = PsroConfig {
+            max_iterations: 1,
+            max_population_size: 50,
+            br_train_steps_per_iteration: 2,
+            payoff_eval_episodes: 4,
+            seed: 12345,
+        };
+        let joint_config = JointTrainerConfig {
+            num_agents: 2,
+            rollout_steps: 32,
+            n_epochs: 1,
+            minibatch_size: 32,
+            ..Default::default()
+        };
+        let mut trainer = PsroTrainer::new(
+            psro_config,
+            joint_config,
+            Box::new(FictitiousPlayMetaSolver::new(200)) as Box<dyn MetaSolver>,
+            device,
+            |dev: &NdArrayDevice, seed: u64| {
+                MlpBurnPolicy::<B>::new_seeded(
+                    MatchingPennies::OBS_DIM,
+                    MatchingPennies::ACTION_DIM,
+                    16,
+                    seed,
+                    dev,
+                )
+            },
+            || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
+            MatchingPennies::new,
+        )
+        .expect("PsroTrainer::new should succeed");
+
+        // Run one PSRO iteration so each agent has a 2-policy
+        // population (indices 0 and 1) to form a 2×2 joint tensor.
+        trainer.run().expect("PSRO run should not error");
+        assert!(trainer.populations(0).len() >= 2, "need >=2 policies per agent");
+        assert!(trainer.populations(1).len() >= 2, "need >=2 policies per agent");
+
+        let joints: Vec<Vec<usize>> = vec![vec![0, 0], vec![1, 0], vec![0, 1], vec![1, 1]];
+
+        // Forward-order evaluation.
+        let forward: Vec<Vec<f32>> =
+            joints.iter().map(|j| trainer.evaluate_payoff_joint(j)).collect();
+
+        // Reverse-order evaluation: interleaved/reversed traversal must
+        // not change any cell's value because no cell depends on global
+        // RNG state.
+        let reverse: Vec<Vec<f32>> = joints
+            .iter()
+            .rev()
+            .map(|j| (j.clone(), trainer.evaluate_payoff_joint(j)))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|(_, v)| v)
+            .collect();
+
+        assert_eq!(
+            forward, reverse,
+            "payoff cells must be bit-identical regardless of evaluation order"
+        );
+
+        // Re-evaluating a single cell twice must also be bit-identical.
+        let once = trainer.evaluate_payoff_joint(&[1, 0]);
+        let twice = trainer.evaluate_payoff_joint(&[1, 0]);
+        assert_eq!(once, twice, "re-evaluating the same cell must be bit-identical");
+
+        // And it must match the value computed during the full-tensor
+        // sweep (cell [1, 0] is index 1 in `joints`).
+        assert_eq!(once, forward[1], "single-cell value must match the swept value");
+    }
+
+    /// `splitmix64` is a deterministic permutation-like mixer: distinct
+    /// inputs map to distinct outputs (avalanche), guaranteeing
+    /// neighbouring joint hashes seed well-separated RNG streams.
+    #[test]
+    fn test_splitmix64_distinguishes_neighbours() {
+        let a = splitmix64(0);
+        let b = splitmix64(1);
+        let c = splitmix64(2);
+        assert_ne!(a, b);
+        assert_ne!(b, c);
+        assert_ne!(a, c);
+        // Deterministic.
+        assert_eq!(a, splitmix64(0));
     }
 }
