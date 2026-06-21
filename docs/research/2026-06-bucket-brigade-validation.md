@@ -100,8 +100,36 @@ Root causes (all in the PSRO path):
 - **`PsroTrainer::run()` is opaque** — no per-iteration progress and **no mid-run
   checkpointing**; a killed run yields nothing.
 
-This is not a budget-tuning problem and is tracked separately as a perf +
-observability pass: **[#198](https://github.com/rjwalters/thrust/issues/198)**.
+This is not a budget-tuning problem and was tracked separately as a perf +
+observability pass: **[#198](https://github.com/rjwalters/thrust/issues/198)** (now done).
+
+### Update (2026-06-21): post-#198 parallel calibration
+
+#198 shipped: the payoff-tensor evaluation is now **rayon-parallel** (bit-identical
+to serial, [#207](https://github.com/rjwalters/thrust/issues/203)), PSRO emits
+**live per-iteration logging** ([#202](https://github.com/rjwalters/thrust/issues/202)),
+and writes **mid-run checkpoints** ([#204](https://github.com/rjwalters/thrust/issues/204)).
+Re-calibrated on alc-2 (33 threads active, `CELL=beta01`, 2048 rollout):
+
+| iter | population | payoff evals (pop⁴) | wall-clock |
+|------|-----------|---------------------|-----------|
+| 1 | 2 | 16 | ~180 s |
+| 2 | 3 | 81 | ~472 s |
+| 3 | 4 | 256 | >620 s (killed mid-iter) |
+
+**Parallelization works** — all 33 cores utilized, iter 1 in ~3 min where the
+single-threaded baseline couldn't finish 4 iters in 40 min — **but it is not
+sufficient.** Per-iteration cost grows ~2.6×/iter because the α-rank payoff tensor
+is `population⁴`; a constant ~33× core speedup cannot beat super-linear growth, so a
+12-iteration run still projects to hours-to-days. The remaining lever is **caching
+the reusable payoff entries** (PSRO adds one policy/agent/iter, so most of the
+`population⁴` tensor is unchanged between iterations → only the new-policy slabs
+need re-evaluation): **[#212](https://github.com/rjwalters/thrust/issues/212)**.
+
+Secondary observation: exploitability *increased* across the calibration iterations
+(6404 → 8864), i.e. PSRO did not converge on bucket-brigade — a sibling concern to
+the NFSP non-convergence ([#199](https://github.com/rjwalters/thrust/issues/199)),
+to revisit once the payoff cost is tractable.
 
 ## Budget note: 8192 rollout is impractical for NFSP on this hardware
 
@@ -158,6 +186,7 @@ NFSP (`examples/games/bucket_brigade/train_nfsp.rs`):
 
 ## Next steps
 
-1. **PSRO perf + observability pass** — [#198](https://github.com/rjwalters/thrust/issues/198) (parallelize payoff/BR rollouts, per-iter logging, mid-run checkpoints), then re-run PSRO.
-2. **NFSP learning investigation** — raise average-policy training steps, diagnose the BR side, revisit reward scaling; file as a follow-up once #198's infra patterns (observability) land.
-3. Re-run both at a feasible, observable budget and recompute **cell-specific** `gap_closed_cell`.
+1. ~~**PSRO perf + observability pass** — #198~~ **DONE** — parallel payoff eval (#207), live logging (#202), mid-run checkpoints (#204). Calibration showed parallelism alone is insufficient (see the 2026-06-21 update above).
+2. **PSRO payoff-tensor caching** — [#212](https://github.com/rjwalters/thrust/issues/212): reuse unchanged `population⁴` entries across iterations (`O(pop⁴)` → `O(pop³)` new work/iter). This is the remaining blocker for a feasible PSRO run.
+3. **NFSP learning investigation** — [#199](https://github.com/rjwalters/thrust/issues/199): raise average-policy training steps, diagnose the BR side, revisit reward scaling.
+4. Once #212 + #199 land, re-run both at a feasible, observable budget and recompute **cell-specific** `gap_closed_cell`.
