@@ -1,12 +1,37 @@
-//! PSRO smoke test on the N-player matching-pennies env (issue #124,
-//! AC item G).
+//! PSRO smoke + convergence tests on the N-player matching-pennies env
+//! (issue #124, AC item G).
 //!
-//! Verifies that the post-#124 PSRO trainer — with the
-//! `num_agents != 2` guard lifted to `num_agents < 2`, the populations
-//! generalized to `Vec<Vec<P>>`, the payoff cache replaced with a flat
-//! N-tensor, the meta-solver routed through `solve_n_player`, and the
-//! exploitability replaced with N-player NashConv — converges on the
-//! symmetric mixed-equilibrium target for N = 4.
+//! Two tiers, mirroring the SAC/A2C convention
+//! (`tests/test_a2c_cartpole.rs`, `tests/test_sac_pendulum.rs`) and the
+//! gating applied in issue #208:
+//!
+//! 1. **`psro_n4_smoke_runs_and_is_finite`** (always runs) — a tiny-budget (2
+//!    outer iterations) check that the N-player PSRO trainer wires together
+//!    end-to-end and produces FINITE, structurally-valid outputs (per-agent
+//!    meta-Nash marginals are valid simplex distributions, the NashConv curve
+//!    is finite and non-negative). Runs in well under a minute, so it stays on
+//!    every CI run.
+//!
+//! 2. **`test_psro_n4_converges_to_uniform_on_majority_game`** and
+//!    **`test_psro_n4_nashconv_trend_does_not_blow_up`** (`#[ignore]`) — the
+//!    full-budget (5 outer iteration) convergence bars, kept verbatim.
+//!
+//! ## Why the heavy bars are `#[ignore]`d
+//!
+//! The N=4 PSRO convergence run trains the α-rank `population⁴` payoff
+//! tensor (the final k=6 → `6^4 = 1296`-cell power iteration); on the CPU
+//! `NdArray` backend this was the single dominant cost of the CI `Tests`
+//! job (~68 min on Linux). It is kept opt-in:
+//!
+//! ```text
+//! cargo test --release --features training \
+//!     --test test_psro_n_player_matching_pennies -- --ignored
+//! ```
+//!
+//! The fast smoke test above guarantees the trainer keeps working on every
+//! CI run; the convergence tests are the periodic / release-gate check.
+//!
+//! ## Convergence target
 //!
 //! The N-player majority game ("N-player matching pennies") has a
 //! unique symmetric mixed equilibrium at `p = 0.5` per agent. Per-agent
@@ -31,7 +56,9 @@ use burn::{
 };
 use thrust_rl::{
     env::games::n_player_matching_pennies::NPlayerMatchingPennies,
-    multi_agent::{AlphaRankMetaSolver, JointTrainerConfig, MetaSolver, PsroConfig, PsroTrainer},
+    multi_agent::{
+        AlphaRankMetaSolver, JointTrainerConfig, MetaSolver, PsroConfig, PsroStats, PsroTrainer,
+    },
     policy::mlp::MlpBurnPolicy,
     train::optimizer::BurnOptimizer,
 };
@@ -79,44 +106,40 @@ fn meta_nash_action_marginal(
     marginal
 }
 
-/// AC item G (12 in the Curator's list): PSRO with α-rank on N=4
-/// majority game converges to per-agent meta-Nash-weighted action
-/// marginals within `0.10` TV from uniform `(0.5, 0.5)`.
-///
-/// # Calibration
-///
-/// 5-run release-mode sweep: see PR body for the observed TV values.
-/// The `0.10` bound matches the PSRO N=2 tolerance in
-/// `test_psro_converges_to_uniform_on_matching_pennies`.
-///
-/// Wall-clock: ~90s in release mode on Apple M-series. 5 outer
-/// iterations × 4 agents per round × 1 BR-train cycle × 32 rollout
-/// steps + a 6^4 = 1296-cell payoff-cache evaluation pass. α-rank's
-/// `k^N`-state power iteration (final k=6 → 1296 states × N=4
-/// deviation directions × 5 mutations × ≤200 power-iter steps) is
-/// the dominant cost above k≥4. The N=4 path is necessarily slower
-/// than the N=2 test because α-rank dispatches through
-/// `solve_n_player`, which exposes the full joint Markov chain
-/// rather than the marginalized 2-player matrix.
-#[test]
-fn test_psro_n4_converges_to_uniform_on_majority_game() {
+/// Concrete Burn optimizer the N=4 PSRO trainer uses for each
+/// best-response policy. Lifted to a type alias so the shared
+/// `run_psro_n4` helper can name `PsroTrainer`'s `O` parameter.
+type Opt = burn::optim::adaptor::OptimizerAdaptor<burn::optim::Adam, MlpBurnPolicy<B>, B>;
+
+/// Build and run an N=4 PSRO trainer for `max_iterations` outer rounds
+/// against the majority game, returning the trainer (for population /
+/// meta-Nash inspection) and its run stats. Centralizes the trainer
+/// wiring shared by the smoke and convergence tests so that only the
+/// iteration budget differs between tiers.
+#[allow(clippy::type_complexity)]
+fn run_psro_n4(
+    max_iterations: usize,
+    seed: u64,
+) -> (
+    PsroTrainer<
+        B,
+        MlpBurnPolicy<B>,
+        Opt,
+        NPlayerMatchingPennies,
+        impl Fn(&NdArrayDevice, u64) -> MlpBurnPolicy<B>,
+        impl Fn() -> BurnOptimizer<B, MlpBurnPolicy<B>, Opt>,
+        impl Fn() -> NPlayerMatchingPennies,
+    >,
+    PsroStats,
+) {
     let num_agents = 4_usize;
-    // 5 iterations × N=4 → final per-role-k = 6. Payoff-cache grows
-    // to 6^4 = 1296 cells over the run; ~1295 are evaluated (initial
-    // seed is 1 cell). With `payoff_eval_episodes = 1` and the env's
-    // 16-step episode bound, this is ~83k policy forward passes for
-    // cache evaluation + 5 × 4 × 1 BR training rollouts of 32 steps
-    // = ~640 policy forward passes for BR. Total ~85k forward passes
-    // on a 1-D obs / 2-action / hidden-16 MLP — well under 30s in
-    // release mode.
-    let max_iterations = 5_usize;
     let device: NdArrayDevice = Default::default();
     let psro_config = PsroConfig {
         max_iterations,
         max_population_size: 50,
         br_train_steps_per_iteration: 1,
         payoff_eval_episodes: 1,
-        seed: 19,
+        seed,
     };
     let joint_config = JointTrainerConfig {
         num_agents,
@@ -150,6 +173,122 @@ fn test_psro_n4_converges_to_uniform_on_majority_game() {
     .expect("PsroTrainer::new should succeed for N=4 config");
 
     let stats = trainer.run_silent().expect("PSRO run should not error");
+    (trainer, stats)
+}
+
+/// Fast, always-on smoke test (issue #208): drive a tiny-budget (2 outer
+/// iterations) N=4 PSRO run end-to-end and assert it produces FINITE,
+/// structurally-valid outputs without asserting any convergence bar.
+///
+/// With `max_iterations = 2` the α-rank payoff cache only grows to
+/// `3^4 = 81` cells (vs `6^4 = 1296` at the full 5-iteration budget),
+/// so this runs in a fraction of a second on the CPU `NdArray` backend
+/// while still exercising the full N-player PSRO control flow:
+/// best-response training, the flat N-tensor payoff evaluation, the
+/// `solve_n_player` α-rank meta-solve, and N-player NashConv.
+#[test]
+fn psro_n4_smoke_runs_and_is_finite() {
+    let num_agents = 4_usize;
+    let max_iterations = 2_usize;
+    let (trainer, stats) = run_psro_n4(max_iterations, 19);
+
+    assert_eq!(
+        stats.iterations.len(),
+        max_iterations,
+        "smoke run should record {max_iterations} iterations"
+    );
+
+    // NashConv (== exploitability field for the N-player path) must be
+    // finite and non-negative on every iteration.
+    for it in &stats.iterations {
+        assert!(
+            it.exploitability.is_finite(),
+            "NashConv must be finite, got {}",
+            it.exploitability
+        );
+        assert!(
+            it.exploitability >= 0.0,
+            "NashConv must be non-negative, got {}",
+            it.exploitability
+        );
+    }
+
+    let final_meta_nash = stats.iterations.last().unwrap().meta_nash_per_agent.clone();
+    assert_eq!(
+        final_meta_nash.len(),
+        num_agents,
+        "final iteration should report N per-agent meta-Nash marginals"
+    );
+
+    // Each agent's meta-Nash-weighted action marginal must be a valid
+    // distribution: finite, in `[0, 1]`, and summing to ~1.
+    for agent in 0..num_agents {
+        let marginal = meta_nash_action_marginal(
+            trainer.populations(agent),
+            &final_meta_nash[agent],
+            agent,
+            num_agents,
+            &Default::default(),
+        );
+        assert_eq!(
+            marginal.len(),
+            NPlayerMatchingPennies::ACTION_DIM,
+            "agent {agent} marginal must have ACTION_DIM entries"
+        );
+        let mut sum = 0.0_f32;
+        for &p in &marginal {
+            assert!(p.is_finite(), "agent {agent} marginal entry must be finite, got {p}");
+            assert!((0.0..=1.0001).contains(&p), "agent {agent} marginal entry out of range: {p}");
+            sum += p;
+        }
+        assert!(
+            (sum - 1.0).abs() <= 1e-3,
+            "agent {agent} marginal must sum to ~1, got {sum} on {marginal:?}"
+        );
+    }
+}
+
+/// AC item G (12 in the Curator's list): PSRO with α-rank on N=4
+/// majority game converges to per-agent meta-Nash-weighted action
+/// marginals within `0.10` TV from uniform `(0.5, 0.5)`.
+///
+/// `#[ignore]`d in CI per issue #208 — this is the dominant cost of the
+/// `Tests` job (the `6^4 = 1296`-cell α-rank power iteration). Run with:
+///
+/// ```text
+/// cargo test --release --features training \
+///     --test test_psro_n_player_matching_pennies -- --ignored
+/// ```
+///
+/// # Calibration
+///
+/// 5-run release-mode sweep: see PR body for the observed TV values.
+/// The `0.10` bound matches the PSRO N=2 tolerance in
+/// `test_psro_converges_to_uniform_on_matching_pennies`.
+///
+/// Wall-clock: ~90s in release mode on Apple M-series. 5 outer
+/// iterations × 4 agents per round × 1 BR-train cycle × 32 rollout
+/// steps + a 6^4 = 1296-cell payoff-cache evaluation pass. α-rank's
+/// `k^N`-state power iteration (final k=6 → 1296 states × N=4
+/// deviation directions × 5 mutations × ≤200 power-iter steps) is
+/// the dominant cost above k≥4. The N=4 path is necessarily slower
+/// than the N=2 test because α-rank dispatches through
+/// `solve_n_player`, which exposes the full joint Markov chain
+/// rather than the marginalized 2-player matrix.
+#[test]
+#[ignore = "multi-minute N=4 PSRO convergence run; opt in with --ignored (prefer --release)"]
+fn test_psro_n4_converges_to_uniform_on_majority_game() {
+    let num_agents = 4_usize;
+    // 5 iterations × N=4 → final per-role-k = 6. Payoff-cache grows
+    // to 6^4 = 1296 cells over the run; ~1295 are evaluated (initial
+    // seed is 1 cell). With `payoff_eval_episodes = 1` and the env's
+    // 16-step episode bound, this is ~83k policy forward passes for
+    // cache evaluation + 5 × 4 × 1 BR training rollouts of 32 steps
+    // = ~640 policy forward passes for BR. Total ~85k forward passes
+    // on a 1-D obs / 2-action / hidden-16 MLP — well under 30s in
+    // release mode.
+    let max_iterations = 5_usize;
+    let (trainer, stats) = run_psro_n4(max_iterations, 19);
     assert_eq!(stats.iterations.len(), max_iterations, "should record 8 iterations");
 
     let final_meta_nash = stats.iterations.last().unwrap().meta_nash_per_agent.clone();
@@ -188,6 +327,9 @@ fn test_psro_n4_converges_to_uniform_on_majority_game() {
 /// non-negative, and decreases on average — last-half mean ≤
 /// first-half mean + `0.2` slack.
 ///
+/// `#[ignore]`d in CI per issue #208 (full 5-iteration `6^4`-cell
+/// budget). Run with `--ignored` (see the convergence test above).
+///
 /// **Bit-exact since issue #135.** With policy init seeded
 /// (`MlpBurnPolicy::new_seeded` → `crate::policy::seeded_init`) and the
 /// PSRO factory fed a distinct per-construction seed derived from
@@ -207,52 +349,13 @@ fn test_psro_n4_converges_to_uniform_on_majority_game() {
 /// each BR training run uses a single sampled-opponent posture, so a
 /// trend-based assertion is more robust than per-step monotonicity.
 #[test]
+#[ignore = "multi-minute N=4 PSRO convergence run; opt in with --ignored (prefer --release)"]
 fn test_psro_n4_nashconv_trend_does_not_blow_up() {
-    let num_agents = 4_usize;
     // Same compute envelope as the convergence test: 5 iterations →
     // 6^4 = 1296-cell payoff cache. Seed differs so the two tests
     // explore independent rollout-trajectory clouds.
     let max_iterations = 5_usize;
-    let device: NdArrayDevice = Default::default();
-    let psro_config = PsroConfig {
-        max_iterations,
-        max_population_size: 50,
-        br_train_steps_per_iteration: 1,
-        payoff_eval_episodes: 1,
-        seed: 41,
-    };
-    let joint_config = JointTrainerConfig {
-        num_agents,
-        rollout_steps: 32,
-        n_epochs: 1,
-        minibatch_size: 32,
-        ..Default::default()
-    };
-    let meta_solver: Box<dyn MetaSolver> = Box::new(AlphaRankMetaSolver::default());
-
-    let mut trainer = PsroTrainer::new(
-        psro_config,
-        joint_config,
-        meta_solver,
-        device,
-        |dev: &NdArrayDevice, seed: u64| {
-            MlpBurnPolicy::<B>::new_seeded(
-                NPlayerMatchingPennies::OBS_DIM,
-                NPlayerMatchingPennies::ACTION_DIM,
-                16,
-                seed,
-                dev,
-            )
-        },
-        || {
-            let inner = AdamConfig::new().init();
-            BurnOptimizer::new(inner, 1e-3)
-        },
-        move || NPlayerMatchingPennies::new(num_agents),
-    )
-    .expect("PsroTrainer::new should succeed for N=4 config");
-
-    let stats = trainer.run_silent().expect("PSRO run should not error");
+    let (_trainer, stats) = run_psro_n4(max_iterations, 41);
     let expls: Vec<f32> = stats.iterations.iter().map(|it| it.exploitability).collect();
     println!("N=4 NashConv curve: {expls:?}");
     for &e in &expls {

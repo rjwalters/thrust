@@ -15,6 +15,19 @@
 //! These mirror the shape of `tests/test_psro_matching_pennies.rs`
 //! and lift its `total_variation` helper inline.
 //!
+//! ## CI gating (issue #208)
+//!
+//! A fast always-on smoke test
+//! (`nfsp_matching_pennies_smoke_runs_and_is_finite`, tiny 2-iteration
+//! budget) keeps the trainer wired up on every CI run. The three
+//! full-budget convergence tests (AC 6/7/8) are `#[ignore]`d and run
+//! on demand:
+//!
+//! ```text
+//! cargo test --release --features training \
+//!     --test test_nfsp_matching_pennies -- --ignored
+//! ```
+//!
 //! Tracking issue: #106.
 
 #![cfg(feature = "training")]
@@ -101,9 +114,37 @@ fn build_trainer(
     .expect("NfspTrainer::new should succeed")
 }
 
+/// Fast, always-on smoke test (issue #208): a tiny-budget (2 outer
+/// iterations) NFSP run executes end-to-end and produces FINITE,
+/// structurally-valid outputs — both agents' average-policy action
+/// marginals are valid simplex distributions. No convergence bar.
+#[test]
+fn nfsp_matching_pennies_smoke_runs_and_is_finite() {
+    let mut trainer =
+        build_trainer(/* max_iterations= */ 2, /* eta= */ 0.1, /* seed= */ 11);
+    let stats = trainer.run_silent().expect("NFSP run should not error");
+    assert_eq!(stats.iterations.len(), 2, "smoke run records 2 iterations");
+
+    for agent in 0..2 {
+        let avg_policy = trainer.avg_policy(agent).clone();
+        let marginal = trainer
+            .action_marginal_for(&avg_policy)
+            .expect("matching-pennies marginal should be computable");
+        let mut sum = 0.0_f32;
+        for &p in &marginal {
+            assert!(p.is_finite(), "agent {agent} marginal entry finite, got {p}");
+            assert!((0.0..=1.0001).contains(&p), "agent {agent} marginal entry out of range: {p}");
+            sum += p;
+        }
+        assert!((sum - 1.0).abs() <= 1e-3, "agent {agent} marginal must sum to ~1, got {sum}");
+    }
+}
+
 /// Multi-agent validation test (AC 7): both NFSP agents' average
 /// policies converge to the uniform action marginal after ≥10
 /// iterations.
+///
+/// `#[ignore]`d in CI per issue #208 (run with `--ignored`).
 ///
 /// Matching pennies' Nash equilibrium is `(0.5, 0.5)` for both
 /// players; NFSP's average-policy iterate is the time-average of best
@@ -111,6 +152,7 @@ fn build_trainer(
 /// Silver 2016 §3, with backing theory from Brown 1951 / Robinson
 /// 1951).
 #[test]
+#[ignore = "multi-iteration NFSP convergence run; opt in with --ignored (prefer --release)"]
 fn test_nfsp_multi_agent_converges_to_uniform_on_matching_pennies() {
     let mut trainer =
         build_trainer(/* max_iterations= */ 12, /* eta= */ 0.1, /* seed= */ 11);
@@ -162,6 +204,7 @@ fn test_nfsp_multi_agent_converges_to_uniform_on_matching_pennies() {
 /// is symmetric, so two-agent NFSP convergence implies one-agent
 /// NFSP convergence against a frozen uniform.
 #[test]
+#[ignore = "multi-iteration NFSP convergence run; opt in with --ignored (prefer --release)"]
 fn test_nfsp_single_agent_marginal_converges_against_symmetric_opponent() {
     let mut trainer =
         build_trainer(/* max_iterations= */ 12, /* eta= */ 0.1, /* seed= */ 23);
@@ -197,6 +240,7 @@ fn test_nfsp_single_agent_marginal_converges_against_symmetric_opponent() {
 ///    average (or, weakened to be robust: the BR's max TV is ≥ the AP's max
 ///    TV).
 #[test]
+#[ignore = "multi-iteration NFSP convergence run; opt in with --ignored (prefer --release)"]
 fn test_nfsp_br_oscillates_while_average_converges() {
     let mut trainer =
         build_trainer(/* max_iterations= */ 12, /* eta= */ 0.1, /* seed= */ 31);
