@@ -1286,15 +1286,27 @@ where
     /// and lets callers observe per-iteration progress *during* the run
     /// (live `tracing` logging, mid-run checkpoint triggers, etc.)
     /// rather than only inspecting the aggregate stats after `run`
-    /// returns. The callback receives `&PsroIterationStats`, whose
-    /// `iteration` field increases monotonically from `1` to
-    /// `config.max_iterations`.
+    /// returns.
+    ///
+    /// The callback receives two arguments:
+    /// 1. `&PsroIterationStats` — this iteration's stats, whose `iteration`
+    ///    field increases monotonically from `1` to `config.max_iterations`.
+    /// 2. `&[&P]` — the newest best-response policy for each agent (`brs[a]` is
+    ///    agent `a`'s freshly-trained BR appended this iteration, i.e.
+    ///    `populations(a).last()`). This lets the callback persist per-agent BR
+    ///    policies to disk *during* the run (mid-run checkpointing, issue #204)
+    ///    without a borrow conflict against the `&mut self` held by `run`: the
+    ///    trainer cannot itself write files (it is backend/format-agnostic, the
+    ///    `Recorder` lives in the example), so it hands the closure the policy
+    ///    references it needs to checkpoint. Checkpointing is a pure
+    ///    side-effect read; it does not alter the trainer state or the
+    ///    deterministic training trajectory.
     ///
     /// For the common case of "run with no per-iteration hook", use
     /// [`Self::run_silent`].
     pub fn run<F>(&mut self, mut on_iteration: F) -> Result<PsroStats>
     where
-        F: FnMut(&PsroIterationStats),
+        F: FnMut(&PsroIterationStats, &[&P]),
         // Bounds required by the rayon-parallel boundary-slab evaluation
         // (issue #203). Mirror the `EnvPool` Send-bound convention
         // (pool.rs:58). The parallel payoff result is bit-identical to a
@@ -1397,7 +1409,18 @@ where
                 br_stats_per_agent,
                 exploitability,
             };
-            on_iteration(&iter_stats);
+
+            // Newest best-response policy per agent, appended this
+            // iteration in the round-robin loop above. Handed to the
+            // callback so it can checkpoint per-agent BR policies
+            // mid-run (issue #204). `populations(a)` is guaranteed
+            // non-empty here: every agent was just trained and pushed.
+            let newest_brs: Vec<&P> = (0..num_agents)
+                .map(|a| {
+                    self.populations[a].last().expect("population non-empty after BR training")
+                })
+                .collect();
+            on_iteration(&iter_stats, &newest_brs);
             stats.iterations.push(iter_stats);
         }
         Ok(stats)
@@ -1414,7 +1437,7 @@ where
         FE: Sync,
         B::Device: Sync,
     {
-        self.run(|_| {})
+        self.run(|_, _| {})
     }
 
     /// Most-recent per-agent meta-Nash distributions (one row per
@@ -2376,7 +2399,7 @@ mod tests {
 
         let mut observed: Vec<usize> = Vec::new();
         let stats = trainer
-            .run(|it| observed.push(it.iteration))
+            .run(|it, _brs| observed.push(it.iteration))
             .expect("PSRO run should not error");
 
         // Callback fired exactly once per outer iteration.
@@ -2409,6 +2432,99 @@ mod tests {
         );
         let stats = trainer.run_silent().expect("PSRO run_silent should not error");
         assert_eq!(stats.iterations.len(), max_iterations);
+    }
+
+    /// Mid-run checkpointing (issue #204) rides on the `on_iteration`
+    /// callback's second argument: the slice of newest-per-agent BR
+    /// policies. This test exercises the checkpoint-trigger logic the
+    /// example uses, without touching disk:
+    ///
+    /// 1. The callback receives exactly one BR per agent each iteration.
+    /// 2. Those BR references are the same policies the trainer exposes via
+    ///    `populations(a).last()` (i.e. the freshly-appended BR), captured by
+    ///    their deterministic forward-pass logits.
+    /// 3. A `CHECKPOINT_INTERVAL`-gated counter fires on exactly the expected
+    ///    iterations (every Nth iteration), modelling the example's `iter %
+    ///    CHECKPOINT_INTERVAL_ITERATIONS == 0` knob.
+    /// 4. The number of distinct "checkpoints taken" matches the closed form,
+    ///    and the policies handed at checkpoint time round-trip bit-identically
+    ///    through a clone (the operation the example's `Recorder::save_file`
+    ///    performs on a clone).
+    #[test]
+    fn test_psro_checkpoint_callback_fires_at_intervals() {
+        let max_iterations = 6;
+        const CHECKPOINT_INTERVAL: usize = 2;
+        let mut trainer = build_matching_pennies_trainer(
+            Box::new(FictitiousPlayMetaSolver::new(500)),
+            max_iterations,
+        );
+        let num_agents = 2;
+
+        // Iterations on which a checkpoint was taken.
+        let mut checkpoint_iters: Vec<usize> = Vec::new();
+        // For each checkpoint, the per-agent BR logits captured at
+        // checkpoint time, plus the logits of a *clone* of the same
+        // policy (mirrors the example saving `br.clone()`).
+        let mut checkpoint_logits: Vec<Vec<(Vec<f32>, Vec<f32>)>> = Vec::new();
+
+        trainer
+            .run(|it, brs| {
+                // (1) One BR per agent, every iteration.
+                assert_eq!(brs.len(), num_agents, "callback must receive one newest BR per agent");
+
+                // (3) Interval gate exactly as the example drives it.
+                if it.iteration % CHECKPOINT_INTERVAL == 0 {
+                    checkpoint_iters.push(it.iteration);
+                    let per_agent: Vec<(Vec<f32>, Vec<f32>)> = brs
+                        .iter()
+                        .map(|br| {
+                            let original = read_policy_weight(br);
+                            // (4) Clone round-trip: cloning a policy (as
+                            // the recorder does before `save_file`) must
+                            // not perturb its forward pass.
+                            let cloned = (**br).clone();
+                            let cloned_logits = read_policy_weight(&cloned);
+                            (original, cloned_logits)
+                        })
+                        .collect();
+                    checkpoint_logits.push(per_agent);
+                }
+            })
+            .expect("PSRO run should not error");
+
+        // (3) Fired on exactly iterations 2, 4, 6.
+        assert_eq!(
+            checkpoint_iters,
+            vec![2, 4, 6],
+            "checkpoint must fire on every CHECKPOINT_INTERVAL-th iteration"
+        );
+        // Closed form: floor(max_iterations / interval) checkpoints.
+        assert_eq!(checkpoint_logits.len(), max_iterations / CHECKPOINT_INTERVAL);
+
+        for per_agent in &checkpoint_logits {
+            assert_eq!(per_agent.len(), num_agents);
+            for (original, cloned) in per_agent {
+                // (4) Clone is byte-identical to the checkpointed policy.
+                assert_eq!(
+                    original, cloned,
+                    "checkpointed BR clone must produce identical logits (save_file round-trip)"
+                );
+            }
+        }
+
+        // (2) The final-iteration checkpoint must match what the trainer
+        // exposes via the public `populations(a).last()` accessor — this
+        // is the same handle `train_psro.rs` uses for its final save, so
+        // the mid-run checkpoint and the post-run save are consistent.
+        let final_checkpoint = checkpoint_logits.last().expect("at least one checkpoint");
+        for (a, (checkpointed_logits, _)) in final_checkpoint.iter().enumerate().take(num_agents) {
+            let pop_last = trainer.populations(a).last().expect("non-empty population");
+            let from_accessor = read_policy_weight(pop_last);
+            assert_eq!(
+                checkpointed_logits, &from_accessor,
+                "checkpointed BR for agent {a} must equal populations(a).last() logits"
+            );
+        }
     }
 
     /// Read the policy_head weight buffer from a policy as a flat
