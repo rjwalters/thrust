@@ -407,7 +407,7 @@ pub struct AlphaRankMetaSolver {
     /// # Why this matters
     ///
     /// The Moran fixation probability is driven by `α · delta` (see
-    /// [`moran_fixation_probability`]). α-rank's defaults
+    /// `moran_fixation_probability`). α-rank's defaults
     /// (`α = 10`, `m = 50`) were validated on the `{−1, +1}`
     /// matching-pennies game, where `|delta| ≤ 2` and `α · delta ≤ 20`
     /// — comfortably inside the regime where the fixation probability is
