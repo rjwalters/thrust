@@ -221,6 +221,25 @@ fn main() -> Result<()> {
     // 4-player (population⁴) game.
     let max_payoff_evals_per_iteration: Option<usize> =
         std::env::var("MAX_PAYOFF_EVALS_PER_ITER").ok().and_then(|s| s.parse().ok());
+    // Optional BR reward scaling (issue #199 / #215). Unset => 1.0
+    // (no-op). The unscaled `[−700, 0]` bucket-brigade band drives the
+    // BR critic's value targets and advantage stats into a range where
+    // the value loss dominates the surrogate; `BR_REWARD_SCALE=0.01`
+    // rescales it to roughly `[−7, 0]` (affine transform; same optimal
+    // policy). Mirrors NFSP's `br_reward_scale` knob.
+    let br_reward_scale: f32 = std::env::var("BR_REWARD_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
+    // Optional α-rank payoff-span normalization (issue #215). Unset =>
+    // off (bit-identical to the pre-#215 solver). Set
+    // `ALPHA_RANK_NORMALIZE_SPAN=1` to divide the Moran payoff
+    // differential by the payoff span so `α · delta` does not saturate
+    // to a hard 0/1 on the large-magnitude bucket-brigade band.
+    let alpha_rank_normalize_span: bool = std::env::var("ALPHA_RANK_NORMALIZE_SPAN")
+        .ok()
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
 
     tracing::info!("Starting PSRO bucket-brigade training (Burn backend: {BACKEND_LABEL})");
     tracing::info!("  cell             = {cell} (β={beta}, κ={kappa}, c={cost})");
@@ -244,6 +263,22 @@ fn main() -> Result<()> {
             None => "unbounded (full boundary; bit-identical)".to_string(),
         }
     );
+    tracing::info!(
+        "  br_reward_scale  = {br_reward_scale} {}",
+        if br_reward_scale == 1.0 {
+            "(no-op)"
+        } else {
+            "(BR rewards rescaled)"
+        }
+    );
+    tracing::info!(
+        "  α-rank span-norm = {}",
+        if alpha_rank_normalize_span {
+            "on (Moran delta / payoff-span)"
+        } else {
+            "off (bit-identical to pre-#215)"
+        }
+    );
 
     let device: burn::tensor::Device<InnerBackend> = Default::default();
 
@@ -260,6 +295,7 @@ fn main() -> Result<()> {
         br_train_steps_per_iteration: 1,
         payoff_eval_episodes: 1,
         max_payoff_evals_per_iteration,
+        br_reward_scale,
         seed: SEED,
     };
     let joint_config = JointTrainerConfig {
@@ -269,7 +305,9 @@ fn main() -> Result<()> {
         minibatch_size: 256,
         ..Default::default()
     };
-    let meta_solver: Box<dyn MetaSolver> = Box::new(AlphaRankMetaSolver::default());
+    let meta_solver: Box<dyn MetaSolver> = Box::new(
+        AlphaRankMetaSolver::default().with_payoff_span_normalization(alpha_rank_normalize_span),
+    );
 
     let policy_factory = move |dev: &burn::tensor::Device<InnerBackend>, seed: u64| {
         MultiDiscreteMlpBurnPolicy::<B>::new_seeded(

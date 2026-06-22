@@ -165,6 +165,19 @@ question, tracked alongside the α-rank-solve cost in
 non-convergence (#199): **neither trainer converges on the no-convergence cells**,
 which is itself the answer to #134's research question at the budgets explored.
 
+> **Update (2026-06-22, #215):** root-caused at the code level — see
+> [`2026-06-psro-alpha-rank-payoff-magnitude.md`](./2026-06-psro-alpha-rank-payoff-magnitude.md).
+> The α-rank Moran fixation probability **saturates** on the `[−700, 0]` band
+> (`α·δ ≈ 7000` vs the `≤ 20` it was tuned for on matching-pennies), collapsing the
+> meta-solver into a brittle hard-max — a direct mechanism for diverging
+> exploitability. `AlphaRankMetaSolver` gained an opt-in
+> `with_payoff_span_normalization` knob (restores magnitude invariance) and
+> `PsroConfig` gained `br_reward_scale` (mirrors #199's BR critic fix). A unit test
+> shows a strictly-dominant strategy that the unnormalized solver correctly
+> concentrates on at unit scale degrades to ≈uniform at the `±700` scale, and span
+> normalization recovers the correct concentrated answer. A documented
+> decreasing-exploitability *cluster* run remains gated on #134.
+
 ## Budget note: 8192 rollout is impractical for NFSP on this hardware
 
 The #134-recommended `48 × 8192` budget proved infeasible. At 8192 rollout, NFSP
@@ -223,4 +236,5 @@ NFSP (`examples/games/bucket_brigade/train_nfsp.rs`):
 1. ~~**PSRO perf + observability pass** — #198~~ **DONE** — parallel payoff eval (#207), live logging (#202), mid-run checkpoints (#204). Calibration showed parallelism alone is insufficient (see the 2026-06-21 update above).
 2. **PSRO payoff-tensor caching** — [#212](https://github.com/rjwalters/thrust/issues/212): reuse unchanged `population⁴` entries across iterations (`O(pop⁴)` → `O(pop³)` new work/iter). This is the remaining blocker for a feasible PSRO run.
 3. **NFSP learning investigation** — [#199](https://github.com/rjwalters/thrust/issues/199): raise average-policy training steps, diagnose the BR side, revisit reward scaling. **Root-caused + code-level fixes landed** — see [`2026-06-nfsp-avg-policy-undertraining.md`](./2026-06-nfsp-avg-policy-undertraining.md): `NfspConfig` gained an adaptive `avg_policy_min_reservoir_coverage` AP-step floor and a `br_reward_scale` knob (the unscaled `[−700, 0]` band drove the BR critic's `value_loss` to ~9.8M; ×0.01 fixes it). The AP demonstrably fits a factored `[10,2,2]` target to ~0.003 (well below `ln(40)`) when given enough gradient steps. The **full cluster re-run** at the ~9,800-entry reservoir scale remains gated on #134.
-4. Once #212 + #199 land, re-run both at a feasible, observable budget and recompute **cell-specific** `gap_closed_cell`.
+4. **PSRO convergence investigation** — [#215](https://github.com/rjwalters/thrust/issues/215): root-cause the exploitability divergence. **Root-caused + code-level fixes landed** — see [`2026-06-psro-alpha-rank-payoff-magnitude.md`](./2026-06-psro-alpha-rank-payoff-magnitude.md): the α-rank Moran fixation probability saturates on the `[−700, 0]` band (`AlphaRankMetaSolver::with_payoff_span_normalization` restores magnitude invariance), and `PsroConfig` gained `br_reward_scale` mirroring #199. The α-rank-solve **perf** work (blocker #2) stays gated on a demonstrated convergence. The **full cluster re-run** remains gated on #134.
+5. Once #212 + #199 + #215 land, re-run both at a feasible, observable budget and recompute **cell-specific** `gap_closed_cell`.

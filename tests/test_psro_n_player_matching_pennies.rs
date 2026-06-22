@@ -132,6 +132,32 @@ fn run_psro_n4(
     >,
     PsroStats,
 ) {
+    run_psro_n4_cfg(max_iterations, seed, 1.0, false)
+}
+
+/// Generalized N=4 PSRO runner exposing the issue-#215 knobs:
+/// `br_reward_scale` (BR PPO reward scaling, mirroring NFSP) and
+/// `alpha_rank_span_norm` (α-rank payoff-span normalization). The
+/// `run_psro_n4` shim above pins both to their defaults so the existing
+/// tests are unchanged.
+#[allow(clippy::type_complexity)]
+fn run_psro_n4_cfg(
+    max_iterations: usize,
+    seed: u64,
+    br_reward_scale: f32,
+    alpha_rank_span_norm: bool,
+) -> (
+    PsroTrainer<
+        B,
+        MlpBurnPolicy<B>,
+        Opt,
+        NPlayerMatchingPennies,
+        impl Fn(&NdArrayDevice, u64) -> MlpBurnPolicy<B>,
+        impl Fn() -> BurnOptimizer<B, MlpBurnPolicy<B>, Opt>,
+        impl Fn() -> NPlayerMatchingPennies,
+    >,
+    PsroStats,
+) {
     let num_agents = 4_usize;
     let device: NdArrayDevice = Default::default();
     let psro_config = PsroConfig {
@@ -140,6 +166,7 @@ fn run_psro_n4(
         br_train_steps_per_iteration: 1,
         payoff_eval_episodes: 1,
         max_payoff_evals_per_iteration: None,
+        br_reward_scale,
         seed,
     };
     let joint_config = JointTrainerConfig {
@@ -149,7 +176,9 @@ fn run_psro_n4(
         minibatch_size: 32,
         ..Default::default()
     };
-    let meta_solver: Box<dyn MetaSolver> = Box::new(AlphaRankMetaSolver::default());
+    let meta_solver: Box<dyn MetaSolver> = Box::new(
+        AlphaRankMetaSolver::default().with_payoff_span_normalization(alpha_rank_span_norm),
+    );
 
     let mut trainer = PsroTrainer::new(
         psro_config,
@@ -246,6 +275,52 @@ fn psro_n4_smoke_runs_and_is_finite() {
             (sum - 1.0).abs() <= 1e-3,
             "agent {agent} marginal must sum to ~1, got {sum} on {marginal:?}"
         );
+    }
+}
+
+/// Issue #215 fast smoke: the two new knobs — BR reward scaling and
+/// α-rank payoff-span normalization — must drive a tiny-budget N=4 PSRO
+/// run end-to-end and produce FINITE, non-negative NashConv with valid
+/// per-agent simplex marginals, exactly like the default-config smoke
+/// test. This guards the plumbing of both knobs through the trainer (the
+/// `train_best_response` reward-scaling path and the
+/// `solve_n_player` span-normalized α-rank path) on every CI run, while
+/// the decisive *mechanistic* evidence for the span-normalization fix
+/// lives in the unit tests `test_alpha_rank_span_normalization_*` in
+/// `src/multi_agent/psro.rs`.
+#[test]
+fn psro_n4_issue215_knobs_run_and_are_finite() {
+    let max_iterations = 2_usize;
+    // Non-default values for BOTH knobs: rewards rescaled 100x down and
+    // α-rank span normalization on.
+    let (_trainer, stats) = run_psro_n4_cfg(max_iterations, 19, 0.01, true);
+
+    assert_eq!(
+        stats.iterations.len(),
+        max_iterations,
+        "smoke run should record {max_iterations} iterations"
+    );
+    for it in &stats.iterations {
+        assert!(
+            it.exploitability.is_finite(),
+            "NashConv must be finite, got {}",
+            it.exploitability
+        );
+        assert!(
+            it.exploitability >= 0.0,
+            "NashConv must be non-negative, got {}",
+            it.exploitability
+        );
+        for marginal in &it.meta_nash_per_agent {
+            let sum: f32 = marginal.iter().sum();
+            assert!(
+                (sum - 1.0).abs() <= 1e-3,
+                "per-agent meta-Nash marginal must sum to ~1, got {sum} on {marginal:?}"
+            );
+            for &p in marginal {
+                assert!(p.is_finite() && p >= -1e-6, "marginal entry must be valid, got {p}");
+            }
+        }
     }
 }
 

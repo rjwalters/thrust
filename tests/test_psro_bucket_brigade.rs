@@ -375,6 +375,7 @@ fn test_psro_beats_ppo_on_no_convergence_cells() {
             // already a stable estimate.
             payoff_eval_episodes: 1,
             max_payoff_evals_per_iteration: None,
+            br_reward_scale: 1.0,
             seed: SEED.wrapping_add(cell_idx as u64),
         };
         let joint_config = JointTrainerConfig {
