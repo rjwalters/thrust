@@ -3,7 +3,7 @@
 //! This module implements the SnakeEnv struct and the Environment trait
 //! for both single-agent and multi-agent snake games.
 
-use rand::Rng;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use super::{
     snake::Snake,
@@ -11,13 +11,17 @@ use super::{
 };
 use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
 
+/// Default seed used when constructing a [`SnakeEnv`] without an explicit seed.
+const DEFAULT_SEED: u64 = 0;
+
 /// Snapshot of a [`SnakeEnv`]'s simulation state.
 ///
 /// Captures every visible field of the env (grid, snake positions, food
-/// position, score, step count, done flag) but **not** the RNG used by
-/// `rand::rng()` inside `step` for food respawn. After `restore_state`, any
-/// step that triggers a food respawn will sample a different food location
-/// than the original trajectory.
+/// position, score, step count, done flag) **and** the env's RNG. Because the
+/// RNG is part of the snapshot, `restore_state` followed by `step` replays the
+/// exact same random stream — so a food respawn after restore spawns food at
+/// the same location as the original trajectory, making round-trips
+/// bit-identical.
 #[derive(Debug, Clone)]
 pub struct SnakeEnvState {
     /// Grid width
@@ -38,6 +42,8 @@ pub struct SnakeEnvState {
     pub max_steps: usize,
     /// Done flag
     pub done: bool,
+    /// RNG state used for food respawn (captured so restores are deterministic)
+    pub rng: StdRng,
 }
 
 /// Multi-agent Snake environment.
@@ -45,11 +51,11 @@ pub struct SnakeEnvState {
 /// # Snapshot semantics
 ///
 /// `clone_state` / `restore_state` capture every visible env field (grid,
-/// snake bodies, food location, score, step count, done flag). They do
-/// **not** capture the thread-local RNG used by `step` to respawn food: if
-/// the restored trajectory triggers a food respawn, the new food spawns at a
-/// different location than in the original. Trajectories that do not eat
-/// food are fully reproducible.
+/// snake bodies, food location, score, step count, done flag) **and** the
+/// env's owned RNG. Because the RNG is part of the snapshot, restoring and
+/// re-stepping replays the identical random stream: a food respawn after
+/// `restore_state` lands in the same cell as the original trajectory, so
+/// round-trips are fully reproducible (including trajectories that eat food).
 #[derive(Debug, Clone)]
 pub struct SnakeEnv {
     /// Grid width
@@ -70,12 +76,23 @@ pub struct SnakeEnv {
     pub max_steps: usize,
     /// Done flag
     pub done: bool,
+    /// Owned RNG for food spawning. Captured by `clone_state` so that
+    /// `restore_state` + `step` reproduces the exact same trajectory.
+    pub rng: StdRng,
 }
 
 impl SnakeEnv {
     /// Create new snake environment with specified number of agents
     pub fn new_multi(width: i32, height: i32, num_agents: usize) -> Self {
-        let mut rng = rand::rng();
+        Self::new_multi_with_seed(width, height, num_agents, DEFAULT_SEED)
+    }
+
+    /// Create new snake environment with a specific RNG seed.
+    ///
+    /// The seed controls food placement. Two envs constructed with the same
+    /// seed and stepped with the same actions produce identical trajectories.
+    pub fn new_multi_with_seed(width: i32, height: i32, num_agents: usize, seed: u64) -> Self {
+        let mut rng = StdRng::seed_from_u64(seed);
 
         // Create snakes in different corners
         let mut snakes = Vec::new();
@@ -105,6 +122,7 @@ impl SnakeEnv {
             steps: 0,
             max_steps: 400,
             done: false,
+            rng,
         }
     }
 
@@ -124,8 +142,6 @@ impl SnakeEnv {
 
     /// Reset environment to initial state
     pub fn reset(&mut self) {
-        let mut rng = rand::rng();
-
         // Reset all snakes
         self.snakes.clear();
         let positions = [
@@ -142,8 +158,10 @@ impl SnakeEnv {
         }
 
         // Generate new food
-        self.food =
-            Position::new(rng.random_range(0..self.width), rng.random_range(0..self.height));
+        self.food = Position::new(
+            self.rng.random_range(0..self.width),
+            self.rng.random_range(0..self.height),
+        );
 
         self.episode += 1;
         self.steps = 0;
@@ -226,10 +244,9 @@ impl SnakeEnv {
                 self.snakes[i].grow();
 
                 // Generate new food
-                let mut rng = rand::rng();
                 loop {
-                    let x = rng.random_range(0..self.width);
-                    let y = rng.random_range(0..self.height);
+                    let x = self.rng.random_range(0..self.width);
+                    let y = self.rng.random_range(0..self.height);
                     let new_food = Position::new(x, y);
 
                     // Make sure food doesn't spawn on any snake
@@ -362,10 +379,9 @@ impl SnakeEnv {
                 self.snakes[i].grow();
 
                 // Generate new food
-                let mut rng = rand::rng();
                 loop {
-                    let x = rng.random_range(0..self.width);
-                    let y = rng.random_range(0..self.height);
+                    let x = self.rng.random_range(0..self.width);
+                    let y = self.rng.random_range(0..self.height);
                     let new_food = Position::new(x, y);
 
                     // Make sure food doesn't spawn on any snake
@@ -612,6 +628,7 @@ impl Environment for SnakeEnv {
             steps: self.steps,
             max_steps: self.max_steps,
             done: self.done,
+            rng: self.rng.clone(),
         }
     }
 
@@ -625,6 +642,7 @@ impl Environment for SnakeEnv {
         self.steps = state.steps;
         self.max_steps = state.max_steps;
         self.done = state.done;
+        self.rng = state.rng.clone();
     }
 }
 
@@ -669,5 +687,43 @@ mod tests {
         assert_eq!(r1.truncated, r2.truncated);
         assert_eq!(env.food, post_food_1);
         assert_eq!(env.steps, post_steps_1);
+    }
+
+    /// Forces the food-respawn branch (which draws from the env RNG) to run
+    /// across a `clone_state` / `restore_state` round-trip and asserts the
+    /// respawned food lands in the same cell both times. This is the path that
+    /// previously diverged because food respawn used the thread-local
+    /// `rand::rng()` instead of the captured snapshot RNG.
+    #[test]
+    fn clone_restore_round_trips_when_food_is_eaten() {
+        let mut env = SnakeEnv::new(10, 10);
+        env.reset();
+
+        // Action 0 maps to Direction::Up. The snake starts facing Right (Up is
+        // not a reversal), so after the step the head moves up one cell. Place
+        // the food there so the next step eats it and triggers an RNG respawn.
+        let head = env.snakes[0].head;
+        let food_before = Position::new(head.x, head.y - 1);
+        env.food = food_before;
+
+        let snap = env.clone_state();
+
+        let r1 = env.step(0);
+        let food_after_1 = env.food;
+
+        env.restore_state(&snap);
+        let r2 = env.step(0);
+        let food_after_2 = env.food;
+
+        // The step must have eaten the food and respawned it elsewhere via the
+        // env RNG (confirming the respawn branch actually fired).
+        assert_ne!(food_after_1, food_before, "expected food to be eaten and respawned");
+
+        // The respawn must be reproducible across the restore: same new food
+        // cell, same observation, same reward. Before the fix, respawn used the
+        // thread-local RNG and these diverged intermittently.
+        assert_eq!(food_after_1, food_after_2, "respawned food must match across restore");
+        assert_eq!(r1.observation, r2.observation);
+        assert_eq!(r1.reward, r2.reward);
     }
 }
