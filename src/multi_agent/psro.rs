@@ -399,10 +399,45 @@ pub struct AlphaRankMetaSolver {
     pub max_iterations: usize,
     /// Power-iteration L1 convergence tolerance.
     pub tolerance: f32,
+    /// When `true`, normalize each Moran payoff differential
+    /// `delta = π_τ − π_σ` by the **payoff span** of the input tensor
+    /// (`max − min` over all per-agent payoffs) before multiplying by α
+    /// (issue #215).
+    ///
+    /// # Why this matters
+    ///
+    /// The Moran fixation probability is driven by `α · delta` (see
+    /// [`moran_fixation_probability`]). α-rank's defaults
+    /// (`α = 10`, `m = 50`) were validated on the `{−1, +1}`
+    /// matching-pennies game, where `|delta| ≤ 2` and `α · delta ≤ 20`
+    /// — comfortably inside the regime where the fixation probability is
+    /// a graded sigmoid-like function of the payoff advantage. On the
+    /// bucket-brigade `[−700, 0]` payoff band, `|delta|` can reach ~700
+    /// and `α · delta ≈ 7000`, which **saturates** every non-neutral
+    /// transition to a hard 0 or 1. The graded Moran dynamics collapse
+    /// into a degenerate deterministic best-response graph, and the
+    /// resulting stationary distribution is acutely sensitive to tiny
+    /// payoff-estimate noise — a plausible contributor to the
+    /// exploitability *divergence* observed on the no-convergence cells
+    /// (issue #215, #198).
+    ///
+    /// When enabled, the differential is rescaled to
+    /// `delta_norm = delta / span` (with `span = max − min`, guarded
+    /// against a degenerate zero span), so the **effective** selection
+    /// strength `α · delta_norm` lands in the same `[−α, α]` band the
+    /// defaults were tuned for regardless of the absolute payoff
+    /// magnitude. This is the α-rank analogue of NFSP's / PSRO's
+    /// `br_reward_scale`: a magnitude-invariance fix, not a change to
+    /// the ranking semantics on a fixed scale.
+    ///
+    /// `false` (the default) preserves the pre-#215 behavior bit-for-bit.
+    pub normalize_payoff_span: bool,
 }
 
 impl AlphaRankMetaSolver {
-    /// Construct with explicit hyperparameters.
+    /// Construct with explicit hyperparameters. Payoff-span
+    /// normalization defaults to `false` (pre-#215 behavior). Use
+    /// [`AlphaRankMetaSolver::with_payoff_span_normalization`] to opt in.
     pub fn new(
         ranking_intensity_alpha: f32,
         moran_population_size: u32,
@@ -414,7 +449,16 @@ impl AlphaRankMetaSolver {
             moran_population_size: moran_population_size.max(2),
             max_iterations: max_iterations.max(1),
             tolerance: tolerance.max(1e-12),
+            normalize_payoff_span: false,
         }
+    }
+
+    /// Builder-style setter: enable/disable payoff-span normalization of
+    /// the Moran payoff differential (issue #215). See
+    /// [`AlphaRankMetaSolver::normalize_payoff_span`] for the rationale.
+    pub fn with_payoff_span_normalization(mut self, enabled: bool) -> Self {
+        self.normalize_payoff_span = enabled;
+        self
     }
 
     /// Inherent N-player α-rank stationary distribution helper.
@@ -499,6 +543,41 @@ impl AlphaRankMetaSolver {
             0.0
         };
 
+        // Optional payoff-span normalization (issue #215). When enabled,
+        // every Moran payoff differential is divided by the payoff span
+        // (`max − min` over all per-agent payoffs) so the effective
+        // selection strength `α · (delta / span)` stays in the `[−α, α]`
+        // band the defaults were tuned for, regardless of the absolute
+        // payoff magnitude. This prevents the fixation probability from
+        // saturating to a hard 0/1 on large-magnitude bands (e.g.
+        // bucket-brigade's `[−700, 0]`). `1.0` divisor (the default,
+        // normalization off — or a degenerate flat payoff tensor) is a
+        // no-op and keeps the path bit-identical.
+        let delta_divisor: f32 = if self.normalize_payoff_span {
+            let mut min_v = f32::INFINITY;
+            let mut max_v = f32::NEG_INFINITY;
+            for row in payoffs.iter() {
+                for &v in row.iter() {
+                    if v < min_v {
+                        min_v = v;
+                    }
+                    if v > max_v {
+                        max_v = v;
+                    }
+                }
+            }
+            let span = max_v - min_v;
+            // Guard against a flat / degenerate tensor: a zero (or
+            // non-finite) span leaves the differential untouched.
+            if span.is_finite() && span > 1e-12 {
+                span
+            } else {
+                1.0
+            }
+        } else {
+            1.0
+        };
+
         // Sparse-friendly transition rep: per-state out-edges as
         // `Vec<(to_index, prob)>`. With n_joint potentially in the
         // thousands and only `n_deviations` non-self entries per row,
@@ -524,7 +603,7 @@ impl AlphaRankMetaSolver {
                     let p_fix = moran_fixation_probability(
                         self.ranking_intensity_alpha,
                         self.moran_population_size,
-                        to_payoff_a - from_payoff_a,
+                        (to_payoff_a - from_payoff_a) / delta_divisor,
                     );
                     let edge_prob = per_dev_weight * p_fix;
                     row_edges.push((t, edge_prob));
@@ -586,6 +665,11 @@ impl AlphaRankMetaSolver {
 
 impl Default for AlphaRankMetaSolver {
     fn default() -> Self {
+        // Payoff-span normalization defaults OFF to keep the
+        // matching-pennies regression bar and the `solve` API
+        // bit-identical to the pre-#215 solver. Opt in via
+        // `with_payoff_span_normalization(true)` for large-magnitude
+        // payoff bands like bucket-brigade's `[−700, 0]`.
         Self::new(10.0, 50, 200, 1e-6)
     }
 }
@@ -896,6 +980,26 @@ pub struct PsroConfig {
     /// subsampling path is purely opt-in; existing callers and the
     /// determinism discipline (#201) are unaffected.
     pub max_payoff_evals_per_iteration: Option<usize>,
+    /// Optional reward scaling applied to per-step rewards before the
+    /// best-response (PPO) update, mirroring
+    /// [`NfspConfig::br_reward_scale`](crate::multi_agent::nfsp::NfspConfig::br_reward_scale)
+    /// (issue #199 / #215).
+    ///
+    /// PSRO trains each new best response with the same joint PPO update
+    /// as NFSP's BR side, so it inherits the same numerical pathology on
+    /// the large-magnitude bucket-brigade payoff band (`[−700, 0]`): the
+    /// unscaled rewards drive the critic's regression targets and the
+    /// per-minibatch advantage normalization into a range where the
+    /// value loss dominates the surrogate and the BR effectively stops
+    /// learning a meaningful response. Scaling rewards by a constant is
+    /// an affine transform of the return — it does **not** change the
+    /// optimal policy — but keeps the critic targets and advantage stats
+    /// numerically friendly. A value like `0.01` rescales the
+    /// bucket-brigade band to roughly `[−7, 0]`.
+    ///
+    /// `1.0` (the default) is a no-op and preserves the pre-#215
+    /// behavior bit-for-bit.
+    pub br_reward_scale: f32,
     /// RNG seed for opponent sampling and deterministic tests.
     pub seed: u64,
 }
@@ -908,6 +1012,7 @@ impl Default for PsroConfig {
             br_train_steps_per_iteration: 1,
             payoff_eval_episodes: 8,
             max_payoff_evals_per_iteration: None,
+            br_reward_scale: 1.0,
             seed: 0,
         }
     }
@@ -1806,8 +1911,25 @@ where
             env.reset_joint(Some(self.config.seed.wrapping_add(active_agent as u64)));
 
         let mut last_stats = JointStats::zeros(num_agents);
+        let reward_scale = self.config.br_reward_scale;
         for _ in 0..self.config.br_train_steps_per_iteration {
-            let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut self.rng);
+            let mut rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut self.rng);
+            // Apply the optional BR reward scaling (issue #199 / #215)
+            // before the PPO update. Scaling rewards uniformly is an
+            // affine transform of the return and does not change the
+            // optimal policy, but keeps the large-magnitude
+            // bucket-brigade band (`[−700, 0]`) in a numerically
+            // friendlier range for the BR critic's regression targets
+            // and advantage statistics. `reward_scale == 1.0` (the
+            // default) leaves the rollout untouched, so the default path
+            // is bit-identical to the pre-#215 behavior.
+            if reward_scale != 1.0 {
+                for agent_rewards in rollout.rewards.iter_mut() {
+                    for r in agent_rewards.iter_mut() {
+                        *r *= reward_scale;
+                    }
+                }
+            }
             last_stats = trainer.update_with_active_agents(
                 &rollout,
                 &active_mask,
@@ -2359,6 +2481,114 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
+    // α-rank payoff-span normalization (issue #215)
+    // ------------------------------------------------------------------
+
+    /// Span normalization must be a strict no-op by default and bit-for-bit
+    /// identical on a non-degenerate matrix when explicitly disabled.
+    /// This is the regression bar guaranteeing the default α-rank path is
+    /// unchanged by #215.
+    #[test]
+    fn test_alpha_rank_span_normalization_default_off_is_bit_identical() {
+        use rand::{Rng, SeedableRng, rngs::StdRng};
+        for seed in 0..5_u64 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let payoffs: Vec<Vec<f32>> = (0..4)
+                .map(|_| (0..4).map(|_| rng.random_range(-5.0..5.0_f32)).collect())
+                .collect();
+            let default_solver = AlphaRankMetaSolver::default();
+            let explicit_off = AlphaRankMetaSolver::default().with_payoff_span_normalization(false);
+            assert_eq!(
+                default_solver.solve(&payoffs),
+                explicit_off.solve(&payoffs),
+                "default solver must equal explicitly-disabled span normalization (seed {seed})"
+            );
+        }
+    }
+
+    /// Root-cause demonstration (issue #215): on a large-magnitude payoff
+    /// band the default α-rank fixation probability **saturates** — every
+    /// non-neutral Moran transition collapses to a hard 0/1 — and the
+    /// resulting stationary distribution stops tracking the strategy
+    /// ordering. Concretely, a strategy that strictly dominates at unit
+    /// scale (and is correctly identified there) is *no longer*
+    /// concentrated on once the same ordinal game is rescaled to the
+    /// `[−700, 0]` band: the saturated transition matrix degenerates and
+    /// the solve returns a near-uniform / wrong answer.
+    ///
+    /// Span normalization restores magnitude invariance: the rescaled
+    /// game produces (essentially) the same distribution as the unit-scale
+    /// game, so the dominant strategy is concentrated on regardless of the
+    /// absolute payoff magnitude. This is the mechanism behind the
+    /// observed exploitability *divergence* — the meta-solver's mixture
+    /// becomes magnitude-dependent and brittle on the large-payoff cells.
+    #[test]
+    fn test_alpha_rank_span_normalization_is_magnitude_invariant() {
+        // Same ordinal structure (strategy 0 strictly dominates), two
+        // magnitudes 350x apart.
+        let small = vec![vec![2.0_f32, -1.0], vec![1.0, -2.0]];
+        let large = vec![vec![700.0_f32, -350.0], vec![350.0, -700.0]];
+
+        // (a) At unit scale, the *unnormalized* default solver already
+        // correctly concentrates on the dominant strategy.
+        let plain = AlphaRankMetaSolver::default();
+        let plain_small = plain.solve(&small);
+        assert!(
+            plain_small[0] > 0.9,
+            "unit-scale α-rank should concentrate on dominant strategy 0, got {plain_small:?}"
+        );
+
+        // (b) At the [−700, 0] scale, the *unnormalized* solver loses the
+        // dominance signal entirely — the saturated Moran transitions
+        // degenerate and it returns a near-uniform (wrong) distribution.
+        let plain_large = plain.solve(&large);
+        assert!(
+            plain_large[0] < 0.6,
+            "unnormalized large-scale α-rank should LOSE the dominance signal \
+             (saturation bug, issue #215), got {plain_large:?}"
+        );
+
+        // (c) With span normalization the rescaled game recovers the same
+        // concentrated answer as the unit-scale game — magnitude
+        // invariance.
+        let norm = AlphaRankMetaSolver::default().with_payoff_span_normalization(true);
+        let dist_small = norm.solve(&small);
+        let dist_large = norm.solve(&large);
+        for i in 0..2 {
+            assert!(
+                (dist_small[i] - dist_large[i]).abs() < 1e-3,
+                "span-normalized α-rank should be magnitude-invariant: \
+                 small={dist_small:?} large={dist_large:?}"
+            );
+        }
+        assert!(
+            dist_large[0] > 0.9,
+            "span-normalized large-scale α-rank should concentrate on dominant strategy 0, \
+             got {dist_large:?}"
+        );
+    }
+
+    /// A flat / degenerate payoff tensor (zero span) must not divide by
+    /// zero under span normalization — the guard falls back to a unit
+    /// divisor, giving the uniform stationary distribution (no
+    /// strategy dominates).
+    #[test]
+    fn test_alpha_rank_span_normalization_handles_flat_payoffs() {
+        let flat = vec![vec![3.0_f32, 3.0], vec![3.0, 3.0]];
+        let norm = AlphaRankMetaSolver::default().with_payoff_span_normalization(true);
+        let dist = norm.solve(&flat);
+        let total: f32 = dist.iter().sum();
+        assert!((total - 1.0).abs() < 1e-4, "flat-payoff dist must be normalized, got {dist:?}");
+        for &p in &dist {
+            assert!(p.is_finite(), "flat-payoff dist must be finite, got {dist:?}");
+            assert!(
+                (p - 0.5).abs() < 1e-3,
+                "flat payoffs should give uniform stationary dist, got {dist:?}"
+            );
+        }
+    }
+
+    // ------------------------------------------------------------------
     // PayoffCache
     // ------------------------------------------------------------------
 
@@ -2493,6 +2723,7 @@ mod tests {
             br_train_steps_per_iteration: 2,
             payoff_eval_episodes: 4,
             max_payoff_evals_per_iteration: None,
+            br_reward_scale: 1.0,
             seed: 0,
         };
         let joint_config = JointTrainerConfig {
@@ -2840,6 +3071,7 @@ mod tests {
             br_train_steps_per_iteration: 2,
             payoff_eval_episodes: 4,
             max_payoff_evals_per_iteration: None,
+            br_reward_scale: 1.0,
             seed: 12345,
         };
         let joint_config = JointTrainerConfig {
@@ -2930,6 +3162,7 @@ mod tests {
             br_train_steps_per_iteration: 2,
             payoff_eval_episodes: 4,
             max_payoff_evals_per_iteration: None,
+            br_reward_scale: 1.0,
             seed: 0xC0FF_EE12,
         };
         let joint_config = JointTrainerConfig {
