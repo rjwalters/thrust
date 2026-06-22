@@ -274,6 +274,11 @@ fn test_nfsp_beats_ppo_on_canonical_no_convergence_cell() {
         avg_policy_train_steps_per_iteration: 8,
         avg_policy_minibatch_size: 64,
         avg_policy_lr: 5e-3,
+        // Issue #199: cover ~2 full passes over the reservoir per
+        // iteration so the AP is not starved by a tiny fixed step
+        // budget, and rescale the large bucket-brigade payoff band.
+        avg_policy_min_reservoir_coverage: 2.0,
+        br_reward_scale: 0.01,
         seed: SEED,
     };
     let joint_config = JointTrainerConfig {
