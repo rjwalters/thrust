@@ -359,6 +359,9 @@ pub fn compute_nstep_returns(
 ///
 /// # Arguments
 /// * `buffer` - Rollout buffer to compute returns for
+// Loops walk `[step][env]` rows with a sub-range backfill (`episode_start..=step`)
+// into a separately-borrowed `returns` array; enumerate() cannot express that.
+#[allow(clippy::needless_range_loop)]
 pub fn compute_mc_returns(buffer: &mut super::storage::RolloutBuffer) {
     let (num_steps, num_envs) = (buffer.shape().0, buffer.shape().1);
 
@@ -399,6 +402,9 @@ pub fn compute_mc_returns(buffer: &mut super::storage::RolloutBuffer) {
 ///
 /// # Arguments
 /// * `buffer` - Rollout buffer with computed advantages
+// Nested `[step][env]` indexing reads/writes a 2D buffer accessor; enumerate()
+// over the outer dimension cannot reach the inner accessor cleanly.
+#[allow(clippy::needless_range_loop)]
 pub fn normalize_advantages(buffer: &mut super::storage::RolloutBuffer) {
     let (num_steps, num_envs) = (buffer.shape().0, buffer.shape().1);
 

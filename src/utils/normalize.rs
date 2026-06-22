@@ -29,6 +29,10 @@ impl RunningMeanStd {
     ///
     /// # Arguments
     /// * `observations` - Batch of observations `[batch_size][obs_dim]`
+    // The mean/variance update loops index four parallel arrays
+    // (`mean`, `var`, `delta`, `batch_var`) by the same `i`; enumerate() over one
+    // would force awkward zip chains for the rest.
+    #[allow(clippy::needless_range_loop)]
     pub fn update(&mut self, observations: &[Vec<f32>]) {
         if observations.is_empty() {
             return;

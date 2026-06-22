@@ -106,6 +106,14 @@ impl Snake {
         self.length
     }
 
+    /// Whether the snake has no body segments.
+    ///
+    /// A live snake always has at least one segment, so this is effectively
+    /// always `false`; provided to satisfy the `len`/`is_empty` convention.
+    pub fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+
     /// Check if snake is alive
     pub fn is_alive(&self) -> bool {
         self.alive

@@ -71,7 +71,6 @@ fn build(
         thrust_rl::env::SpaceType::Discrete(n) => n,
         _ => panic!("expected discrete action space"),
     };
-    drop(probe);
 
     let policy_config = MlpBurnConfig {
         num_layers: 2,

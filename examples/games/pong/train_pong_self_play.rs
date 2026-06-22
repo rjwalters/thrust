@@ -106,7 +106,6 @@ fn main() -> Result<()> {
         thrust_rl::env::SpaceType::Discrete(n) => n,
         _ => panic!("Expected discrete action space"),
     };
-    drop(probe);
 
     tracing::info!("Environment: Pong");
     tracing::info!("  obs_dim         = {}", obs_dim);
@@ -174,7 +173,7 @@ fn main() -> Result<()> {
     let mut buf_dones: Vec<f32> = Vec::with_capacity(cap);
 
     let mut episode_returns: Vec<f32> = Vec::new();
-    let mut current_returns = vec![0.0_f32; NUM_ENVS];
+    let mut current_returns = [0.0_f32; NUM_ENVS];
     let mut total_env_steps: usize = 0;
 
     for update in 0..num_updates {

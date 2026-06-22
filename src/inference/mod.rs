@@ -106,6 +106,9 @@ impl LayerWeights {
     }
 
     /// Forward pass through a linear layer
+    // The matmul uses row-major flat indexing `weights[i * in_features + j]`,
+    // which needs both counters; enumerate() cannot express it cleanly.
+    #[allow(clippy::needless_range_loop)]
     pub fn forward(&self, input: &[f32]) -> Vec<f32> {
         assert_eq!(input.len(), self.in_features, "Input size mismatch");
 

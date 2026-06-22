@@ -83,6 +83,10 @@ impl SnakeCNNInference {
     }
 
     /// Apply 2D convolution with padding=1
+    // Indexed loops mirror the [out_c][h][w][in_c][kh][kw] tensor layout and the
+    // padded neighbor arithmetic; rewriting as enumerate() iterators would obscure
+    // the spatial indexing rather than clarify it.
+    #[allow(clippy::needless_range_loop)]
     fn conv2d(
         &self,
         input: &[Vec<Vec<f32>>],       // [in_channels, height, width]
@@ -146,6 +150,9 @@ impl SnakeCNNInference {
     /// # Returns
     /// * `(logits, value)` - Action logits `[num_actions]` and state value
     ///   (scalar)
+    // The [c][h][w] reshape loop computes a flat index from three counters;
+    // enumerate() cannot express that arithmetic cleanly.
+    #[allow(clippy::needless_range_loop)]
     pub fn forward(&self, grid: &[f32]) -> (Vec<f32>, f32) {
         let grid_size = self.grid_width * self.grid_height;
         assert_eq!(grid.len(), self.input_channels * grid_size);

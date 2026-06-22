@@ -21,6 +21,9 @@ pub use types::{Cell, Direction, GameState, Position};
 
 // Submodules
 mod environment;
+// The `snake` submodule holds the core `Snake`/`Food` types; renaming it to
+// avoid the same-name parent module would churn every re-export for no benefit.
+#[allow(clippy::module_inception)]
 mod snake;
 mod types;
 // TODO: Re-enable after fixing multi-agent code

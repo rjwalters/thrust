@@ -197,10 +197,10 @@ impl DQNConfig {
         if self.max_grad_norm <= 0.0 {
             return Err(anyhow!("max_grad_norm must be positive"));
         }
-        if let Some(tau) = self.soft_update_tau {
-            if !(tau > 0.0 && tau <= 1.0) {
-                return Err(anyhow!("soft_update_tau must be in (0, 1], got {}", tau));
-            }
+        if let Some(tau) = self.soft_update_tau
+            && !(tau > 0.0 && tau <= 1.0)
+        {
+            return Err(anyhow!("soft_update_tau must be in (0, 1], got {}", tau));
         }
         // Prioritized Experience Replay parameter ranges. We validate
         // even when `prioritized_replay = false` so callers that flip

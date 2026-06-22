@@ -116,7 +116,7 @@ mod gae_tests {
                 buffer.add(
                     step,
                     env,
-                    &vec![0.0],
+                    &[0.0],
                     0,
                     1.0, // reward
                     0.5, // value
@@ -134,8 +134,8 @@ mod gae_tests {
         // Check that advantages were computed
         let advantages = buffer.advantages();
         println!("Buffer advantages:");
-        for step in 0..num_steps {
-            println!("  Step {}: {:?}", step, advantages[step]);
+        for (step, adv) in advantages.iter().enumerate().take(num_steps) {
+            println!("  Step {}: {:?}", step, adv);
         }
 
         // Advantages should be different before and after episode boundary
@@ -204,8 +204,8 @@ mod gae_tests {
         // Non-terminating slots: (env, agent) in {(0,0), (0,1), (1,0)}.
         for (env, agent) in [(0, 0), (0, 1), (1, 0)] {
             let slot = env * num_agents + agent;
-            let idx_step0 = 0 * stride + slot;
-            let idx_step1 = 1 * stride + slot;
+            let idx_step0 = slot; // step 0: 0 * stride + slot
+            let idx_step1 = stride + slot; // step 1: 1 * stride + slot
             assert!(
                 (advantages[idx_step0] - 2.0).abs() < eps,
                 "(env={}, agent={}) step 0 advantage expected 2.0, got {}",
@@ -224,9 +224,9 @@ mod gae_tests {
 
         // Terminating slot: (env=1, agent=1). The done at step 0 must
         // prevent the step-1 advantage from leaking back into step 0.
-        let term_slot = 1 * num_agents + 1;
-        let term_step0 = 0 * stride + term_slot;
-        let term_step1 = 1 * stride + term_slot;
+        let term_slot = num_agents + 1; // env=1, agent=1: 1 * num_agents + 1
+        let term_step0 = term_slot; // step 0: 0 * stride + term_slot
+        let term_step1 = stride + term_slot; // step 1: 1 * stride + term_slot
         assert!(
             (advantages[term_step0] - 1.0).abs() < eps,
             "terminating slot step 0 advantage expected 1.0 (no bootstrap, \

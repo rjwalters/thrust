@@ -73,7 +73,6 @@ fn main() -> Result<()> {
         thrust_rl::env::SpaceType::Discrete(n) => n,
         _ => panic!("expected discrete action space"),
     };
-    drop(probe);
 
     let mut env_pool = EnvPool::new(SimpleBandit::new, NUM_ENVS);
     let device = Default::default();

@@ -103,8 +103,7 @@ impl SnakeEnv {
             (3 * width / 4, 3 * height / 4, Direction::Left), // Bottom-right
         ];
 
-        for i in 0..num_agents.min(4) {
-            let (x, y, dir) = positions[i];
+        for (i, &(x, y, dir)) in positions.iter().enumerate().take(num_agents.min(4)) {
             let start_pos = Position::new(x, y);
             snakes.push(Snake::new(i, start_pos, dir));
         }
@@ -151,8 +150,7 @@ impl SnakeEnv {
             (3 * self.width / 4, 3 * self.height / 4, Direction::Left),
         ];
 
-        for i in 0..self.num_agents.min(4) {
-            let (x, y, dir) = positions[i];
+        for (i, &(x, y, dir)) in positions.iter().enumerate().take(self.num_agents.min(4)) {
             let start_pos = Position::new(x, y);
             self.snakes.push(Snake::new(i, start_pos, dir));
         }
@@ -511,12 +509,12 @@ impl SnakeEnv {
         // Channel 4: Walls (boundaries)
         // Top and bottom walls
         for x in 0..self.width as usize {
-            obs[4 * grid_size + 0 * (self.width as usize) + x] = 1.0; // Top
+            obs[4 * grid_size + x] = 1.0; // Top
             obs[4 * grid_size + ((self.height as usize - 1) * (self.width as usize)) + x] = 1.0; // Bottom
         }
         // Left and right walls
         for y in 0..self.height as usize {
-            obs[4 * grid_size + y * (self.width as usize) + 0] = 1.0; // Left
+            obs[4 * grid_size + y * (self.width as usize)] = 1.0; // Left
             obs[4 * grid_size + y * (self.width as usize) + (self.width as usize - 1)] = 1.0; // Right
         }
 

@@ -104,7 +104,6 @@ fn main() -> Result<()> {
         thrust_rl::env::SpaceType::Discrete(n) => n,
         _ => panic!("Expected discrete action space"),
     };
-    drop(probe);
 
     tracing::info!("Environment: CartPole-v1");
     tracing::info!("  obs_dim    = {}", obs_dim);
@@ -171,7 +170,7 @@ fn main() -> Result<()> {
     let mut observations = env_pool.reset();
 
     // Per-env running episode-length tracker. CartPole reward = +1/step.
-    let mut episode_lengths = vec![0u32; NUM_ENVS];
+    let mut episode_lengths = [0u32; NUM_ENVS];
     let mut completed_episode_lengths: Vec<u32> = Vec::new();
     let mut total_env_steps: usize = 0;
 

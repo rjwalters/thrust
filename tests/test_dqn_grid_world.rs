@@ -22,7 +22,7 @@
 //!    separates "found a reliable path to the goal" from "wandered / fell in
 //!    holes / timed out" (negative floor: a hole is `-1.0`, a timeout is `-0.01
 //!    * 100 = -1.0`, and a random policy on this deceptive layout averages well
-//!    below zero).
+//!      below zero).
 //!
 //! ## Why the heavy bar is `#[ignore]`d
 //!
@@ -92,7 +92,6 @@ fn build(
         SpaceType::Discrete(n) => n as i64,
         _ => panic!("expected discrete action space"),
     };
-    drop(probe);
 
     let lr = config.learning_rate;
     let online =
@@ -100,7 +99,7 @@ fn build(
     let inner_opt = AdamConfig::new().init();
     let burn_opt: BurnOptimizer<B, QNetworkBurn<B>, _> = BurnOptimizer::new(inner_opt, lr);
 
-    let trainer = DQNTrainerBurn::new(config, online, burn_opt, obs_dim, n_actions, device.clone())
+    let trainer = DQNTrainerBurn::new(config, online, burn_opt, obs_dim, n_actions, device)
         .expect("trainer constructs");
     (trainer, device, obs_dim)
 }
@@ -134,7 +133,7 @@ fn dqn_grid_world_training_step_runs() {
     let mut valid_actions = true;
 
     for _ in 0..400 {
-        let dev = device.clone();
+        let dev = device;
         let action = trainer.select_action(&obs, &mut rng, |q: &QNetworkBurn<B>, o: &[f32]| {
             greedy_action(q, o, &dev)
         });
@@ -223,7 +222,7 @@ fn dqn_grid_world_reaches_reward_bar() {
     let mut rng = StdRng::seed_from_u64(0xC0FFEE);
 
     while trainer.total_env_steps() < TOTAL_TIMESTEPS {
-        let dev = device.clone();
+        let dev = device;
         let action = trainer.select_action(&obs, &mut rng, |q: &QNetworkBurn<B>, o: &[f32]| {
             greedy_action(q, o, &dev)
         });
