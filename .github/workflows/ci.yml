@@ -28,6 +28,21 @@ jobs:
         # and cannot be reformatted from this repo.
         run: cargo fmt -- --check
 
+  # Lint with clippy, denying all warnings, across the full training build
+  # (lib, tests, examples). Keeps clippy debt from accumulating silently.
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy
+      - name: cargo clippy --all-targets --features training -- -D warnings
+        run: cargo clippy --all-targets --features training -- -D warnings
+
   # Cheap "does it parse" check without the training stack.
   # `--no-default-features` drops the `training` feature (and thus `burn`).
   check_no_training:

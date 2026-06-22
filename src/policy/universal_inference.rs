@@ -44,7 +44,7 @@ impl Activation {
             Activation::Identity => x,
             Activation::Gelu => {
                 // Approximate GELU: 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
-                const SQRT_2_OVER_PI: f32 = 0.7978845608;
+                const SQRT_2_OVER_PI: f32 = 0.797_884_6;
                 0.5 * x * (1.0 + (SQRT_2_OVER_PI * (x + 0.044715 * x.powi(3))).tanh())
             }
             Activation::Swish => x / (1.0 + (-x).exp()), // x * sigmoid(x)
@@ -158,6 +158,9 @@ impl Layer {
     }
 
     /// Apply this layer to input data
+    // Reshape branches compute flat indices from per-axis counters
+    // (`idx = ch * h * w + row * w + col`); enumerate() cannot express that.
+    #[allow(clippy::needless_range_loop)]
     pub fn forward(&self, input: &Tensor) -> Result<Tensor> {
         match self {
             Layer::Linear { weight, bias, out_features, .. } => {
@@ -296,6 +299,9 @@ impl Layer {
     }
 
     /// Perform 2D convolution
+    // Indexed loops mirror the [out_c][h][w][in_c][kh][kw] tensor layout and the
+    // strided/padded neighbor arithmetic; enumerate() would obscure the indexing.
+    #[allow(clippy::needless_range_loop)]
     fn conv2d_forward(
         input: &[Vec<Vec<f32>>],
         weight: &[Vec<Vec<Vec<f32>>>],
@@ -514,6 +520,9 @@ impl UniversalModel {
     }
 
     /// Convert raw input to tensor based on input spec
+    // The grid reshape computes a flat index from three counters
+    // (`idx = c * height * width + h * width + w`); enumerate() cannot express it.
+    #[allow(clippy::needless_range_loop)]
     fn input_to_tensor(&self, input: &[f32]) -> Result<Tensor> {
         match &self.input {
             InputSpec::Vector { size } => {

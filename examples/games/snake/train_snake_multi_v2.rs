@@ -4,9 +4,9 @@
 //! v2 trainer runs N independent PPO learners (one per snake) sharing a
 //! single multi-agent SnakeEnv. Each snake has its own
 //! [`SnakeCnnBurnPolicy`](thrust_rl::policy::snake_cnn::SnakeCnnBurnPolicy)
-//! + [`PPOTrainerBurn`](thrust_rl::train::ppo::PPOTrainerBurn) instance,
-//! gets a per-agent grid observation from the shared env, and is
-//! updated independently on its own rollout buffer.
+//! + [`PPOTrainerBurn`](thrust_rl::train::ppo::PPOTrainerBurn) instance, gets a
+//!   per-agent grid observation from the shared env, and is updated
+//!   independently on its own rollout buffer.
 //!
 //! # Why "v2"?
 //!
@@ -127,7 +127,7 @@ fn main() -> Result<()> {
     let mut total_env_steps: usize = 0;
     let mut episodes_completed: usize = 0;
     let mut per_episode_returns: Vec<Vec<f32>> = vec![Vec::new(); NUM_AGENTS];
-    let mut current_returns = vec![0.0_f32; NUM_AGENTS];
+    let mut current_returns = [0.0_f32; NUM_AGENTS];
 
     for update in 0..num_updates {
         for buf in buf_obs.iter_mut() {

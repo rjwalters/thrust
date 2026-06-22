@@ -117,7 +117,6 @@ fn main() -> Result<()> {
         thrust_rl::env::SpaceType::Discrete(n) => n as i64,
         _ => panic!("Expected discrete action space"),
     };
-    drop(probe);
 
     tracing::info!("Environment: GridWorld 4x4 (FrozenLake-style, no slip)");
     tracing::info!("  obs_dim    = {}", obs_dim);
@@ -148,8 +147,7 @@ fn main() -> Result<()> {
     let burn_opt: BurnOptimizer<B, QNetworkBurn<B>, _> =
         BurnOptimizer::new(inner_opt, config.learning_rate);
 
-    let mut trainer =
-        DQNTrainerBurn::new(config, online, burn_opt, obs_dim, n_actions, device.clone())?;
+    let mut trainer = DQNTrainerBurn::new(config, online, burn_opt, obs_dim, n_actions, device)?;
 
     let mut env = GridWorld::new();
     env.reset();
@@ -170,7 +168,7 @@ fn main() -> Result<()> {
     while trainer.total_env_steps() < total_timesteps {
         // ε-greedy action selection.
         let action = {
-            let device_local = device.clone();
+            let device_local = device;
             trainer.select_action(&obs, &mut rng, |q: &QNetworkBurn<B>, o_host: &[f32]| {
                 let o_t: Tensor<B, 2> = Tensor::from_data(
                     TensorData::new(o_host.to_vec(), [1, o_host.len()]),

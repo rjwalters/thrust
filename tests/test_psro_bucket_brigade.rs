@@ -52,7 +52,7 @@
 //! swing. The PSRO smoke budget (12 outer iter × 2048 rollout × 4 agents
 //! × `[10, 2, 2]` action space) may or may not produce a `gap_closed_cell
 //! >= 0` policy on these `no_convergence` cells — the heterogeneous DO
-//! solver itself failed to here, per the workshop paper's verdict.
+//! > solver itself failed to here, per the workshop paper's verdict.
 //!
 //! Mirroring the NFSP sibling test (`tests/test_nfsp_bucket_brigade.rs`,
 //! PR #131), this test asserts the soft-but-strong bar

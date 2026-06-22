@@ -223,10 +223,10 @@ fn psro_n4_smoke_runs_and_is_finite() {
 
     // Each agent's meta-Nash-weighted action marginal must be a valid
     // distribution: finite, in `[0, 1]`, and summing to ~1.
-    for agent in 0..num_agents {
+    for (agent, agent_meta_nash) in final_meta_nash.iter().enumerate().take(num_agents) {
         let marginal = meta_nash_action_marginal(
             trainer.populations(agent),
-            &final_meta_nash[agent],
+            agent_meta_nash,
             agent,
             num_agents,
             &Default::default(),
@@ -301,10 +301,10 @@ fn test_psro_n4_converges_to_uniform_on_majority_game() {
 
     let uniform = vec![0.5_f32; NPlayerMatchingPennies::ACTION_DIM];
     let mut max_tv_seen = 0.0_f32;
-    for agent in 0..num_agents {
+    for (agent, agent_meta_nash) in final_meta_nash.iter().enumerate().take(num_agents) {
         let marginal = meta_nash_action_marginal(
             trainer.populations(agent),
-            &final_meta_nash[agent],
+            agent_meta_nash,
             agent,
             num_agents,
             &Default::default(),

@@ -158,29 +158,35 @@ impl Pong {
 
         let mut reward = 0.0f32;
 
-        // Left paddle collision: ball's left edge crosses LEFT_X this step
-        if old_bx - BALL_R >= LEFT_X && self.ball_x - BALL_R < LEFT_X && self.ball_dx < 0.0 {
-            if (self.ball_y - self.left_y).abs() <= PADDLE_H {
-                let hit_pos = (self.ball_y - self.left_y) / PADDLE_H;
-                self.ball_dx = BALL_SPEED;
-                self.ball_dy = (self.ball_dy + hit_pos * BALL_SPEED * 0.6)
-                    .clamp(-BALL_SPEED * 1.2, BALL_SPEED * 1.2);
-                self.ball_x = LEFT_X + BALL_R;
-                reward = 0.1;
-            }
-            // else: miss — ball continues to left wall
+        // Left paddle collision: ball's left edge crosses LEFT_X this step and
+        // the paddle is in range. A crossing with the paddle out of range is a
+        // miss — the ball continues to the left wall.
+        if old_bx - BALL_R >= LEFT_X
+            && self.ball_x - BALL_R < LEFT_X
+            && self.ball_dx < 0.0
+            && (self.ball_y - self.left_y).abs() <= PADDLE_H
+        {
+            let hit_pos = (self.ball_y - self.left_y) / PADDLE_H;
+            self.ball_dx = BALL_SPEED;
+            self.ball_dy = (self.ball_dy + hit_pos * BALL_SPEED * 0.6)
+                .clamp(-BALL_SPEED * 1.2, BALL_SPEED * 1.2);
+            self.ball_x = LEFT_X + BALL_R;
+            reward = 0.1;
         }
 
-        // Right paddle collision: ball's right edge crosses RIGHT_X this step
-        if old_bx + BALL_R <= RIGHT_X && self.ball_x + BALL_R > RIGHT_X && self.ball_dx > 0.0 {
-            if (self.ball_y - self.right_y).abs() <= PADDLE_H {
-                let hit_pos = (self.ball_y - self.right_y) / PADDLE_H;
-                self.ball_dx = -BALL_SPEED;
-                self.ball_dy = (self.ball_dy + hit_pos * BALL_SPEED * 0.6)
-                    .clamp(-BALL_SPEED * 1.2, BALL_SPEED * 1.2);
-                self.ball_x = RIGHT_X - BALL_R;
-            }
-            // else: agent scores when ball hits right wall below
+        // Right paddle collision: ball's right edge crosses RIGHT_X this step and
+        // the paddle is in range. A crossing with the paddle out of range lets the
+        // agent score when the ball hits the right wall below.
+        if old_bx + BALL_R <= RIGHT_X
+            && self.ball_x + BALL_R > RIGHT_X
+            && self.ball_dx > 0.0
+            && (self.ball_y - self.right_y).abs() <= PADDLE_H
+        {
+            let hit_pos = (self.ball_y - self.right_y) / PADDLE_H;
+            self.ball_dx = -BALL_SPEED;
+            self.ball_dy = (self.ball_dy + hit_pos * BALL_SPEED * 0.6)
+                .clamp(-BALL_SPEED * 1.2, BALL_SPEED * 1.2);
+            self.ball_x = RIGHT_X - BALL_R;
         }
 
         // Scoring: ball exits screen
@@ -282,29 +288,35 @@ impl Environment for Pong {
 
         let mut reward = 0.0f32;
 
-        // Left paddle collision: ball's left edge crosses LEFT_X this step
-        if old_bx - BALL_R >= LEFT_X && self.ball_x - BALL_R < LEFT_X && self.ball_dx < 0.0 {
-            if (self.ball_y - self.left_y).abs() <= PADDLE_H {
-                let hit_pos = (self.ball_y - self.left_y) / PADDLE_H;
-                self.ball_dx = BALL_SPEED;
-                self.ball_dy = (self.ball_dy + hit_pos * BALL_SPEED * 0.6)
-                    .clamp(-BALL_SPEED * 1.2, BALL_SPEED * 1.2);
-                self.ball_x = LEFT_X + BALL_R;
-                reward = 0.1;
-            }
-            // else: miss — ball continues to left wall
+        // Left paddle collision: ball's left edge crosses LEFT_X this step and
+        // the paddle is in range. A crossing with the paddle out of range is a
+        // miss — the ball continues to the left wall.
+        if old_bx - BALL_R >= LEFT_X
+            && self.ball_x - BALL_R < LEFT_X
+            && self.ball_dx < 0.0
+            && (self.ball_y - self.left_y).abs() <= PADDLE_H
+        {
+            let hit_pos = (self.ball_y - self.left_y) / PADDLE_H;
+            self.ball_dx = BALL_SPEED;
+            self.ball_dy = (self.ball_dy + hit_pos * BALL_SPEED * 0.6)
+                .clamp(-BALL_SPEED * 1.2, BALL_SPEED * 1.2);
+            self.ball_x = LEFT_X + BALL_R;
+            reward = 0.1;
         }
 
-        // Right paddle collision: ball's right edge crosses RIGHT_X this step
-        if old_bx + BALL_R <= RIGHT_X && self.ball_x + BALL_R > RIGHT_X && self.ball_dx > 0.0 {
-            if (self.ball_y - self.right_y).abs() <= PADDLE_H {
-                let hit_pos = (self.ball_y - self.right_y) / PADDLE_H;
-                self.ball_dx = -BALL_SPEED;
-                self.ball_dy = (self.ball_dy + hit_pos * BALL_SPEED * 0.6)
-                    .clamp(-BALL_SPEED * 1.2, BALL_SPEED * 1.2);
-                self.ball_x = RIGHT_X - BALL_R;
-            }
-            // else: agent scores when ball hits right wall below
+        // Right paddle collision: ball's right edge crosses RIGHT_X this step and
+        // the paddle is in range. A crossing with the paddle out of range lets the
+        // agent score when the ball hits the right wall below.
+        if old_bx + BALL_R <= RIGHT_X
+            && self.ball_x + BALL_R > RIGHT_X
+            && self.ball_dx > 0.0
+            && (self.ball_y - self.right_y).abs() <= PADDLE_H
+        {
+            let hit_pos = (self.ball_y - self.right_y) / PADDLE_H;
+            self.ball_dx = -BALL_SPEED;
+            self.ball_dy = (self.ball_dy + hit_pos * BALL_SPEED * 0.6)
+                .clamp(-BALL_SPEED * 1.2, BALL_SPEED * 1.2);
+            self.ball_x = RIGHT_X - BALL_R;
         }
 
         // Scoring: ball exits screen

@@ -257,7 +257,7 @@ where
             }
             None => {
                 if self.total_env_steps > 0
-                    && self.total_env_steps % self.config.target_update_interval == 0
+                    && self.total_env_steps.is_multiple_of(self.config.target_update_interval)
                 {
                     self.target = self.online().clone();
                     true

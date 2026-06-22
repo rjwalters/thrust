@@ -116,7 +116,6 @@ fn main() -> Result<()> {
         thrust_rl::env::SpaceType::Discrete(n) => n,
         _ => panic!("Expected discrete action space"),
     };
-    drop(probe);
 
     tracing::info!("Environment: CartPole-v1");
     tracing::info!("  obs_dim    = {}", obs_dim);
@@ -178,7 +177,7 @@ fn main() -> Result<()> {
     let mut observations = env_pool.reset();
 
     // Per-env running episode-length tracker. CartPole reward = +1/step.
-    let mut episode_lengths = vec![0u32; NUM_ENVS];
+    let mut episode_lengths = [0u32; NUM_ENVS];
     let mut completed_episode_lengths: Vec<u32> = Vec::new();
     let mut total_env_steps: usize = 0;
 
@@ -270,10 +269,10 @@ fn main() -> Result<()> {
         // Emit one learning-curve row per logging interval when CURVE_CSV
         // is set. A2C runs many short updates, so we throttle to keep the
         // CSV manageable while still dense.
-        if let Some(w) = curve_csv.as_mut() {
-            if update % 20 == 0 || update == num_updates - 1 {
-                writeln!(w, "{},{:.4}", total_env_steps, last_avg_len)?;
-            }
+        if let Some(w) = curve_csv.as_mut()
+            && (update % 20 == 0 || update == num_updates - 1)
+        {
+            writeln!(w, "{},{:.4}", total_env_steps, last_avg_len)?;
         }
 
         if update % 200 == 0 || update == num_updates - 1 {

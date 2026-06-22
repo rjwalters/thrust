@@ -92,7 +92,6 @@ fn main() -> Result<()> {
         thrust_rl::env::SpaceType::Discrete(n) => n as i64,
         _ => panic!("Expected discrete action space"),
     };
-    drop(probe);
 
     tracing::info!("Environment: CartPole-v1");
     tracing::info!("  obs_dim    = {}", obs_dim);
@@ -123,8 +122,7 @@ fn main() -> Result<()> {
     let burn_opt: BurnOptimizer<B, QNetworkBurn<B>, _> =
         BurnOptimizer::new(inner_opt, config.learning_rate);
 
-    let mut trainer =
-        DQNTrainerBurn::new(config, online, burn_opt, obs_dim, n_actions, device.clone())?;
+    let mut trainer = DQNTrainerBurn::new(config, online, burn_opt, obs_dim, n_actions, device)?;
 
     let mut env = CartPole::new();
     env.reset();
@@ -145,7 +143,7 @@ fn main() -> Result<()> {
     while trainer.total_env_steps() < total_timesteps {
         // ε-greedy action selection.
         let action = {
-            let device_local = device.clone();
+            let device_local = device;
             trainer.select_action(&obs, &mut rng, |q: &QNetworkBurn<B>, o_host: &[f32]| {
                 // Forward pass on the inner (non-autodiff) backend for speed
                 // is not directly available — use the autodiff module's

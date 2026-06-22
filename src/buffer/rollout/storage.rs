@@ -111,6 +111,9 @@ impl RolloutBuffer {
     /// * `log_prob` - Log probability of the action
     /// * `terminated` - Whether the episode terminated
     /// * `truncated` - Whether the episode was truncated
+    // Each argument is a distinct transition field; bundling them into a struct
+    // would add boilerplate at every call site without improving clarity.
+    #[allow(clippy::too_many_arguments)]
     pub fn add(
         &mut self,
         step: usize,
@@ -343,11 +346,7 @@ impl RolloutBatch {
     /// Get the observation shape as (batch_size, obs_dim)
     pub fn obs_shape(&self) -> (usize, usize) {
         let batch_size = self.len();
-        let obs_dim = if batch_size == 0 {
-            0
-        } else {
-            self.observations.len() / batch_size
-        };
+        let obs_dim = self.observations.len().checked_div(batch_size).unwrap_or(0);
         (batch_size, obs_dim)
     }
 
