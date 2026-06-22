@@ -49,12 +49,14 @@
 //!   recommended deploy artifact)
 //! - `nfsp_<cell>_final_ap_agent<i>.json`
 //!
-//! # `gap_closed` baseline caveat
+//! # `gap_closed` normalization
 //!
-//! Same as `train_psro.rs`: the `MINSPEC_RANDOM = -96.07` /
-//! `MINSPEC_SPECIALIST = -22.07` baselines are computed on the *base*
-//! `minimal_specialization` scenario, NOT the per-cell payoff scale of
-//! the no-convergence regime (tracked in #128).
+//! Same as `train_psro.rs`: the final-eval headline metric is
+//! `gap_closed_cell`, which normalizes the per-step team payoff against the
+//! **cell-specific** random/specialist baselines for the active `CELL`
+//! (`MINSPEC_{RANDOM,SPECIALIST}_BETA0XX` from #128/#131). The base-scenario
+//! `gap_closed` is logged only as a secondary diagnostic and is NOT the
+//! convergence metric for a cell run.
 
 use anyhow::Result;
 use burn::{
@@ -67,7 +69,9 @@ use burn::{
 use thrust_rl::{
     env::games::bucket_brigade::{BucketBrigadeMaEnv, NUM_HOUSES, registry},
     multi_agent::{
-        JointTrainerConfig, NfspConfig, NfspTrainer, bucket_brigade_metrics::gap_closed,
+        JointTrainerConfig, NfspConfig, NfspTrainer,
+        bucket_brigade_baselines::BucketBrigadeCell,
+        bucket_brigade_metrics::{gap_closed, gap_closed_cell},
         joint::JointEnv,
     },
     policy::multi_discrete_mlp::MultiDiscreteMlpBurnPolicy,
@@ -101,10 +105,16 @@ fn action_dims() -> Vec<usize> {
 }
 
 fn cell_params(cell: &str) -> (f32, f32, f32) {
+    cell_enum(cell).parameters()
+}
+
+/// Map the `CELL` env-var string to the corresponding [`BucketBrigadeCell`],
+/// which selects the cell-specific `gap_closed_cell` baselines.
+fn cell_enum(cell: &str) -> BucketBrigadeCell {
     match cell {
-        "beta01" => (0.1, 0.1, 0.5),
-        "beta05" => (0.5, 0.1, 0.5),
-        "beta09" => (0.9, 0.1, 0.5),
+        "beta01" => BucketBrigadeCell::Beta01,
+        "beta05" => BucketBrigadeCell::Beta05,
+        "beta09" => BucketBrigadeCell::Beta09,
         other => panic!("Unknown CELL '{other}'; expected one of beta01|beta05|beta09"),
     }
 }
@@ -303,24 +313,78 @@ fn main() -> Result<()> {
     // --- Final convergence eval (use AP — paper's recommended deploy artifact)
     let final_ap_per_step_team =
         eval_per_step_team_reward(&final_aps, &device, obs_dim, beta, kappa, cost, 0xEE1 ^ 0xFFFF);
-    let final_ap_gc = gap_closed(final_ap_per_step_team);
+    let active_cell = cell_enum(&cell);
+    let final_ap_gc_cell = gap_closed_cell(final_ap_per_step_team, active_cell);
+    let final_ap_gc_base = gap_closed(final_ap_per_step_team);
     let final_br_per_step_team =
         eval_per_step_team_reward(&final_brs, &device, obs_dim, beta, kappa, cost, 0xEE1 ^ 0xFEFE);
-    let final_br_gc = gap_closed(final_br_per_step_team);
-    tracing::info!("Final eval (deterministic, K={EVAL_STEPS}):");
+    let final_br_gc_cell = gap_closed_cell(final_br_per_step_team, active_cell);
+    let final_br_gc_base = gap_closed(final_br_per_step_team);
+    tracing::info!("Final eval (deterministic, K={EVAL_STEPS}, cell {}):", active_cell.tag());
     tracing::info!(
         "  AP (avg policy, paper-deploy): per_step_team = {final_ap_per_step_team:.4}, \
-         gap_closed = {final_ap_gc:.4}"
+         gap_closed_cell = {final_ap_gc_cell:.4}"
     );
     tracing::info!(
         "  BR (best response):            per_step_team = {final_br_per_step_team:.4}, \
-         gap_closed = {final_br_gc:.4}"
+         gap_closed_cell = {final_br_gc_cell:.4}"
     );
     tracing::info!("  Reference: PPO workshop paper = -0.049 gap_closed");
     tracing::info!(
-        "Caveat: `gap_closed` baselines are base-scenario, not cell-specific (#128). Treat as \
-         diagnostic."
+        "  (secondary diagnostic) base-scenario gap_closed: AP = {final_ap_gc_base:.4}, BR = \
+         {final_br_gc_base:.4} — not the convergence metric for a cell run"
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use thrust_rl::multi_agent::bucket_brigade_metrics::{
+        MINSPEC_RANDOM_BETA01, MINSPEC_RANDOM_BETA05, MINSPEC_RANDOM_BETA09,
+        MINSPEC_SPECIALIST_BETA01, MINSPEC_SPECIALIST_BETA05, MINSPEC_SPECIALIST_BETA09,
+    };
+
+    use super::*;
+
+    /// Each `CELL` env-var string must select its matching
+    /// [`BucketBrigadeCell`], which is what `gap_closed_cell` keys off to
+    /// pick the cell-specific baselines.
+    #[test]
+    fn cell_enum_selects_correct_cell() {
+        assert_eq!(cell_enum("beta01"), BucketBrigadeCell::Beta01);
+        assert_eq!(cell_enum("beta05"), BucketBrigadeCell::Beta05);
+        assert_eq!(cell_enum("beta09"), BucketBrigadeCell::Beta09);
+    }
+
+    /// `cell_params` and `cell_enum` agree: the (β, κ, c) triple the env is
+    /// built from is the same one the selected cell encodes.
+    #[test]
+    fn cell_params_match_cell_enum_parameters() {
+        for cell in ["beta01", "beta05", "beta09"] {
+            assert_eq!(cell_params(cell), cell_enum(cell).parameters());
+        }
+    }
+
+    /// Final-eval normalization uses the cell-specific baselines: feeding a
+    /// cell's specialist baseline through `gap_closed_cell(_, cell_enum(CELL))`
+    /// must return ~1.0 (and its random baseline ~0.0) for the active cell.
+    #[test]
+    fn gap_closed_cell_uses_active_cell_baselines() {
+        for (cell, random, specialist) in [
+            ("beta01", MINSPEC_RANDOM_BETA01, MINSPEC_SPECIALIST_BETA01),
+            ("beta05", MINSPEC_RANDOM_BETA05, MINSPEC_SPECIALIST_BETA05),
+            ("beta09", MINSPEC_RANDOM_BETA09, MINSPEC_SPECIALIST_BETA09),
+        ] {
+            let active = cell_enum(cell);
+            assert!(
+                gap_closed_cell(random, active).abs() < 1e-5,
+                "cell {cell} random endpoint should map to 0.0"
+            );
+            assert!(
+                (gap_closed_cell(specialist, active) - 1.0).abs() < 1e-5,
+                "cell {cell} specialist endpoint should map to 1.0"
+            );
+        }
+    }
 }
