@@ -199,6 +199,27 @@ fn main() -> Result<()> {
     drop(probe);
     tracing::info!("  obs_dim          = {obs_dim}");
 
+    // Issue #199: the original run gave the AP only
+    // `avg_policy_train_steps_per_iteration × avg_policy_minibatch_size`
+    // ≈ 512 samples/iteration against a reservoir that grows to ~9,800
+    // entries/agent, which pinned `avg_ap_loss` at the uniform-entropy
+    // floor `ln(40)` for the whole run. Two knobs address that:
+    //   * `avg_policy_min_reservoir_coverage` runs enough supervised
+    //     steps to cover the reservoir `coverage`× per iteration
+    //     (overridable via `AP_COVERAGE`), and
+    //   * `br_reward_scale` rescales the `[−700, 0]` payoff band into a
+    //     numerically friendlier range for the BR critic (overridable
+    //     via `BR_REWARD_SCALE`).
+    let ap_coverage: f32 = std::env::var("AP_COVERAGE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2.0);
+    let br_reward_scale: f32 = std::env::var("BR_REWARD_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.01);
+    tracing::info!("  ap_coverage      = {ap_coverage} (issue #199 adaptive AP-step floor)");
+    tracing::info!("  br_reward_scale  = {br_reward_scale} (issue #199 payoff rescale)");
     let nfsp_config = NfspConfig {
         max_iterations: total_iterations,
         anticipatory_param: 0.1,
@@ -207,6 +228,8 @@ fn main() -> Result<()> {
         avg_policy_train_steps_per_iteration: 8,
         avg_policy_minibatch_size: 64,
         avg_policy_lr: 5e-3,
+        avg_policy_min_reservoir_coverage: ap_coverage,
+        br_reward_scale,
         seed: SEED,
     };
     let joint_config = JointTrainerConfig {
@@ -260,12 +283,37 @@ fn main() -> Result<()> {
             .copied()
             .sum::<f64>()
             / iter_stats.avg_policy_loss.iter().filter(|opt| opt.is_some()).count().max(1) as f64;
+        // Uniform-entropy floor over the [10,2,2]=40 joint action space.
+        // The whole #134 finding was that `avg_ap_loss` never moves off
+        // this floor; log the signed delta so the learning curve is
+        // legible at a glance (negative = AP has learned structure).
+        let uniform_floor = (40.0_f64).ln();
+        let ap_delta = ap_loss_avg - uniform_floor;
+        // BR-side diagnostic (issue #199): a weak best-response starves
+        // the AP target. Surface the BR policy/value loss + entropy each
+        // iteration so it is clear whether the RL side is learning.
+        let (br_pol, br_val, br_ent) = match &iter_stats.br_stats {
+            Some(s) => {
+                let n = s.policy_loss.len().max(1) as f64;
+                (
+                    s.policy_loss.iter().sum::<f64>() / n,
+                    s.value_loss.iter().sum::<f64>() / n,
+                    s.entropy.iter().sum::<f64>() / n,
+                )
+            }
+            None => (f64::NAN, f64::NAN, f64::NAN),
+        };
         tracing::info!(
-            "iter {:>3}/{}  reservoir_sizes={:?}  avg_ap_loss={:.4}  cum_br_pushes={}",
+            "iter {:>3}/{}  reservoir_sizes={:?}  avg_ap_loss={:.4} (Δfloor={:+.4})  \
+             br[pol={:.4} val={:.4} ent={:.4}]  cum_br_pushes={}",
             iter_stats.iteration,
             total_iterations,
             res_sizes,
             ap_loss_avg,
+            ap_delta,
+            br_pol,
+            br_val,
+            br_ent,
             iter_stats.cumulative_br_pushes
         );
     })?;

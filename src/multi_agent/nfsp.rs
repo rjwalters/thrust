@@ -255,11 +255,50 @@ pub struct NfspConfig {
     pub br_train_steps_per_iteration: usize,
     /// Number of supervised cross-entropy steps applied to the AP per
     /// outer iteration (skipped when the reservoir is empty).
+    ///
+    /// This is the *floor* on AP steps. When
+    /// [`avg_policy_min_reservoir_coverage`](Self::avg_policy_min_reservoir_coverage)
+    /// is `> 0` the trainer may run *more* than this many steps so the
+    /// AP sees enough of the reservoir per iteration (issue #199).
     pub avg_policy_train_steps_per_iteration: usize,
     /// Average-policy supervised minibatch size.
     pub avg_policy_minibatch_size: usize,
     /// Average-policy learning rate.
     pub avg_policy_lr: f64,
+    /// Minimum reservoir *coverage* per outer iteration for the AP
+    /// supervised update, expressed as a multiple of the current
+    /// reservoir size (issue #199).
+    ///
+    /// NFSP's average policy is fit by sampling minibatches from a
+    /// reservoir that grows into the thousands of entries, while the
+    /// default budget of `avg_policy_train_steps_per_iteration ×
+    /// avg_policy_minibatch_size` may only touch a few hundred samples
+    /// per iteration — far too few gradient steps to fit a moving
+    /// target, so the AP loss stays pinned at the uniform-entropy floor
+    /// (`ln(num_joint_actions)`). On bucket-brigade this manifested as
+    /// `avg_ap_loss ≈ ln(40)` for an entire 48-iteration run.
+    ///
+    /// When `coverage > 0`, the trainer runs
+    /// `max(avg_policy_train_steps_per_iteration,
+    /// ceil(coverage × reservoir_len / avg_policy_minibatch_size))`
+    /// supervised steps for each agent each iteration, so the AP is
+    /// exposed to (in expectation) `coverage` full passes over the
+    /// reservoir. `coverage = 0.0` disables the adaptive floor and
+    /// preserves the legacy fixed-step behavior. Default `0.0`.
+    pub avg_policy_min_reservoir_coverage: f32,
+    /// Optional reward scaling applied to per-step rewards before the BR
+    /// (PPO) update, to keep the large-magnitude bucket-brigade payoff
+    /// band (`[−700, 0]`) from dominating value targets and advantage
+    /// normalization (issue #199).
+    ///
+    /// Rewards in the anticipatory rollout are multiplied by this factor
+    /// before being handed to the joint PPO update. `1.0` (default) is a
+    /// no-op; a value like `0.01` rescales the bucket-brigade band to
+    /// roughly `[−7, 0]`. Scaling rewards uniformly does not change the
+    /// optimal policy (it is an affine transform of the return), but it
+    /// does keep the critic's regression targets and the advantage
+    /// statistics in a numerically friendlier range.
+    pub br_reward_scale: f32,
     /// RNG seed (η-flips, reservoir eviction, AP minibatch sampling).
     pub seed: u64,
 }
@@ -274,6 +313,8 @@ impl Default for NfspConfig {
             avg_policy_train_steps_per_iteration: 1,
             avg_policy_minibatch_size: 32,
             avg_policy_lr: 1e-3,
+            avg_policy_min_reservoir_coverage: 0.0,
+            br_reward_scale: 1.0,
             seed: 0,
         }
     }
@@ -767,10 +808,16 @@ where
 
             let result = env.step_joint(&joint_action);
             // Index-based scan: mirrors `JointMultiAgentTrainer::collect_rollout`'s
-            // per-agent reward fan-out.
+            // per-agent reward fan-out. Apply the optional reward scale
+            // (issue #199): scaling rewards uniformly is an affine
+            // transform of the return and does not change the optimal
+            // policy, but keeps the large-magnitude bucket-brigade band
+            // (`[−700, 0]`) in a numerically friendlier range for the
+            // BR critic's regression targets and advantage stats.
+            let reward_scale = self.config.br_reward_scale;
             #[allow(clippy::needless_range_loop)]
             for i in 0..num_agents {
-                rew_buf[i][t] = result.rewards[i];
+                rew_buf[i][t] = result.rewards[i] * reward_scale;
             }
             done_buf[t] = if result.done { 1.0 } else { 0.0 };
 
@@ -803,7 +850,11 @@ where
         let num_agents = self.joint_config.num_agents;
         let mut losses: Vec<Option<f64>> = vec![None; num_agents];
         let steps = self.config.avg_policy_train_steps_per_iteration;
-        if steps == 0 {
+        // Skip entirely only when *both* the fixed budget and the
+        // adaptive coverage floor are zero — otherwise coverage may
+        // still force supervised steps even with `steps == 0` (issue
+        // #199).
+        if steps == 0 && self.config.avg_policy_min_reservoir_coverage <= 0.0 {
             return Ok(losses);
         }
 
@@ -817,6 +868,23 @@ where
             if self.reservoirs[i].is_empty() {
                 continue;
             }
+            // Adaptive step floor (issue #199): when
+            // `avg_policy_min_reservoir_coverage > 0`, run enough
+            // supervised steps that the AP sees `coverage` full passes
+            // over the current reservoir, so a large reservoir is not
+            // starved by a tiny fixed step budget (the root cause of the
+            // `avg_ap_loss` pinned at `ln(num_joint_actions)` on
+            // bucket-brigade). The configured `steps` remains the floor.
+            let agent_steps = {
+                let coverage = self.config.avg_policy_min_reservoir_coverage;
+                if coverage > 0.0 {
+                    let res_len = self.reservoirs[i].len();
+                    let needed = (coverage as f64 * res_len as f64 / mb_size as f64).ceil() as usize;
+                    steps.max(needed)
+                } else {
+                    steps
+                }
+            };
             // Source-of-truth: probe `num_action_dims` from the BR
             // policy for agent `i`. PR #103 / issue #127: the AP policy
             // shares the same factored-action shape as the BR policy,
@@ -827,7 +895,7 @@ where
             let num_action_dims = self.br_trainer.policy(i).action_dims_joint().len();
             let mut sum_loss = 0.0_f64;
             let mut n_steps_done = 0usize;
-            for _ in 0..steps {
+            for _ in 0..agent_steps {
                 let batch = self.reservoirs[i].sample_with_replacement(mb_size);
                 if batch.is_empty() {
                     continue;
@@ -1144,6 +1212,8 @@ mod tests {
             avg_policy_train_steps_per_iteration: 2,
             avg_policy_minibatch_size: 32,
             avg_policy_lr: 5e-3,
+            avg_policy_min_reservoir_coverage: 0.0,
+            br_reward_scale: 1.0,
             seed: 0,
         };
         let joint_config = JointTrainerConfig {
@@ -1324,6 +1394,8 @@ mod tests {
             avg_policy_train_steps_per_iteration: 0,
             avg_policy_minibatch_size: 32,
             avg_policy_lr: 1e-3,
+            avg_policy_min_reservoir_coverage: 0.0,
+            br_reward_scale: 1.0,
             seed: 7,
         };
         let joint_config = JointTrainerConfig {
@@ -1376,6 +1448,8 @@ mod tests {
             avg_policy_train_steps_per_iteration: 0,
             avg_policy_minibatch_size: 32,
             avg_policy_lr: 5e-2,
+            avg_policy_min_reservoir_coverage: 0.0,
+            br_reward_scale: 1.0,
             seed: 13,
         };
         let joint_config = JointTrainerConfig {
@@ -1424,6 +1498,194 @@ mod tests {
         assert!(
             loss_after < loss_before,
             "AP supervised CE should decrease: before={loss_before:.4}, after={loss_after:.4}"
+        );
+    }
+
+    /// Issue #199 regression: on a **factored multi-discrete** `[10,2,2]`
+    /// action space (bucket-brigade's shape, joint cardinality 40), the
+    /// uniform-policy cross-entropy floor is `ln(40) ≈ 3.689`. The #134
+    /// cluster run reported `avg_ap_loss` pinned at exactly that floor
+    /// for an entire 48-iteration run — the average policy never fit its
+    /// reservoir.
+    ///
+    /// This test reproduces the *root cause locally* and shows the fix:
+    /// it seeds an agent's reservoir with a deterministic **non-uniform**
+    /// target (a single fixed joint action `[3, 1, 0]` for every entry,
+    /// the easiest possible supervised target) and runs the AP supervised
+    /// update. With the adaptive `avg_policy_min_reservoir_coverage` floor
+    /// the AP is given enough gradient steps to drive `avg_ap_loss`
+    /// **well below `ln(40)`** — exactly the signal the cluster run never
+    /// produced. Fast (NdArray CPU, tiny obs/hidden dims), so it runs on
+    /// every `cargo test --features training` invocation, not behind
+    /// `#[ignore]`.
+    #[test]
+    fn test_nfsp_multi_discrete_ap_loss_drops_below_uniform_floor() {
+        use crate::policy::multi_discrete_mlp::MultiDiscreteMlpBurnPolicy;
+
+        let device: NdArrayDevice = Default::default();
+        let action_dims = vec![10usize, 2, 2]; // joint cardinality = 40
+        let uniform_floor = (40.0_f64).ln(); // ≈ 3.6889
+
+        let nfsp_config = NfspConfig {
+            max_iterations: 0,
+            anticipatory_param: 1.0,
+            reservoir_capacity: 4_096,
+            br_train_steps_per_iteration: 0,
+            avg_policy_train_steps_per_iteration: 8,
+            avg_policy_minibatch_size: 64,
+            avg_policy_lr: 5e-3,
+            // The fix under test: cover the reservoir ~4× per call so the
+            // AP gets enough gradient steps to actually fit the target.
+            avg_policy_min_reservoir_coverage: 4.0,
+            br_reward_scale: 1.0,
+            seed: 199,
+        };
+        let joint_config = JointTrainerConfig {
+            num_agents: 2,
+            rollout_steps: 8,
+            n_epochs: 1,
+            minibatch_size: 32,
+            ..Default::default()
+        };
+
+        // obs_dim is small and arbitrary here — we never step the env;
+        // we drive `train_average_policies` directly on a hand-seeded
+        // reservoir. The env type only has to satisfy the trainer's
+        // generic bound (we use MatchingPennies, never stepped).
+        let obs_dim = 4usize;
+        let dims_for_factory = action_dims.clone();
+        let mut trainer = NfspTrainer::new(
+            nfsp_config,
+            joint_config,
+            device,
+            move |dev: &NdArrayDevice, seed: u64| {
+                MultiDiscreteMlpBurnPolicy::<B>::new_seeded(
+                    obs_dim,
+                    dims_for_factory.clone(),
+                    16,
+                    seed,
+                    dev,
+                )
+            },
+            || BurnOptimizer::new(AdamConfig::new().init(), 5e-3),
+            MatchingPennies::new,
+        )
+        .expect("NfspTrainer::new should succeed for multi-discrete config");
+
+        // Seed reservoir 0 with a fixed, non-uniform supervised target:
+        // every entry maps a constant observation to the single joint
+        // action [3, 1, 0]. A network that fits this perfectly drives the
+        // CE loss toward 0; the question is whether the AP gets enough
+        // gradient steps to move off the ln(40) uniform floor at all.
+        let fixed_obs = vec![0.25_f32; obs_dim];
+        let fixed_action: Vec<i64> = vec![3, 1, 0];
+        for _ in 0..512 {
+            trainer.reservoirs[0].push((fixed_obs.clone(), fixed_action.clone()));
+        }
+
+        // First supervised pass: the freshly-initialized AP should start
+        // near the uniform floor.
+        let losses_first = trainer.train_average_policies().unwrap();
+        let loss_first = losses_first[0].expect("expected supervised loss for agent 0");
+
+        // A handful more passes to let the adaptive-coverage budget fit
+        // the (trivial, deterministic) target.
+        for _ in 0..8 {
+            trainer.train_average_policies().unwrap();
+        }
+        let losses_last = trainer.train_average_policies().unwrap();
+        let loss_last = losses_last[0].expect("expected supervised loss for agent 0");
+
+        // Visible with `cargo test -- --nocapture`; documents the local
+        // before/after used in the PR writeup.
+        eprintln!(
+            "[#199] multi-discrete AP loss: first={loss_first:.4}, last={loss_last:.4}, \
+             ln(40) floor={uniform_floor:.4}"
+        );
+
+        // The cluster run's symptom was `avg_ap_loss` stuck AT the floor.
+        // The fix must drive it meaningfully below. Use a generous margin
+        // (0.5 nats) so the assertion is robust across platforms but
+        // still hard-fails the "pinned at ln(40)" pathology.
+        assert!(
+            loss_last < uniform_floor - 0.5,
+            "AP loss should drop well below the ln(40) uniform floor: \
+             first={loss_first:.4}, last={loss_last:.4}, floor={uniform_floor:.4}"
+        );
+        assert!(
+            loss_last < loss_first,
+            "AP loss should decrease across supervised passes: \
+             first={loss_first:.4}, last={loss_last:.4}"
+        );
+    }
+
+    /// Issue #199: the adaptive coverage floor must run *more* supervised
+    /// steps than the fixed `avg_policy_train_steps_per_iteration` when
+    /// the reservoir is large, and exactly the fixed count when coverage
+    /// is disabled (`0.0`). We verify this by counting actual gradient
+    /// steps via the returned per-agent loss being present and by
+    /// asserting the coverage math through a public-ish probe: a 0-step
+    /// fixed budget with coverage still produces a loss (steps were run),
+    /// while disabling coverage with a 0-step budget produces `None`.
+    #[test]
+    fn test_nfsp_adaptive_coverage_runs_steps_when_fixed_budget_is_zero() {
+        use crate::policy::multi_discrete_mlp::MultiDiscreteMlpBurnPolicy;
+
+        let device: NdArrayDevice = Default::default();
+        let obs_dim = 3usize;
+        let action_dims = vec![4usize, 2];
+
+        let make = |coverage: f32, fixed_steps: usize| {
+            let nfsp_config = NfspConfig {
+                max_iterations: 0,
+                anticipatory_param: 1.0,
+                reservoir_capacity: 1_024,
+                br_train_steps_per_iteration: 0,
+                avg_policy_train_steps_per_iteration: fixed_steps,
+                avg_policy_minibatch_size: 32,
+                avg_policy_lr: 1e-3,
+                avg_policy_min_reservoir_coverage: coverage,
+                br_reward_scale: 1.0,
+                seed: 7,
+            };
+            let joint_config = JointTrainerConfig {
+                num_agents: 1 + 1,
+                rollout_steps: 8,
+                n_epochs: 1,
+                minibatch_size: 32,
+                ..Default::default()
+            };
+            let dims = action_dims.clone();
+            let mut trainer = NfspTrainer::new(
+                nfsp_config,
+                joint_config,
+                device,
+                move |dev: &NdArrayDevice, seed: u64| {
+                    MultiDiscreteMlpBurnPolicy::<B>::new_seeded(obs_dim, dims.clone(), 8, seed, dev)
+                },
+                || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
+                MatchingPennies::new,
+            )
+            .expect("trainer construction");
+            for _ in 0..256 {
+                trainer.reservoirs[0].push((vec![0.1_f32; obs_dim], vec![1, 0]));
+            }
+            trainer
+        };
+
+        // Coverage disabled + 0 fixed steps → no supervised steps run.
+        let mut disabled = make(0.0, 0);
+        assert!(
+            disabled.train_average_policies().unwrap()[0].is_none(),
+            "coverage=0 with 0 fixed steps must run no supervised steps"
+        );
+
+        // Coverage enabled + 0 fixed steps → coverage forces steps to run
+        // (256 entries × 1.0 / 32 mb = 8 steps), so a loss is produced.
+        let mut enabled = make(1.0, 0);
+        assert!(
+            enabled.train_average_policies().unwrap()[0].is_some(),
+            "coverage>0 must run supervised steps even when fixed budget is 0"
         );
     }
 

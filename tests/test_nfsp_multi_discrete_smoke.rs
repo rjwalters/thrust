@@ -145,6 +145,8 @@ fn build_trainer(
         avg_policy_train_steps_per_iteration: 4,
         avg_policy_minibatch_size: 16,
         avg_policy_lr: 5e-3,
+        avg_policy_min_reservoir_coverage: 0.0,
+        br_reward_scale: 1.0,
         seed,
     };
     let joint_config = JointTrainerConfig {
