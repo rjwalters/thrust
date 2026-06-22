@@ -1379,7 +1379,87 @@ mod tests {
         assert_eq!(trainer.cumulative_br_pushes(), 128);
     }
 
+    /// Fast always-on smoke for the in-trainer η-mixing wiring. Drives a
+    /// single iteration with η = 0.5 over a *small* rollout and asserts
+    /// directionality: the BR path actually pushes to the reservoir and the
+    /// empirical BR-fraction lands in a loose-but-non-vacuous band around η.
+    ///
+    /// This keeps default-lane coverage of the trainer-side η flip while the
+    /// rigorous statistical-concentration proof
+    /// (`test_nfsp_eta_mixing_rate_concentration_in_trainer`) is `#[ignore]`d
+    /// per the #208/#209 convention — its 4096-step rollout costs ~11 min in
+    /// the default debug test lane and dominated CI Tests jobs (#224).
     #[test]
+    fn test_nfsp_eta_mixing_rate_smoke_in_trainer() {
+        let device: NdArrayDevice = Default::default();
+        let eta = 0.5f32;
+        // Small rollout: enough flips to expect both paths to fire, cheap
+        // enough to finish in well under a second in debug.
+        let rollout_steps = 256usize;
+        let nfsp_config = NfspConfig {
+            max_iterations: 1,
+            anticipatory_param: eta,
+            reservoir_capacity: 100_000,
+            br_train_steps_per_iteration: 1,
+            avg_policy_train_steps_per_iteration: 0,
+            avg_policy_minibatch_size: 32,
+            avg_policy_lr: 1e-3,
+            avg_policy_min_reservoir_coverage: 0.0,
+            br_reward_scale: 1.0,
+            seed: 7,
+        };
+        let joint_config = JointTrainerConfig {
+            num_agents: 2,
+            rollout_steps,
+            n_epochs: 1,
+            minibatch_size: 32,
+            ..Default::default()
+        };
+        let mut trainer = NfspTrainer::new(
+            nfsp_config,
+            joint_config,
+            device,
+            |dev: &NdArrayDevice, seed: u64| {
+                MlpBurnPolicy::<B>::new_seeded(
+                    MatchingPennies::OBS_DIM,
+                    MatchingPennies::ACTION_DIM,
+                    16,
+                    seed,
+                    dev,
+                )
+            },
+            || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
+            MatchingPennies::new,
+        )
+        .expect("NfspTrainer::new should succeed");
+        let _ = trainer.run_silent().expect("NFSP run should not error");
+        let br_pushes = trainer.cumulative_br_pushes() as f64;
+        let total_steps = (rollout_steps * 2) as f64;
+        let p_emp = br_pushes / total_steps;
+        // Directionality, not concentration: with η = 0.5 over 512 flips the
+        // empirical BR-fraction is overwhelmingly inside [0.25, 0.75]. Also
+        // require that the BR path fired at all (the wiring is live).
+        assert!(
+            br_pushes > 0.0,
+            "η-mixing BR path must push to the reservoir (br_pushes={br_pushes})"
+        );
+        assert!(
+            (0.25..=0.75).contains(&p_emp),
+            "η-mixing BR-fraction should be near 0.5: p_emp={p_emp:.4}"
+        );
+    }
+
+    /// Rigorous statistical-concentration proof for the in-trainer η flip:
+    /// a single iteration with η = 0.1 over a large rollout, asserting the
+    /// empirical BR-fraction across the 2 agents is within ~4σ of 0.1.
+    ///
+    /// `#[ignore]`d per the #208/#209 convention: the 4096-step rollout costs
+    /// ~11 min in the default debug test lane and dominated CI Tests jobs
+    /// (#224). The fast `test_nfsp_eta_mixing_rate_smoke_in_trainer` keeps
+    /// always-on coverage of the wiring; run this full proof on demand with
+    /// `cargo test --features training -- --ignored` (prefer `--release`).
+    #[test]
+    #[ignore = "multi-iteration NFSP η-mixing concentration run; opt in with --ignored (prefer --release)"]
     fn test_nfsp_eta_mixing_rate_concentration_in_trainer() {
         // Drive a single iteration with η = 0.1 over a large rollout
         // and check the empirical BR-fraction across the 2 agents is
