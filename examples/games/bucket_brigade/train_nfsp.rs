@@ -204,16 +204,13 @@ fn main() -> Result<()> {
     // ≈ 512 samples/iteration against a reservoir that grows to ~9,800
     // entries/agent, which pinned `avg_ap_loss` at the uniform-entropy
     // floor `ln(40)` for the whole run. Two knobs address that:
-    //   * `avg_policy_min_reservoir_coverage` runs enough supervised
-    //     steps to cover the reservoir `coverage`× per iteration
-    //     (overridable via `AP_COVERAGE`), and
-    //   * `br_reward_scale` rescales the `[−700, 0]` payoff band into a
-    //     numerically friendlier range for the BR critic (overridable
-    //     via `BR_REWARD_SCALE`).
-    let ap_coverage: f32 = std::env::var("AP_COVERAGE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(2.0);
+    //   * `avg_policy_min_reservoir_coverage` runs enough supervised steps to cover
+    //     the reservoir `coverage`× per iteration (overridable via `AP_COVERAGE`),
+    //     and
+    //   * `br_reward_scale` rescales the `[−700, 0]` payoff band into a numerically
+    //     friendlier range for the BR critic (overridable via `BR_REWARD_SCALE`).
+    let ap_coverage: f32 =
+        std::env::var("AP_COVERAGE").ok().and_then(|s| s.parse().ok()).unwrap_or(2.0);
     let br_reward_scale: f32 = std::env::var("BR_REWARD_SCALE")
         .ok()
         .and_then(|s| s.parse().ok())

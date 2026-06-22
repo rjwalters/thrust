@@ -879,7 +879,8 @@ where
                 let coverage = self.config.avg_policy_min_reservoir_coverage;
                 if coverage > 0.0 {
                     let res_len = self.reservoirs[i].len();
-                    let needed = (coverage as f64 * res_len as f64 / mb_size as f64).ceil() as usize;
+                    let needed =
+                        (coverage as f64 * res_len as f64 / mb_size as f64).ceil() as usize;
                     steps.max(needed)
                 } else {
                     steps
