@@ -1463,7 +1463,7 @@ mod tests {
     fn test_nfsp_eta_mixing_rate_concentration_in_trainer() {
         // Drive a single iteration with η = 0.1 over a large rollout
         // and check the empirical BR-fraction across the 2 agents is
-        // within ~3σ of 0.1.
+        // within ~4σ of 0.1.
         let device: NdArrayDevice = Default::default();
         let eta = 0.1f32;
         let rollout_steps = 4096usize;
