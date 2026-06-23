@@ -78,6 +78,16 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@nightly
       - name: cargo test --features training
+        # Pin rayon to a single worker for the test run only. The #232 PSRO
+        # best-response loop (and other `par_iter` paths) dispatch heavy work
+        # to the global rayon pool; on the 2-core CI runners, multiple rayon
+        # workers spin-contend with cargo's concurrent test threads on the
+        # saturated cores, which ~4x'd the Tests-job wall-clock (11min ->
+        # 40min+). One rayon worker => the par_iter paths run serially in CI
+        # (no spin-contention) while cargo keeps its normal test concurrency.
+        # Real runs (cluster, all cores) are unaffected — they don't set this.
+        env:
+          RAYON_NUM_THREADS: "1"
         run: cargo test --features training
 
   # Same on macOS, to catch any platform-specific Burn issues early.
@@ -93,6 +103,16 @@ jobs:
         run: cargo check --features training
       # Run tests as a separate step so a hang doesn't mask the check result.
       - name: cargo test --features training
+        # Pin rayon to a single worker for the test run only. The #232 PSRO
+        # best-response loop (and other `par_iter` paths) dispatch heavy work
+        # to the global rayon pool; on the 2-core CI runners, multiple rayon
+        # workers spin-contend with cargo's concurrent test threads on the
+        # saturated cores, which ~4x'd the Tests-job wall-clock (11min ->
+        # 40min+). One rayon worker => the par_iter paths run serially in CI
+        # (no spin-contention) while cargo keeps its normal test concurrency.
+        # Real runs (cluster, all cores) are unaffected — they don't set this.
+        env:
+          RAYON_NUM_THREADS: "1"
         run: cargo test --features training
 
   # Documentation
