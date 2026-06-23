@@ -210,7 +210,7 @@ impl BucketBrigadeMaEnv {
             actions.len()
         );
 
-        let rust_actions: Vec<Action> = actions.iter().copied().collect();
+        let rust_actions: Vec<Action> = actions.to_vec();
         let result = self.inner.step(&rust_actions);
 
         let observations = self.collect_observations();

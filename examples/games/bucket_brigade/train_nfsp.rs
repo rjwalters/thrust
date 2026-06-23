@@ -257,7 +257,7 @@ fn main() -> Result<()> {
     >::new(
         nfsp_config,
         joint_config,
-        device.clone(),
+        device,
         policy_factory,
         optimizer_factory,
         env_factory,

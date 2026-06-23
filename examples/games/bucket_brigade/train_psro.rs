@@ -336,7 +336,7 @@ fn main() -> Result<()> {
         psro_config,
         joint_config,
         meta_solver,
-        device.clone(),
+        device,
         policy_factory,
         optimizer_factory,
         env_factory,
