@@ -100,6 +100,7 @@ use burn::{
     tensor::{Int, Tensor, TensorData, backend::AutodiffBackend},
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use rayon::prelude::*;
 
 use crate::{
     multi_agent::joint::{
@@ -568,6 +569,11 @@ where
     pub fn run<F>(&mut self, mut on_iteration: F) -> Result<NfspStats>
     where
         F: FnMut(&NfspIterationStats),
+        // Propagated from `train_average_policies` (issue #234): the
+        // per-agent AP supervised loop runs concurrently with rayon.
+        P: Send + Sync,
+        O: Send,
+        B::Device: Sync,
     {
         let mut stats = NfspStats::default();
         for iter in 1..=self.config.max_iterations {
@@ -630,7 +636,13 @@ where
 
     /// Convenience entry point: drives [`Self::run`] with a no-op
     /// iteration callback.
-    pub fn run_silent(&mut self) -> Result<NfspStats> {
+    pub fn run_silent(&mut self) -> Result<NfspStats>
+    where
+        // Propagated from `run` -> `train_average_policies` (issue #234).
+        P: Send + Sync,
+        O: Send,
+        B::Device: Sync,
+    {
         self.run(|_| {})
     }
 
@@ -846,131 +858,207 @@ where
     /// reservoir buffer. Skips agents whose reservoir is empty.
     /// Returns per-agent mean loss across all the supervised steps
     /// (`None` if no steps were taken for that agent).
-    fn train_average_policies(&mut self) -> Result<Vec<Option<f64>>> {
+    ///
+    /// # Parallelism (issue #234)
+    ///
+    /// The per-agent loop runs the `num_agents` agents concurrently with
+    /// rayon. Each agent's mutable state is **disjoint**
+    /// (`reservoirs[i]`, `avg_policies[i]`, `avg_optimizers[i]`), so we
+    /// zip the three per-agent vectors into a single `par_iter_mut`,
+    /// handing each task an independent `(&mut reservoir, &mut policy,
+    /// &mut optimizer)` triple — no `Mutex`, no shared mutable borrow.
+    /// The only shared state is read-only (`&self.config`, `&self.device`)
+    /// and the per-agent `num_action_dims`, which is probed from the BR
+    /// trainer *before* the parallel section (so the immutable
+    /// `self.br_trainer` borrow does not collide with the per-agent
+    /// `&mut` borrows).
+    ///
+    /// # Determinism
+    ///
+    /// AP minibatches are drawn from each reservoir's **own** seeded RNG
+    /// (`ReservoirBuffer::rng`, see `sample_with_replacement`), never from
+    /// the shared `self.rng`. Sampling is therefore agent-local and the
+    /// `avg_ap_loss` trajectory is unchanged vs. the previous serial loop
+    /// and invariant to the rayon thread count: each agent consumes
+    /// exactly its own RNG stream regardless of interleaving. (The serial
+    /// loop already sourced AP sampling from the per-reservoir RNG, so
+    /// this change does not alter the RNG sourcing.)
+    fn train_average_policies(&mut self) -> Result<Vec<Option<f64>>>
+    where
+        P: Send + Sync,
+        O: Send,
+        B::Device: Sync,
+    {
         let num_agents = self.joint_config.num_agents;
-        let mut losses: Vec<Option<f64>> = vec![None; num_agents];
         let steps = self.config.avg_policy_train_steps_per_iteration;
         // Skip entirely only when *both* the fixed budget and the
         // adaptive coverage floor are zero — otherwise coverage may
         // still force supervised steps even with `steps == 0` (issue
         // #199).
         if steps == 0 && self.config.avg_policy_min_reservoir_coverage <= 0.0 {
-            return Ok(losses);
+            return Ok(vec![None; num_agents]);
         }
 
-        // Per-agent index loop: we read/mutate `self.reservoirs[i]` and
-        // `self.avg_policies[i]` inside the loop; rewriting as an
-        // iter_mut().enumerate() over `losses` is awkward because we
-        // also need the outer `self` borrow.
-        #[allow(clippy::needless_range_loop)]
-        for i in 0..num_agents {
-            let mb_size = self.config.avg_policy_minibatch_size.max(1);
-            if self.reservoirs[i].is_empty() {
-                continue;
-            }
-            // Adaptive step floor (issue #199): when
-            // `avg_policy_min_reservoir_coverage > 0`, run enough
-            // supervised steps that the AP sees `coverage` full passes
-            // over the current reservoir, so a large reservoir is not
-            // starved by a tiny fixed step budget (the root cause of the
-            // `avg_ap_loss` pinned at `ln(num_joint_actions)` on
-            // bucket-brigade). The configured `steps` remains the floor.
-            let agent_steps = {
-                let coverage = self.config.avg_policy_min_reservoir_coverage;
-                if coverage > 0.0 {
-                    let res_len = self.reservoirs[i].len();
-                    let needed =
-                        (coverage as f64 * res_len as f64 / mb_size as f64).ceil() as usize;
-                    steps.max(needed)
-                } else {
-                    steps
-                }
-            };
-            // Source-of-truth: probe `num_action_dims` from the BR
-            // policy for agent `i`. PR #103 / issue #127: the AP policy
-            // shares the same factored-action shape as the BR policy,
-            // and `evaluate_actions_joint` expects actions of shape
-            // `[mb, num_action_dims]` for both `MlpBurnPolicy`
-            // (length-1 columns) and `MultiDiscreteMlpBurnPolicy`
-            // (length-`num_action_dims` columns).
-            let num_action_dims = self.br_trainer.policy(i).action_dims_joint().len();
-            let mut sum_loss = 0.0_f64;
-            let mut n_steps_done = 0usize;
-            for _ in 0..agent_steps {
-                let batch = self.reservoirs[i].sample_with_replacement(mb_size);
-                if batch.is_empty() {
-                    continue;
-                }
-                let obs_dim = batch[0].0.len();
-                let mb = batch.len();
-                // Flatten obs into [mb, obs_dim], actions into
-                // [mb, num_action_dims]. Each batch row's action vec
-                // must already have length `num_action_dims` — that
-                // invariant is established at push-time in
-                // `collect_anticipatory_rollout` (#127).
-                let mut obs_flat = Vec::with_capacity(mb * obs_dim);
-                let mut acts_flat = Vec::with_capacity(mb * num_action_dims);
-                for (o, a) in &batch {
-                    debug_assert_eq!(
-                        a.len(),
-                        num_action_dims,
-                        "reservoir action vec length {} != num_action_dims {} for agent {}",
-                        a.len(),
-                        num_action_dims,
-                        i
-                    );
-                    obs_flat.extend_from_slice(o);
-                    acts_flat.extend_from_slice(a);
-                }
-                let obs_t = Tensor::<B, 2>::from_data(
-                    TensorData::new(obs_flat, [mb, obs_dim]),
-                    &self.device,
-                );
-                // Build the action tensor directly at shape
-                // `[mb, num_action_dims]` — no `unsqueeze_dim` step.
-                // For single-discrete (`MlpBurnPolicy`,
-                // `num_action_dims = 1`) this matches the prior
-                // shape exactly (the JointPolicy impl squeezes the
-                // trailing dim away). For multi-discrete
-                // (`MultiDiscreteMlpBurnPolicy`) this is required for
-                // the per-dim `slice([0..mb, i..i+1])` reads inside
-                // `evaluate_actions` to land in-bounds.
-                let acts_t: Tensor<B, 2, Int> = Tensor::<B, 2, Int>::from_data(
-                    TensorData::new(acts_flat, [mb, num_action_dims]),
-                    &self.device,
-                );
-                // Cross-entropy: -mean( log_softmax(logits)[gather(actions)] )
-                let policy = self.avg_policies[i]
-                    .take()
-                    .ok_or_else(|| anyhow!("AP policy {} is None mid-update", i))?;
-                // We don't have a direct logits method on the
-                // JointPolicy trait — but for both
-                // `MlpBurnPolicy` and `MultiDiscreteMlpBurnPolicy` the
-                // evaluate_actions_joint path returns log-probs over
-                // the *taken* actions, which is exactly what
-                // cross-entropy needs. For multi-discrete the returned
-                // log-prob is already the sum-across-dims (see
-                // `MultiDiscreteMlpBurnPolicy::evaluate_actions`), so
-                // `-mean(log_probs_taken)` IS the sum-of-per-head
-                // cross-entropy of a conditionally-independent factored
-                // distribution. No new `supervised_loss` method needed.
-                let (log_probs_taken, _, _) = policy.evaluate_actions_joint(obs_t, acts_t);
-                // Loss = -mean(log_probs_taken) → minimize.
-                let loss = log_probs_taken.neg().mean();
-                let loss_value = scalar_f64_avg_policy(loss.clone());
-                let mut grads = loss.backward();
-                let grads_params = GradientsParams::from_module(&mut grads, &policy);
-                let lr = self.avg_optimizers[i].learning_rate();
-                let updated = self.avg_optimizers[i].inner_mut().step(lr, policy, grads_params);
-                self.avg_policies[i] = Some(updated);
-                sum_loss += loss_value;
-                n_steps_done += 1;
-            }
-            if n_steps_done > 0 {
-                losses[i] = Some(sum_loss / n_steps_done as f64);
-            }
+        // Probe `num_action_dims` from the BR policy for each agent
+        // *before* the parallel section. PR #103 / issue #127: the AP
+        // policy shares the same factored-action shape as the BR policy,
+        // and `evaluate_actions_joint` expects actions of shape
+        // `[mb, num_action_dims]` for both `MlpBurnPolicy` (length-1
+        // columns) and `MultiDiscreteMlpBurnPolicy`
+        // (length-`num_action_dims` columns). Hoisting this read here
+        // releases the immutable `self.br_trainer` borrow so the rayon
+        // closures can take disjoint `&mut` borrows of the per-agent
+        // state below.
+        let num_action_dims: Vec<usize> = (0..num_agents)
+            .map(|i| self.br_trainer.policy(i).action_dims_joint().len())
+            .collect();
+
+        // Bind read-only field borrows into locals so the rayon closures
+        // capture *these* references and NOT the whole `&self` (which
+        // also holds the non-`Sync` factory closures). Mirrors the PSRO
+        // payoff-parallel path.
+        let mb_size = self.config.avg_policy_minibatch_size.max(1);
+        let coverage = self.config.avg_policy_min_reservoir_coverage;
+        let device = &self.device;
+
+        // Disjoint per-agent state: zip the three per-agent vectors so
+        // each rayon task owns exactly one agent's `(&mut reservoir,
+        // &mut policy, &mut optimizer)` triple.
+        let losses: Result<Vec<Option<f64>>> = self
+            .reservoirs
+            .par_iter_mut()
+            .zip(self.avg_policies.par_iter_mut())
+            .zip(self.avg_optimizers.par_iter_mut())
+            .zip(num_action_dims.par_iter())
+            .map(|(((reservoir, avg_policy), avg_optimizer), &n_dims)| {
+                train_one_average_policy::<B, P, O>(
+                    reservoir,
+                    avg_policy,
+                    avg_optimizer,
+                    n_dims,
+                    steps,
+                    mb_size,
+                    coverage,
+                    device,
+                )
+            })
+            .collect();
+        losses
+    }
+}
+
+/// Run the average-policy supervised steps for a single agent over its
+/// own (disjoint) reservoir, policy, and optimizer. Pulled out as a free
+/// function so [`NfspTrainer::train_average_policies`] can invoke it from
+/// inside a rayon parallel iterator with each task owning an independent
+/// set of `&mut` borrows. See that method's docstring for the
+/// borrow-splitting and determinism rationale.
+///
+/// Returns the per-agent mean loss across the supervised steps (`None`
+/// if no steps were taken, e.g. an empty reservoir).
+#[allow(clippy::too_many_arguments)]
+fn train_one_average_policy<B, P, O>(
+    reservoir: &mut ReservoirBuffer<(Vec<f32>, Vec<i64>)>,
+    avg_policy: &mut Option<P>,
+    avg_optimizer: &mut BurnOptimizer<B, P, O>,
+    num_action_dims: usize,
+    steps: usize,
+    mb_size: usize,
+    coverage: f32,
+    device: &B::Device,
+) -> Result<Option<f64>>
+where
+    B: AutodiffBackend,
+    P: JointPolicy<B>,
+    O: Optimizer<P, B>,
+{
+    if reservoir.is_empty() {
+        return Ok(None);
+    }
+    // Adaptive step floor (issue #199): when
+    // `avg_policy_min_reservoir_coverage > 0`, run enough supervised
+    // steps that the AP sees `coverage` full passes over the current
+    // reservoir, so a large reservoir is not starved by a tiny fixed
+    // step budget (the root cause of the `avg_ap_loss` pinned at
+    // `ln(num_joint_actions)` on bucket-brigade). The configured `steps`
+    // remains the floor.
+    let agent_steps = if coverage > 0.0 {
+        let res_len = reservoir.len();
+        let needed = (coverage as f64 * res_len as f64 / mb_size as f64).ceil() as usize;
+        steps.max(needed)
+    } else {
+        steps
+    };
+    let mut sum_loss = 0.0_f64;
+    let mut n_steps_done = 0usize;
+    for _ in 0..agent_steps {
+        // Draw from the reservoir's OWN seeded RNG (issue #234): AP
+        // sampling is agent-local-deterministic and invariant to the
+        // rayon thread count.
+        let batch = reservoir.sample_with_replacement(mb_size);
+        if batch.is_empty() {
+            continue;
         }
-        Ok(losses)
+        let obs_dim = batch[0].0.len();
+        let mb = batch.len();
+        // Flatten obs into [mb, obs_dim], actions into
+        // [mb, num_action_dims]. Each batch row's action vec must already
+        // have length `num_action_dims` — that invariant is established
+        // at push-time in `collect_anticipatory_rollout` (#127).
+        let mut obs_flat = Vec::with_capacity(mb * obs_dim);
+        let mut acts_flat = Vec::with_capacity(mb * num_action_dims);
+        for (o, a) in &batch {
+            debug_assert_eq!(
+                a.len(),
+                num_action_dims,
+                "reservoir action vec length {} != num_action_dims {}",
+                a.len(),
+                num_action_dims,
+            );
+            obs_flat.extend_from_slice(o);
+            acts_flat.extend_from_slice(a);
+        }
+        let obs_t = Tensor::<B, 2>::from_data(TensorData::new(obs_flat, [mb, obs_dim]), device);
+        // Build the action tensor directly at shape
+        // `[mb, num_action_dims]` — no `unsqueeze_dim` step. For
+        // single-discrete (`MlpBurnPolicy`, `num_action_dims = 1`) this
+        // matches the prior shape exactly (the JointPolicy impl squeezes
+        // the trailing dim away). For multi-discrete
+        // (`MultiDiscreteMlpBurnPolicy`) this is required for the per-dim
+        // `slice([0..mb, i..i+1])` reads inside `evaluate_actions` to
+        // land in-bounds.
+        let acts_t: Tensor<B, 2, Int> = Tensor::<B, 2, Int>::from_data(
+            TensorData::new(acts_flat, [mb, num_action_dims]),
+            device,
+        );
+        // Cross-entropy: -mean( log_softmax(logits)[gather(actions)] )
+        let policy = avg_policy.take().ok_or_else(|| anyhow!("AP policy is None mid-update"))?;
+        // We don't have a direct logits method on the JointPolicy trait —
+        // but for both `MlpBurnPolicy` and `MultiDiscreteMlpBurnPolicy`
+        // the evaluate_actions_joint path returns log-probs over the
+        // *taken* actions, which is exactly what cross-entropy needs. For
+        // multi-discrete the returned log-prob is already the
+        // sum-across-dims (see
+        // `MultiDiscreteMlpBurnPolicy::evaluate_actions`), so
+        // `-mean(log_probs_taken)` IS the sum-of-per-head cross-entropy
+        // of a conditionally-independent factored distribution. No new
+        // `supervised_loss` method needed.
+        let (log_probs_taken, _, _) = policy.evaluate_actions_joint(obs_t, acts_t);
+        // Loss = -mean(log_probs_taken) → minimize.
+        let loss = log_probs_taken.neg().mean();
+        let loss_value = scalar_f64_avg_policy(loss.clone());
+        let mut grads = loss.backward();
+        let grads_params = GradientsParams::from_module(&mut grads, &policy);
+        let lr = avg_optimizer.learning_rate();
+        let updated = avg_optimizer.inner_mut().step(lr, policy, grads_params);
+        *avg_policy = Some(updated);
+        sum_loss += loss_value;
+        n_steps_done += 1;
+    }
+    if n_steps_done > 0 {
+        Ok(Some(sum_loss / n_steps_done as f64))
+    } else {
+        Ok(None)
     }
 }
 
@@ -1697,6 +1785,100 @@ mod tests {
             loss_last < loss_first,
             "AP loss should decrease across supervised passes: \
              first={loss_first:.4}, last={loss_last:.4}"
+        );
+    }
+
+    /// Issue #234: the parallelized per-agent AP supervised loop must be
+    /// **deterministic for a fixed seed and invariant to the rayon thread
+    /// count**. AP minibatches are drawn from each reservoir's own seeded
+    /// RNG (`ReservoirBuffer::rng`), never the shared `self.rng`, so each
+    /// agent consumes exactly its own RNG stream regardless of how the
+    /// rayon tasks interleave.
+    ///
+    /// We build two structurally-identical trainers (same `NfspConfig`
+    /// seed), seed their reservoirs with the same deterministic data, then
+    /// run the full multi-pass AP trajectory on each — one forced onto a
+    /// single rayon worker thread, the other onto four. The per-agent loss
+    /// trajectories must be **bit-identical**.
+    #[test]
+    fn test_nfsp_ap_training_deterministic_across_thread_counts() {
+        use crate::policy::multi_discrete_mlp::MultiDiscreteMlpBurnPolicy;
+
+        let action_dims = vec![10usize, 2, 2]; // joint cardinality = 40
+        let obs_dim = 4usize;
+
+        // Build a trainer + seed its reservoirs identically, then run a
+        // fixed multi-pass AP trajectory inside a rayon pool of `threads`
+        // workers. Returns the full per-pass, per-agent loss trajectory.
+        let run_trajectory = |threads: usize| -> Vec<Vec<Option<f64>>> {
+            let device: NdArrayDevice = Default::default();
+            let nfsp_config = NfspConfig {
+                max_iterations: 0,
+                anticipatory_param: 1.0,
+                reservoir_capacity: 4_096,
+                br_train_steps_per_iteration: 0,
+                avg_policy_train_steps_per_iteration: 4,
+                avg_policy_minibatch_size: 64,
+                avg_policy_lr: 5e-3,
+                avg_policy_min_reservoir_coverage: 2.0,
+                br_reward_scale: 1.0,
+                seed: 234,
+            };
+            let joint_config = JointTrainerConfig {
+                num_agents: 2,
+                rollout_steps: 8,
+                n_epochs: 1,
+                minibatch_size: 32,
+                ..Default::default()
+            };
+            let dims_for_factory = action_dims.clone();
+            let mut trainer = NfspTrainer::new(
+                nfsp_config,
+                joint_config,
+                device,
+                move |dev: &NdArrayDevice, seed: u64| {
+                    MultiDiscreteMlpBurnPolicy::<B>::new_seeded(
+                        obs_dim,
+                        dims_for_factory.clone(),
+                        16,
+                        seed,
+                        dev,
+                    )
+                },
+                || BurnOptimizer::new(AdamConfig::new().init(), 5e-3),
+                MatchingPennies::new,
+            )
+            .expect("NfspTrainer::new should succeed");
+
+            // Seed both agents' reservoirs with deterministic, distinct
+            // non-uniform targets so the AP actually moves and both agents
+            // exercise the parallel path.
+            let fixed_obs = vec![0.25_f32; obs_dim];
+            for _ in 0..256 {
+                trainer.reservoirs[0].push((fixed_obs.clone(), vec![3, 1, 0]));
+                trainer.reservoirs[1].push((fixed_obs.clone(), vec![7, 0, 1]));
+            }
+
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .expect("rayon pool should build");
+            pool.install(|| (0..6).map(|_| trainer.train_average_policies().unwrap()).collect())
+        };
+
+        let serial = run_trajectory(1);
+        let parallel = run_trajectory(4);
+
+        assert_eq!(
+            serial, parallel,
+            "AP loss trajectory must be bit-identical across rayon thread counts \
+             (per-reservoir RNG, no shared self.rng): serial={serial:?}, parallel={parallel:?}"
+        );
+        // Sanity: the trajectory is non-trivial (both agents produced
+        // losses), so the equality above is meaningful.
+        assert!(
+            serial.iter().all(|pass| pass.iter().all(|l| l.is_some())),
+            "both agents should produce a loss every pass: {serial:?}"
         );
     }
 
