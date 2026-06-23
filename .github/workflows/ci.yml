@@ -78,13 +78,7 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@nightly
       - name: cargo test --features training
-        # `--test-threads=1` avoids rayon oversubscription on the 2-core CI
-        # runners: the #232 PSRO best-response loop (and other `par_iter`
-        # paths) dispatch heavy work to the global rayon pool, so running
-        # multiple test fns concurrently would oversubscribe the 2 cores and
-        # roughly double the suite wall-clock. Serial test fns each get the
-        # full pool, keeping the suite near its pre-#232 baseline.
-        run: cargo test --features training -- --test-threads=1
+        run: cargo test --features training
 
   # Same on macOS, to catch any platform-specific Burn issues early.
   test_macos:
@@ -99,13 +93,7 @@ jobs:
         run: cargo check --features training
       # Run tests as a separate step so a hang doesn't mask the check result.
       - name: cargo test --features training
-        # `--test-threads=1` avoids rayon oversubscription on the 2-core CI
-        # runners: the #232 PSRO best-response loop (and other `par_iter`
-        # paths) dispatch heavy work to the global rayon pool, so running
-        # multiple test fns concurrently would oversubscribe the 2 cores and
-        # roughly double the suite wall-clock. Serial test fns each get the
-        # full pool, keeping the suite near its pre-#232 baseline.
-        run: cargo test --features training -- --test-threads=1
+        run: cargo test --features training
 
   # Documentation
   docs:
