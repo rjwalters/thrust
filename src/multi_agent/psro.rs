@@ -3439,82 +3439,130 @@ mod tests {
         }
     }
 
+    /// Run a multi-iteration PSRO trainer (so the parallel BR loop
+    /// executes several times) under a rayon pool of `threads` threads,
+    /// and return the flattened per-agent population policy weights.
+    ///
+    /// `max_iterations` / `rollout_steps` / `hidden` / `br_train_steps` /
+    /// `payoff_eval_episodes` are parameters so callers can pick a tiny
+    /// always-on smoke workload or a heavier `#[ignore]`d proof. Both run
+    /// the same code path (the #232 par_iter BR loop with `num_agents > 1`).
+    #[cfg(test)]
+    fn psro_populations_under_threads(
+        threads: usize,
+        max_iterations: usize,
+        rollout_steps: usize,
+        hidden: usize,
+        br_train_steps: usize,
+        payoff_eval_episodes: usize,
+    ) -> Vec<Vec<Vec<f32>>> {
+        let device: NdArrayDevice = Default::default();
+        let psro_config = PsroConfig {
+            max_iterations,
+            max_population_size: 50,
+            br_train_steps_per_iteration: br_train_steps,
+            payoff_eval_episodes,
+            max_payoff_evals_per_iteration: None,
+            br_reward_scale: 1.0,
+            seed: 0x5EED_2323,
+        };
+        let joint_config = JointTrainerConfig {
+            num_agents: 2,
+            rollout_steps,
+            n_epochs: 1,
+            minibatch_size: rollout_steps.max(1),
+            ..Default::default()
+        };
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .expect("build rayon pool");
+        pool.install(|| {
+            let mut trainer = PsroTrainer::new(
+                psro_config.clone(),
+                joint_config.clone(),
+                Box::new(FictitiousPlayMetaSolver::new(200)) as Box<dyn MetaSolver>,
+                device,
+                move |dev: &NdArrayDevice, seed: u64| {
+                    MlpBurnPolicy::<B>::new_seeded(
+                        MatchingPennies::OBS_DIM,
+                        MatchingPennies::ACTION_DIM,
+                        hidden,
+                        seed,
+                        dev,
+                    )
+                },
+                || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
+                MatchingPennies::new,
+            )
+            .expect("PsroTrainer::new should succeed");
+            trainer.run_silent().expect("PSRO run should not error");
+
+            // Snapshot every agent's full population as flattened
+            // policy weights (forward-on-zero-obs fingerprint).
+            let num_agents = 2;
+            (0..num_agents)
+                .map(|a| trainer.populations(a).iter().map(read_policy_weight).collect::<Vec<_>>())
+                .collect()
+        })
+    }
+
     /// The rayon-parallel best-response loop (issue #232) is
     /// **thread-count-invariant**: for a fixed seed, the per-agent
-    /// populations produced by a full PSRO run are byte-identical whether
-    /// the BR loop runs under a 1-thread or a 4-thread rayon pool.
+    /// populations produced by a PSRO run are byte-identical whether the
+    /// BR loop runs under a 1-thread or a 4-thread rayon pool.
     ///
-    /// This mirrors the thread-count-invariance assertion of the
-    /// payoff-eval determinism test. It is the load-bearing guarantee of
-    /// #232: each BR draws its opponent indices + init seed in fixed agent
-    /// order before the parallel region and runs under a per-agent local
-    /// RNG seeded from `(config.seed, active_agent)`, so scheduling cannot
+    /// This is the always-on smoke at a deliberately tiny workload (2
+    /// iterations, 1 BR train step, 8 rollout steps, hidden=4, 1 payoff
+    /// episode) so it costs a few seconds in the default debug test lane
+    /// rather than ~85s (#232 review). It still exercises the real #232
+    /// code path — two agents, so the `par_iter` BR loop runs concurrently
+    /// under 4 threads — and keeps the load-bearing assertion:
+    /// byte-identical per-agent populations under 1 vs 4 threads.
+    ///
+    /// Each BR draws its opponent indices + init seed in fixed agent order
+    /// before the parallel region and runs under a per-agent local RNG
+    /// seeded from `(config.seed, active_agent)`, so scheduling cannot
     /// affect the result. (Note: the result is intentionally *not*
     /// bit-identical to the pre-#232 serial-RNG runs — the RNG threading
     /// changed — only reproducible for a given seed across thread counts.)
+    /// The heavier multi-iteration proof lives in
+    /// `test_best_response_parallel_thread_count_invariant_thorough`.
     #[test]
     fn test_best_response_parallel_thread_count_invariant() {
-        // Run a multi-iteration PSRO trainer (so the BR loop executes
-        // several times) under a rayon pool of `threads` threads, and
-        // return the flattened per-agent population policy weights.
-        fn run_under_threads(threads: usize) -> Vec<Vec<Vec<f32>>> {
-            let device: NdArrayDevice = Default::default();
-            let psro_config = PsroConfig {
-                max_iterations: 3,
-                max_population_size: 50,
-                br_train_steps_per_iteration: 2,
-                payoff_eval_episodes: 4,
-                max_payoff_evals_per_iteration: None,
-                br_reward_scale: 1.0,
-                seed: 0x5EED_2323,
-            };
-            let joint_config = JointTrainerConfig {
-                num_agents: 2,
-                rollout_steps: 32,
-                n_epochs: 1,
-                minibatch_size: 32,
-                ..Default::default()
-            };
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .expect("build rayon pool");
-            pool.install(|| {
-                let mut trainer = PsroTrainer::new(
-                    psro_config.clone(),
-                    joint_config.clone(),
-                    Box::new(FictitiousPlayMetaSolver::new(200)) as Box<dyn MetaSolver>,
-                    device,
-                    |dev: &NdArrayDevice, seed: u64| {
-                        MlpBurnPolicy::<B>::new_seeded(
-                            MatchingPennies::OBS_DIM,
-                            MatchingPennies::ACTION_DIM,
-                            16,
-                            seed,
-                            dev,
-                        )
-                    },
-                    || BurnOptimizer::new(AdamConfig::new().init(), 1e-3),
-                    MatchingPennies::new,
-                )
-                .expect("PsroTrainer::new should succeed");
-                trainer.run_silent().expect("PSRO run should not error");
-
-                // Snapshot every agent's full population as flattened
-                // policy weights (forward-on-zero-obs fingerprint).
-                let num_agents = 2;
-                (0..num_agents)
-                    .map(|a| {
-                        trainer.populations(a).iter().map(read_policy_weight).collect::<Vec<_>>()
-                    })
-                    .collect()
-            })
-        }
-
-        let one = run_under_threads(1);
-        let four = run_under_threads(4);
+        let one = psro_populations_under_threads(1, 2, 8, 4, 1, 1);
+        let four = psro_populations_under_threads(4, 2, 8, 4, 1, 1);
 
         // Sanity: the BR loop actually ran and grew the populations.
+        assert!(
+            one[0].len() >= 2,
+            "expected populations to grow over the iterations (got {})",
+            one[0].len()
+        );
+        assert_eq!(
+            one, four,
+            "PSRO best-response output must be byte-identical across thread counts (1 vs 4)"
+        );
+    }
+
+    /// Thorough multi-iteration variant of the thread-count-invariance
+    /// guarantee at a realistic workload (3 iterations, larger rollouts +
+    /// hidden size), which grows deeper populations across more parallel
+    /// BR rounds.
+    ///
+    /// `#[ignore]`d per the #208/#209 convention: a full 3-iteration PSRO
+    /// run twice costs ~85s in the default debug test lane and dominated CI
+    /// Tests jobs (#232 review). The always-on
+    /// `test_best_response_parallel_thread_count_invariant` smoke keeps the
+    /// invariance assertion on every CI run at a tiny workload; run this
+    /// heavier proof on demand with
+    /// `cargo test --features training -- --ignored` (prefer `--release`).
+    #[test]
+    #[ignore = "multi-iteration PSRO thread-count-invariance run; opt in with --ignored (prefer --release)"]
+    fn test_best_response_parallel_thread_count_invariant_thorough() {
+        let one = psro_populations_under_threads(1, 3, 32, 16, 2, 4);
+        let four = psro_populations_under_threads(4, 3, 32, 16, 2, 4);
+
         assert!(
             one[0].len() >= 4,
             "expected populations to grow over 3 iterations (got {})",
