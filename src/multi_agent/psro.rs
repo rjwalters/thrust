@@ -3473,11 +3473,15 @@ mod tests {
             minibatch_size: rollout_steps.max(1),
             ..Default::default()
         };
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build()
-            .expect("build rayon pool");
-        pool.install(|| {
+        // `threads == 0` runs under the ambient/global rayon pool (no
+        // bespoke pool). The always-on smoke uses this: wrapping a full PSRO
+        // trainer (whose BR loop itself calls `par_iter`) inside a dedicated
+        // multi-thread pool nests parallelism and oversubscribes 2-core CI
+        // runners, which hung the Tests job (#232 review). `threads >= 1`
+        // builds a dedicated pool for the heavier `#[ignore]`d
+        // thread-count-invariance proof, which runs on demand on many-core
+        // hosts.
+        let run = move || -> Vec<Vec<Vec<f32>>> {
             let mut trainer = PsroTrainer::new(
                 psro_config.clone(),
                 joint_config.clone(),
@@ -3504,44 +3508,53 @@ mod tests {
             (0..num_agents)
                 .map(|a| trainer.populations(a).iter().map(read_policy_weight).collect::<Vec<_>>())
                 .collect()
-        })
+        };
+        if threads == 0 {
+            run()
+        } else {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .expect("build rayon pool");
+            pool.install(run)
+        }
     }
 
-    /// The rayon-parallel best-response loop (issue #232) is
-    /// **thread-count-invariant**: for a fixed seed, the per-agent
-    /// populations produced by a PSRO run are byte-identical whether the
-    /// BR loop runs under a 1-thread or a 4-thread rayon pool.
+    /// Always-on smoke for the rayon-parallel best-response loop (issue
+    /// #232) at a deliberately tiny workload (2 iterations, 1 BR train step,
+    /// 8 rollout steps, hidden=4, 1 payoff episode). It runs the real #232
+    /// code path — two agents, so the `par_iter` BR loop runs — under the
+    /// **ambient** global rayon pool (`threads == 0`, no bespoke pool), then
+    /// runs it again and asserts byte-identical results.
     ///
-    /// This is the always-on smoke at a deliberately tiny workload (2
-    /// iterations, 1 BR train step, 8 rollout steps, hidden=4, 1 payoff
-    /// episode) so it costs a few seconds in the default debug test lane
-    /// rather than ~85s (#232 review). It still exercises the real #232
-    /// code path — two agents, so the `par_iter` BR loop runs concurrently
-    /// under 4 threads — and keeps the load-bearing assertion:
-    /// byte-identical per-agent populations under 1 vs 4 threads.
+    /// Why ambient-pool + a repeat run rather than a 1-vs-4-thread compare:
+    /// wrapping a full PSRO trainer (whose BR loop itself calls `par_iter`)
+    /// inside a dedicated 4-thread pool nests parallelism and oversubscribes
+    /// 2-core CI runners, which hung the Tests job (#232 review). This keeps
+    /// cheap, deterministic always-on coverage of the parallel path; the
+    /// cross-thread-count (1 vs 4) invariance proof lives in the
+    /// `#[ignore]`d `test_best_response_parallel_thread_count_invariant_thorough`.
     ///
     /// Each BR draws its opponent indices + init seed in fixed agent order
     /// before the parallel region and runs under a per-agent local RNG
     /// seeded from `(config.seed, active_agent)`, so scheduling cannot
-    /// affect the result. (Note: the result is intentionally *not*
-    /// bit-identical to the pre-#232 serial-RNG runs — the RNG threading
-    /// changed — only reproducible for a given seed across thread counts.)
-    /// The heavier multi-iteration proof lives in
-    /// `test_best_response_parallel_thread_count_invariant_thorough`.
+    /// affect the result. (The result is intentionally *not* bit-identical
+    /// to the pre-#232 serial-RNG runs — the RNG threading changed — only
+    /// reproducible for a given seed.)
     #[test]
-    fn test_best_response_parallel_thread_count_invariant() {
-        let one = psro_populations_under_threads(1, 2, 8, 4, 1, 1);
-        let four = psro_populations_under_threads(4, 2, 8, 4, 1, 1);
+    fn test_best_response_parallel_smoke() {
+        let a = psro_populations_under_threads(0, 2, 8, 4, 1, 1);
+        let b = psro_populations_under_threads(0, 2, 8, 4, 1, 1);
 
         // Sanity: the BR loop actually ran and grew the populations.
         assert!(
-            one[0].len() >= 2,
+            a[0].len() >= 2,
             "expected populations to grow over the iterations (got {})",
-            one[0].len()
+            a[0].len()
         );
         assert_eq!(
-            one, four,
-            "PSRO best-response output must be byte-identical across thread counts (1 vs 4)"
+            a, b,
+            "PSRO best-response output must be deterministic for a fixed seed"
         );
     }
 
@@ -3551,12 +3564,12 @@ mod tests {
     /// BR rounds.
     ///
     /// `#[ignore]`d per the #208/#209 convention: a full 3-iteration PSRO
-    /// run twice costs ~85s in the default debug test lane and dominated CI
-    /// Tests jobs (#232 review). The always-on
-    /// `test_best_response_parallel_thread_count_invariant` smoke keeps the
-    /// invariance assertion on every CI run at a tiny workload; run this
-    /// heavier proof on demand with
-    /// `cargo test --features training -- --ignored` (prefer `--release`).
+    /// run twice under bespoke multi-thread pools costs ~85s and, on 2-core
+    /// CI runners, oversubscribed and hung the Tests job (#232 review). The
+    /// always-on `test_best_response_parallel_smoke` keeps cheap determinism
+    /// coverage on every CI run; run this heavier cross-thread-count proof on
+    /// demand with `cargo test --features training -- --ignored` (prefer
+    /// `--release`, ideally on a many-core host).
     #[test]
     #[ignore = "multi-iteration PSRO thread-count-invariance run; opt in with --ignored (prefer --release)"]
     fn test_best_response_parallel_thread_count_invariant_thorough() {
