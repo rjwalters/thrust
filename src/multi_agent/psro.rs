@@ -3533,7 +3533,8 @@ mod tests {
     /// 2-core CI runners, which hung the Tests job (#232 review). This keeps
     /// cheap, deterministic always-on coverage of the parallel path; the
     /// cross-thread-count (1 vs 4) invariance proof lives in the
-    /// `#[ignore]`d `test_best_response_parallel_thread_count_invariant_thorough`.
+    /// `#[ignore]`d
+    /// `test_best_response_parallel_thread_count_invariant_thorough`.
     ///
     /// Each BR draws its opponent indices + init seed in fixed agent order
     /// before the parallel region and runs under a per-agent local RNG
@@ -3552,10 +3553,7 @@ mod tests {
             "expected populations to grow over the iterations (got {})",
             a[0].len()
         );
-        assert_eq!(
-            a, b,
-            "PSRO best-response output must be deterministic for a fixed seed"
-        );
+        assert_eq!(a, b, "PSRO best-response output must be deterministic for a fixed seed");
     }
 
     /// Thorough multi-iteration variant of the thread-count-invariance
