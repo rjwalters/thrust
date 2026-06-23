@@ -65,6 +65,17 @@ crate-type = ["cdylib", "rlib"]
 # GPU backends.
 burn = { version = "0.21", default-features = false, features = ["std", "ndarray", "autodiff"], optional = true }
 
+# Direct handle on the NdArray backend crate that `burn` already pulls in. The
+# `burn` umbrella crate re-exports the BLAS backends (`accelerate`/`openblas`/
+# ...) but does NOT re-export the pure-Rust `multi-threads` feature, which is the
+# only threaded-matmul option that needs no system BLAS library. We declare the
+# crate here (same version, off by default) purely so the `blas-threaded`
+# feature can flip `burn-ndarray/multi-threads` on. Cargo unifies features
+# across the two dependency paths, so this toggles threading on the *same*
+# compiled `NdArray` backend the rest of the code already uses via
+# `burn::backend::NdArray` — no source changes required.
+burn-ndarray = { version = "0.21", default-features = false, optional = true }
+
 # Async runtime for vectorization (not available in WASM)
 tokio = { version = "1", features = ["full", "rt-multi-thread"], optional = true }
 
@@ -125,6 +136,24 @@ default = ["training"]
 # without any external system libraries. GPU backends are opt-in via
 # additional feature flags below.
 training = ["dep:burn", "tokio", "rayon", "tracing", "tracing-subscriber", "crossbeam-channel", "chrono"]
+# Threaded matmul for the CPU NdArray backend (OFF by default). Enables
+# `burn-ndarray/multi-threads`, which turns on `matrixmultiply/threading` +
+# `ndarray/rayon` — both PURE RUST (matrixmultiply pulls in `thread-tree` +
+# `num_cpus`). No system BLAS library is required, so this links cleanly on a
+# bare Ubuntu 24.04 node (no apt install) as well as macOS. Intended for the
+# batched phases: the PPO update (src/multi_agent/joint.rs) and the average-
+# policy supervised training (src/multi_agent/nfsp.rs), where matmuls are large
+# enough to amortize thread dispatch.
+#
+# Compose with `training`, e.g. `--features "training,blas-threaded"`. Tune the
+# worker count with RAYON_NUM_THREADS / matrixmultiply's pool sizing.
+#
+# REPRODUCIBILITY CAVEAT: threaded matmul changes the order of floating-point
+# reductions, so bit-exact results may differ run-to-run and from the single-
+# threaded path. CI and the default build stay on the deterministic pure-Rust
+# single-threaded path; only enable this for throughput-oriented runs where
+# bit-reproducibility is not required.
+blas-threaded = ["dep:burn-ndarray", "burn-ndarray/multi-threads"]
 # Burn wgpu backend — cross-platform GPU (Vulkan/Metal/DX12/WebGPU).
 # Compose with `training`, e.g. `--features "training,wgpu"`.
 wgpu = ["burn?/wgpu"]
