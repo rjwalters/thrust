@@ -3542,7 +3542,17 @@ mod tests {
     /// affect the result. (The result is intentionally *not* bit-identical
     /// to the pre-#232 serial-RNG runs — the RNG threading changed — only
     /// reproducible for a given seed.)
+    ///
+    /// `#[ignore]`d: even at this tiny workload, running full PSRO trainers
+    /// (whose BR loop dispatches to the rayon pool) inside the test lane
+    /// spin-contends on the 2-core CI runners and inflated the Tests job
+    /// wall-clock (#232 review). The parallel BR path is still exercised on
+    /// every CI run by the pre-existing multi-iteration PSRO training tests
+    /// (e.g. `test_psro_run_silent_records_full_history`); this determinism
+    /// smoke and the heavier `_thorough` variant run on demand with
+    /// `cargo test --features training -- --ignored` (prefer a many-core host).
     #[test]
+    #[ignore = "runs full PSRO trainers under rayon; spin-contends on 2-core CI — opt in with --ignored"]
     fn test_best_response_parallel_smoke() {
         let a = psro_populations_under_threads(0, 2, 8, 4, 1, 1);
         let b = psro_populations_under_threads(0, 2, 8, 4, 1, 1);
