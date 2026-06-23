@@ -236,8 +236,7 @@ where
         // the protocol the workshop paper's `gap_closed` baseline is
         // computed against.
         let mut joint_actions: Vec<Vec<i64>> = Vec::with_capacity(NUM_AGENTS);
-        for i in 0..NUM_AGENTS {
-            let obs_row = &last_obs[i];
+        for (i, obs_row) in last_obs.iter().enumerate().take(NUM_AGENTS) {
             assert_eq!(obs_row.len(), obs_dim);
             let obs_tensor =
                 Tensor::<B, 2>::from_data(TensorData::new(obs_row.clone(), [1, obs_dim]), device);
@@ -422,7 +421,7 @@ fn test_psro_beats_ppo_on_no_convergence_cells() {
             psro_config,
             joint_config,
             meta_solver,
-            device.clone(),
+            device,
             policy_factory,
             optimizer_factory,
             env_factory,

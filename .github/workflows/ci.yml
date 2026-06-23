@@ -29,7 +29,8 @@ jobs:
         run: cargo fmt -- --check
 
   # Lint with clippy, denying all warnings, across the full training build
-  # (lib, tests, examples). Keeps clippy debt from accumulating silently.
+  # (lib, tests, examples) and the env-bucket-brigade feature combo. Keeps
+  # clippy debt from accumulating silently on either feature set.
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -42,6 +43,12 @@ jobs:
           components: clippy
       - name: cargo clippy --all-targets --features training -- -D warnings
         run: cargo clippy --all-targets --features training -- -D warnings
+      # Also lint the optional env-bucket-brigade feature, which pulls in the
+      # bucket-brigade-core submodule (initialised by submodules: recursive
+      # above). Keeps this feature combo's clippy debt from accumulating
+      # silently the way the base gate does for `training`.
+      - name: cargo clippy --all-targets --features "training,env-bucket-brigade" -- -D warnings
+        run: cargo clippy --all-targets --features "training,env-bucket-brigade" -- -D warnings
 
   # Cheap "does it parse" check without the training stack.
   # `--no-default-features` drops the `training` feature (and thus `burn`).
