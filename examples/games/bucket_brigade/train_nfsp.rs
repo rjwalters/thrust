@@ -215,13 +215,29 @@ fn main() -> Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.01);
+    // Issue #239: the BR oracle did not learn on bucket-brigade. Root cause
+    // was the raw-scale value-loss gradient swamping the policy heads on the
+    // shared actor-critic trunk, compounded by dead grad-clip config and BR
+    // undertraining (one 256-sample minibatch per epoch). The knobs below
+    // address that; all are env-overridable so the A/B harness in #239 can
+    // sweep them.
+    //   * `VF_COEF` lowers the value-loss weight (0.5 -> 0.05) so the critic
+    //     gradient no longer dominates the shared trunk.
+    //   * `BR_TRAIN_STEPS` runs the PPO update more than once per iteration.
+    //   * grad-clip (`max_grad_norm`, default 0.5) is now actually applied in the
+    //     joint update, and the update iterates ALL minibatches per epoch.
+    let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.05);
+    let br_train_steps: usize =
+        std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
     tracing::info!("  ap_coverage      = {ap_coverage} (issue #199 adaptive AP-step floor)");
     tracing::info!("  br_reward_scale  = {br_reward_scale} (issue #199 payoff rescale)");
+    tracing::info!("  vf_coef          = {vf_coef} (issue #239 value-loss weight)");
+    tracing::info!("  br_train_steps   = {br_train_steps} (issue #239 BR updates/iter)");
     let nfsp_config = NfspConfig {
         max_iterations: total_iterations,
         anticipatory_param: 0.1,
         reservoir_capacity: 16_384,
-        br_train_steps_per_iteration: 1,
+        br_train_steps_per_iteration: br_train_steps,
         avg_policy_train_steps_per_iteration: 8,
         avg_policy_minibatch_size: 64,
         avg_policy_lr: 5e-3,
@@ -234,6 +250,9 @@ fn main() -> Result<()> {
         rollout_steps,
         n_epochs: 4,
         minibatch_size: 256,
+        vf_coef,
+        // Issue #239: consume the full rollout instead of one 256-sample draw.
+        iterate_all_minibatches: true,
         ..Default::default()
     };
 

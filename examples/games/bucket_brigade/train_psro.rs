@@ -240,6 +240,13 @@ fn main() -> Result<()> {
         .ok()
         .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    // Issue #239: BR-oracle learning knobs (see train_nfsp.rs for the full
+    // root-cause note). `VF_COEF` lowers the value-loss weight off the shared
+    // trunk; `BR_TRAIN_STEPS` runs more PPO updates per iteration; grad-clip
+    // (`max_grad_norm`) is now applied and the update walks all minibatches.
+    let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.05);
+    let br_train_steps: usize =
+        std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
 
     tracing::info!("Starting PSRO bucket-brigade training (Burn backend: {BACKEND_LABEL})");
     tracing::info!("  cell             = {cell} (β={beta}, κ={kappa}, c={cost})");
@@ -289,10 +296,12 @@ fn main() -> Result<()> {
     tracing::info!("  obs_dim          = {obs_dim}");
     tracing::info!("  action_dims      = [{NUM_HOUSES}, 2, 2]");
 
+    tracing::info!("  vf_coef          = {vf_coef} (issue #239 value-loss weight)");
+    tracing::info!("  br_train_steps   = {br_train_steps} (issue #239 BR updates/iter)");
     let psro_config = PsroConfig {
         max_iterations: total_iterations,
         max_population_size: 50,
-        br_train_steps_per_iteration: 1,
+        br_train_steps_per_iteration: br_train_steps,
         payoff_eval_episodes: 1,
         max_payoff_evals_per_iteration,
         br_reward_scale,
@@ -303,6 +312,9 @@ fn main() -> Result<()> {
         rollout_steps,
         n_epochs: 4,
         minibatch_size: 256,
+        vf_coef,
+        // Issue #239: consume the full rollout instead of one 256-sample draw.
+        iterate_all_minibatches: true,
         ..Default::default()
     };
     let meta_solver: Box<dyn MetaSolver> = Box::new(
