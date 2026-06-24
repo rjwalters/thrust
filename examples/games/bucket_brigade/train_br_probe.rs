@@ -158,6 +158,15 @@ fn main() -> Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .filter(|v| *v > 0.0);
+    // Issue #251 throughput lever: cap the number of minibatch gradient steps
+    // per epoch in the BR PPO update. `None` (default) keeps the #239
+    // all-minibatch full-rollout coverage; a small value (e.g. 2) trades a
+    // bounded amount of BR fit for a per-iter speedup. Mirrored here so the
+    // fast single-BR A/B stays representative of the NFSP/PSRO BR cost.
+    let max_minibatches_per_epoch: Option<usize> = std::env::var("BR_MAX_MINIBATCHES_PER_EPOCH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|v| *v > 0);
 
     tracing::info!("Single-BR probe (issue #241) — Burn backend: {BACKEND_LABEL}");
     tracing::info!("  cell             = {cell} (β={beta}, κ={kappa}, c={cost})");
@@ -173,6 +182,14 @@ fn main() -> Result<()> {
         }
         None => {
             tracing::info!("  critic_lr        = (unset — single shared actor+critic optimizer)")
+        }
+    }
+    match max_minibatches_per_epoch {
+        Some(cap) => tracing::info!(
+            "  br_max_mb/epoch  = {cap} (issue #251 throughput lever: capped minibatch subsample)"
+        ),
+        None => {
+            tracing::info!("  br_max_mb/epoch  = (unset — full #239 all-minibatch coverage)")
         }
     }
 
@@ -214,6 +231,8 @@ fn main() -> Result<()> {
         iterate_all_minibatches: true,
         // #239 fix #4: dedicated critic LR (None => single shared optimizer).
         critic_lr,
+        // #251: optional cap on minibatch steps/epoch (None => full coverage).
+        max_minibatches_per_epoch,
         ..Default::default()
     };
 
@@ -248,6 +267,13 @@ fn main() -> Result<()> {
 
     tracing::info!("------------------------------------------------------------");
     let training_start = std::time::Instant::now();
+    // Issue #251 AC#1 profile: coarse wall-clock attribution of the BR phase.
+    // The single-BR probe isolates exactly the NFSP/PSRO inner work (rollout
+    // collection vs. PPO update) over the un-batchable bucket-brigade rollout;
+    // meta-solve is PSRO-only and separate. We accumulate per-phase time and
+    // report the split at the end.
+    let mut rollout_time = std::time::Duration::ZERO;
+    let mut update_time = std::time::Duration::ZERO;
 
     for iter in 1..=iterations {
         let mut last_stats = None;
@@ -257,7 +283,9 @@ fn main() -> Result<()> {
         let mut ep_count = 0_usize;
 
         for _ in 0..br_train_steps {
+            let rollout_start = std::time::Instant::now();
             let mut rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
+            rollout_time += rollout_start.elapsed();
 
             // Mean episode return for the BR agent, computed from the raw
             // (pre-scale) rollout rewards so the logged value is in the
@@ -289,6 +317,7 @@ fn main() -> Result<()> {
                 }
             }
 
+            let update_start = std::time::Instant::now();
             let stats = trainer.update_with_active_agents(
                 &rollout,
                 &active_mask,
@@ -297,6 +326,7 @@ fn main() -> Result<()> {
                     None
                 },
             )?;
+            update_time += update_start.elapsed();
             last_stats = Some(stats);
         }
 
@@ -323,10 +353,26 @@ fn main() -> Result<()> {
     }
 
     tracing::info!("------------------------------------------------------------");
+    let total = training_start.elapsed().as_secs_f64();
+    let rollout_s = rollout_time.as_secs_f64();
+    let update_s = update_time.as_secs_f64();
+    let measured = rollout_s + update_s;
+    let pct = |x: f64| {
+        if measured > 0.0 {
+            100.0 * x / measured
+        } else {
+            0.0
+        }
+    };
+    tracing::info!("Probe complete.  iterations={}  time={:.1}s", iterations, total);
+    // Issue #251 AC#1 profile breakdown (BR phase: rollout vs PPO update).
     tracing::info!(
-        "Probe complete.  iterations={}  time={:.1}s",
-        iterations,
-        training_start.elapsed().as_secs_f64()
+        "Profile (issue #251): rollout={:.1}s ({:.0}%)  br_update={:.1}s ({:.0}%)  [of {:.1}s measured]",
+        rollout_s,
+        pct(rollout_s),
+        update_s,
+        pct(update_s),
+        measured
     );
     tracing::info!(
         "Read the per-iter `ev` column: near 0/negative = critic not fitting; → 1 = critic fits."

@@ -579,27 +579,62 @@ where
         for iter in 1..=self.config.max_iterations {
             let mut last_br_stats: Option<JointStats> = None;
 
+            // Issue #251 AC#1 profile: coarse wall-clock attribution of the
+            // outer loop's three phases (BR rollout vs BR PPO update vs AP
+            // supervised training). Cheap `Instant` accumulators, logged once
+            // per iteration so the dominant cost is visible without any
+            // heavyweight tooling.
+            let mut br_rollout_time = std::time::Duration::ZERO;
+            let mut br_update_time = std::time::Duration::ZERO;
+
             for _ in 0..self.config.br_train_steps_per_iteration {
                 // Collect rollout with η-anticipatory mixing and
                 // reservoir push.
+                let rollout_start = std::time::Instant::now();
                 let rollout = self.collect_anticipatory_rollout()?;
+                br_rollout_time += rollout_start.elapsed();
                 // Drive both BR policies via a single joint update
                 // (active mask = [true, true]). Heinrich & Silver §3
                 // Algorithm 1 runs the BR updates jointly per
                 // iteration; this also matches PSRO's freeze-N-1 path
                 // when N = 2 and both agents are "active".
                 let active = vec![true; self.joint_config.num_agents];
+                let update_start = std::time::Instant::now();
                 let bs = self.br_trainer.update_with_active_agents(
                     &rollout,
                     &active,
                     &mut self.rng,
                     |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> { None },
                 )?;
+                br_update_time += update_start.elapsed();
                 last_br_stats = Some(bs);
             }
 
             // Average-policy supervised step.
+            let ap_start = std::time::Instant::now();
             let avg_losses = self.train_average_policies()?;
+            let ap_time = ap_start.elapsed();
+
+            // Issue #251 AC#1: per-iteration phase breakdown.
+            let br_rollout_s = br_rollout_time.as_secs_f64();
+            let br_update_s = br_update_time.as_secs_f64();
+            let ap_s = ap_time.as_secs_f64();
+            let phase_total = br_rollout_s + br_update_s + ap_s;
+            let pct = |x: f64| {
+                if phase_total > 0.0 {
+                    100.0 * x / phase_total
+                } else {
+                    0.0
+                }
+            };
+            tracing::info!(
+                "iter {iter} phase timing (issue #251): br_rollout={br_rollout_s:.1}s ({:.0}%)  \
+                 br_update={br_update_s:.1}s ({:.0}%)  ap_train={ap_s:.1}s ({:.0}%)  \
+                 [total {phase_total:.1}s]",
+                pct(br_rollout_s),
+                pct(br_update_s),
+                pct(ap_s),
+            );
 
             // Diagnostics: action marginals for the matching-pennies
             // constant observation `[0.0]`. We emit these
