@@ -16,6 +16,60 @@ use super::mlp::{
     seeded_layer_weights,
 };
 
+/// Host-side per-dim categorical distributions for one or more rows,
+/// produced by [`MultiDiscreteMlpBurnPolicy::forward_to_host_dist`].
+///
+/// `probs_per_dim[d] = (n_actions_d, probs_flat_d, log_probs_flat_d)`
+/// where the flats are `[batch, n_actions_d]` row-major. The seeded draw
+/// lives in [`MultiDiscreteHostDist::sample_actions`] so the tensor
+/// forward and the RNG-consuming sample are cleanly separated — the
+/// precondition that lets the batched sampler do one `[N, obs_dim]`
+/// forward while keeping the per-row/per-dim RNG draw order bit-identical
+/// (issue #235).
+struct MultiDiscreteHostDist {
+    batch: usize,
+    num_dims: usize,
+    probs_per_dim: Vec<(usize, Vec<f32>, Vec<f32>)>,
+    values_host: Vec<f32>,
+}
+
+impl MultiDiscreteHostDist {
+    /// Draw one action per dim per row, consuming exactly one
+    /// `rng.random()` per (row, dim) in `row major → dim major` order.
+    /// Returns `(actions [batch*num_dims], joint_log_probs [batch],
+    /// values [batch])`.
+    ///
+    /// Byte-for-byte the loop `get_action_host_seeded` used before the
+    /// forward/sample split, so a same-seeded `rng` reproduces the exact
+    /// same action stream (issue #114 / #235).
+    fn sample_actions(&self, rng: &mut rand::rngs::StdRng) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        use rand::Rng;
+        let mut actions = vec![0_i64; self.batch * self.num_dims];
+        let mut log_probs = vec![0.0_f32; self.batch];
+        for row in 0..self.batch {
+            let mut joint_lp = 0.0_f32;
+            for (d, (n_actions, probs_flat, log_probs_flat)) in
+                self.probs_per_dim.iter().enumerate()
+            {
+                let u: f32 = rng.random();
+                let mut cum = 0.0;
+                let mut chosen = (*n_actions - 1) as i64;
+                for j in 0..*n_actions {
+                    cum += probs_flat[row * n_actions + j];
+                    if u < cum {
+                        chosen = j as i64;
+                        break;
+                    }
+                }
+                actions[row * self.num_dims + d] = chosen;
+                joint_lp += log_probs_flat[row * n_actions + chosen as usize];
+            }
+            log_probs[row] = joint_lp;
+        }
+        (actions, log_probs, self.values_host.clone())
+    }
+}
+
 /// Multi-discrete MLP actor-critic policy on Burn.
 ///
 /// Shared trunk built from the same `MlpBurnConfig` knobs the
@@ -237,7 +291,20 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
         obs: Tensor<B, 2>,
         rng: &mut rand::rngs::StdRng,
     ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
-        use rand::Rng;
+        // Decoupled into a pure-tensor forward (`forward_to_host_dist`, no
+        // RNG) and a host-side categorical draw
+        // (`MultiDiscreteHostDist::sample_actions`, the only RNG-consuming
+        // half). See the analogous split on `MlpBurnPolicy`: it preserves
+        // the per-row `row major → dim major` RNG draw order while letting
+        // the batched entry point replace N batch-1 forwards with a single
+        // `[N, obs_dim]` forward (issue #235).
+        self.forward_to_host_dist(obs).sample_actions(rng)
+    }
+
+    /// Tensor half of [`get_action_host_seeded`]: run the policy forward
+    /// and extract the per-dim host-side categorical distributions for
+    /// every row. **Consumes no RNG.**
+    fn forward_to_host_dist(&self, obs: Tensor<B, 2>) -> MultiDiscreteHostDist {
         let (logits_per_dim, value) = self.forward(obs);
         let num_dims = logits_per_dim.len();
         assert!(num_dims > 0, "at least one action dim");
@@ -261,29 +328,26 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
         let batch = batch_opt.unwrap_or(0);
         let values_host: Vec<f32> = value.into_data().to_vec().expect("values to_vec");
 
-        let mut actions = vec![0_i64; batch * num_dims];
-        let mut log_probs = vec![0.0_f32; batch];
+        MultiDiscreteHostDist { batch, num_dims, probs_per_dim, values_host }
+    }
 
-        for row in 0..batch {
-            let mut joint_lp = 0.0_f32;
-            for (d, (n_actions, probs_flat, log_probs_flat)) in probs_per_dim.iter().enumerate() {
-                let u: f32 = rng.random();
-                let mut cum = 0.0;
-                let mut chosen = (*n_actions - 1) as i64;
-                for j in 0..*n_actions {
-                    cum += probs_flat[row * n_actions + j];
-                    if u < cum {
-                        chosen = j as i64;
-                        break;
-                    }
-                }
-                actions[row * num_dims + d] = chosen;
-                joint_lp += log_probs_flat[row * n_actions + chosen as usize];
-            }
-            log_probs[row] = joint_lp;
-        }
-
-        (actions, log_probs, values_host)
+    /// Batched seeded sampler: one forward over `[N, obs_dim]`, then N
+    /// host-side categorical draws in `row major → dim major` order.
+    ///
+    /// Bit-identical to calling [`Self::get_action_host_seeded`] once per row
+    /// on `[1, obs_dim]` slices **provided the rows are drawn from the same
+    /// policy** (same weights in the single batched forward, RNG consumed
+    /// one draw per dim per row, ascending). The
+    /// [`crate::multi_agent::joint::JointPolicy`]-trait batched entry point
+    /// that eliminates per-call batch-1 overhead wherever many
+    /// observations are scored through the **same** model in one step
+    /// (issue #235).
+    pub fn get_actions_host_seeded_batched(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut rand::rngs::StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        self.forward_to_host_dist(obs).sample_actions(rng)
     }
 
     /// Evaluate given actions: per-step summed log-prob, per-step mean

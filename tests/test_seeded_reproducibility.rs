@@ -159,3 +159,46 @@ fn test_nfsp_avg_marginal_trace_is_bit_identical() {
     let c = nfsp_avg_marginal_trace(8);
     assert_ne!(a, c, "different seed should change the trace");
 }
+
+/// Golden-reference pin for the NFSP avg-policy action stream (issue #235).
+///
+/// The marginal trace is the empirical action distribution accumulated by
+/// `NfspTrainer::action_marginal_for`'s seeded probe loop, which flows
+/// through the **batched** seeded sampler
+/// (`JointPolicy::get_actions_host_seeded_batched`) introduced in #235.
+/// Pinning it to a literal captured from `main` *before* the batching
+/// refactor proves the forward/sample decoupling + single-batched-forward
+/// probe is **bit-for-bit** identical to the previous per-row batch-1
+/// loop — the load-bearing determinism guarantee the issue requires.
+///
+/// Whereas `test_nfsp_avg_marginal_trace_is_bit_identical` only checks
+/// run-vs-run equality at a fixed seed (which a *consistent* RNG-reordering
+/// would still pass), this test would fail if the batched path changed the
+/// action stream at all. If a future change intentionally alters the
+/// stream, re-capture the literal and document the change.
+#[test]
+fn test_nfsp_avg_marginal_stream_matches_golden_reference() {
+    // Reference captured on `main` @ 5beae49 (pre-#235) by running
+    // `nfsp_avg_marginal_trace(7)` with the *old* per-probe batch-1
+    // sampler. The #235 batched sampler reproduces it exactly.
+    let golden: Vec<f32> = vec![
+        0.46875_f32,
+        0.53125_f32,
+        0.5625_f32,
+        0.4375_f32,
+        0.5703125_f32,
+        0.4296875_f32,
+        0.625_f32,
+        0.375_f32,
+        0.5234375_f32,
+        0.4765625_f32,
+        0.5390625_f32,
+        0.4609375_f32,
+    ];
+    let trace = nfsp_avg_marginal_trace(7);
+    assert_eq!(
+        trace, golden,
+        "NFSP avg-marginal action stream (seed 7) must be bit-identical to the pre-#235 \
+         reference; the batched seeded sampler must not change the RNG draw order"
+    );
+}

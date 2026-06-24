@@ -142,6 +142,54 @@ pub enum BurnActivation {
     Tanh,
 }
 
+/// Host-side categorical distribution for one or more rows, produced by
+/// [`MlpBurnPolicy::forward_to_host_dist`].
+///
+/// Holds the flattened per-row `probs` / `log_probs` (`[batch, n_actions]`
+/// row-major) and per-row `values`. The seeded draw lives in
+/// [`HostCategoricalDist::sample_actions`] so the tensor forward and the
+/// RNG-consuming sample are cleanly separated — the precondition that lets
+/// the batched sampler do one `[N, obs_dim]` forward while keeping the
+/// per-row RNG draw order bit-identical (issue #235).
+struct HostCategoricalDist {
+    batch: usize,
+    n_actions: usize,
+    probs_flat: Vec<f32>,
+    log_probs_flat: Vec<f32>,
+    values_host: Vec<f32>,
+}
+
+impl HostCategoricalDist {
+    /// Draw one action per row from the categorical distribution, consuming
+    /// exactly one `rng.random()` per row in ascending row order. Returns
+    /// `(actions, log_probs_of_chosen, values)`.
+    ///
+    /// The draw is byte-for-byte the loop that
+    /// [`MlpBurnPolicy::get_action_host_seeded`] used before the
+    /// forward/sample split, so a same-seeded `rng` reproduces the exact
+    /// same action stream (issue #114 / #235).
+    fn sample_actions(&self, rng: &mut rand::rngs::StdRng) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        use rand::Rng;
+        let mut actions = Vec::with_capacity(self.batch);
+        let mut log_probs = Vec::with_capacity(self.batch);
+        for row in 0..self.batch {
+            let u: f32 = rng.random();
+            let mut cum = 0.0;
+            let mut chosen = (self.n_actions - 1) as i64;
+            for j in 0..self.n_actions {
+                cum += self.probs_flat[row * self.n_actions + j];
+                if u < cum {
+                    chosen = j as i64;
+                    break;
+                }
+            }
+            actions.push(chosen);
+            log_probs.push(self.log_probs_flat[row * self.n_actions + chosen as usize]);
+        }
+        (actions, log_probs, self.values_host.clone())
+    }
+}
+
 /// Configuration for [`MlpBurnPolicy`] architecture.
 ///
 /// Mirrors [`crate::policy::mlp::MlpBurnConfig`] on the tch path. Stored
@@ -460,7 +508,32 @@ impl<B: Backend> MlpBurnPolicy<B> {
         obs: Tensor<B, 2>,
         rng: &mut rand::rngs::StdRng,
     ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
-        use rand::Rng;
+        // Decoupled into a pure-tensor forward (`forward_to_host_dist`,
+        // no RNG) followed by a host-side categorical draw
+        // (`sample_actions_from_host_dist`, the only RNG-consuming half).
+        // This split is what makes the **batched** entry point
+        // (`get_actions_host_seeded_batched`) possible without changing
+        // the per-row RNG draw order: a single forward over `[N, obs_dim]`
+        // produces N rows of host probs, then the per-row loop draws RNG in
+        // the exact same row-major sequence as N separate `[1, obs_dim]`
+        // calls would. Bit-exactness (issue #114 / #235) is therefore
+        // preserved by construction.
+        let dist = self.forward_to_host_dist(obs);
+        dist.sample_actions(rng)
+    }
+
+    /// Tensor half of [`get_action_host_seeded`]: run the policy forward
+    /// and pull the host-side categorical distribution (`probs`,
+    /// `log_probs`) plus values for every row. **Consumes no RNG.**
+    ///
+    /// Returns a [`HostCategoricalDist`] from which
+    /// [`HostCategoricalDist::sample_actions`] performs the seeded draw.
+    /// Splitting the forward (one batched tensor op over `[N, obs_dim]`)
+    /// from the sample (a row-major host loop) lets the batched sampler
+    /// replace N batch-1 forwards with a single `[N, obs_dim]` forward
+    /// while keeping the RNG draw order — and therefore the sampled
+    /// action stream — bit-identical (issue #235).
+    fn forward_to_host_dist(&self, obs: Tensor<B, 2>) -> HostCategoricalDist {
         let (logits, value) = self.forward(obs);
         let probs = activation::softmax(logits.clone(), 1);
         let log_probs_all = activation::log_softmax(logits, 1);
@@ -474,23 +547,26 @@ impl<B: Backend> MlpBurnPolicy<B> {
             log_probs_all.into_data().to_vec().expect("log_probs to_vec");
         let values_host: Vec<f32> = value.into_data().to_vec().expect("values to_vec");
 
-        let mut actions = Vec::with_capacity(batch);
-        let mut log_probs = Vec::with_capacity(batch);
-        for row in 0..batch {
-            let u: f32 = rng.random();
-            let mut cum = 0.0;
-            let mut chosen = (n_actions - 1) as i64;
-            for j in 0..n_actions {
-                cum += probs_flat[row * n_actions + j];
-                if u < cum {
-                    chosen = j as i64;
-                    break;
-                }
-            }
-            actions.push(chosen);
-            log_probs.push(log_probs_flat[row * n_actions + chosen as usize]);
-        }
-        (actions, log_probs, values_host)
+        HostCategoricalDist { batch, n_actions, probs_flat, log_probs_flat, values_host }
+    }
+
+    /// Batched seeded sampler: one forward over `[N, obs_dim]`, then N
+    /// host-side categorical draws in row-major order.
+    ///
+    /// Bit-identical to calling [`Self::get_action_host_seeded`] once per row
+    /// on `[1, obs_dim]` slices **provided the rows are drawn from the same
+    /// policy** — the forward is a single matmul over all N rows (same
+    /// weights), and the RNG is consumed one draw per row, ascending. This
+    /// is the [`crate::multi_agent::joint::JointPolicy`]-trait batched
+    /// entry point that eliminates per-call batch-1 overhead on the
+    /// NdArray backend wherever many observations are scored through the
+    /// **same** model in one step (issue #235).
+    pub fn get_actions_host_seeded_batched(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut rand::rngs::StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        self.forward_to_host_dist(obs).sample_actions(rng)
     }
 
     /// Evaluate a batch of `(obs, actions)` pairs.
