@@ -1121,6 +1121,124 @@ mod tests {
 
     type B = Autodiff<NdArray<f32>>;
 
+    /// Hand-computed GAE/returns reference on a tiny rollout (issue #243).
+    ///
+    /// This pins the [`compute_gae_single_agent`] recursion against values
+    /// computed by hand, independent of any env. The rollout deliberately
+    /// contains **both** boundary kinds the joint trainer can encounter:
+    ///
+    /// * a **terminal** boundary at interior step `t == 1` (`done == 1.0`):
+    ///   both the value bootstrap `γ·V(s_{t+1})` *and* the GAE carry
+    ///   `γ·λ·A_{t+1}` must be masked to zero, so the advantage at the terminal
+    ///   step is exactly its own one-step TD error and the GAE chain does not
+    ///   leak across the episode boundary.
+    /// * a **truncation** boundary at the final step `t == T-1`: the rollout
+    ///   ends here with `done == 0.0`, and this implementation uses a zero
+    ///   trailing bootstrap (`next_v == 0.0`, no post-rollout `V(s_T)`), as
+    ///   documented on `compute_gae_single_agent`.
+    ///
+    /// Reference values (γ = 0.9, λ = 0.8), computed step-by-step in reverse:
+    ///
+    /// ```text
+    /// rewards = [1.0, 2.0, 3.0, 4.0]
+    /// values  = [0.5, 1.0, 1.5, 2.0]
+    /// dones   = [0.0, 1.0, 0.0, 0.0]
+    ///
+    /// t=3 (truncation/rollout-end): next_v=0,  mask=1
+    ///     delta = 4 + 0.9*0*1 - 2.0           = 2.00
+    ///     A_3   = 2.00 + 0.72*1*0             = 2.00
+    /// t=2:                          next_v=2.0, mask=1
+    ///     delta = 3 + 0.9*2.0*1 - 1.5         = 3.30
+    ///     A_2   = 3.30 + 0.72*1*2.00          = 4.74
+    /// t=1 (terminal, done=1):       next_v=1.5, mask=0
+    ///     delta = 2 + 0.9*1.5*0 - 1.0         = 1.00   (bootstrap masked)
+    ///     A_1   = 1.00 + 0.72*0*4.74          = 1.00   (GAE carry masked)
+    /// t=0:                          next_v=1.0, mask=1
+    ///     delta = 1 + 0.9*1.0*1 - 0.5         = 1.40
+    ///     A_0   = 1.40 + 0.72*1*1.00          = 2.12
+    ///
+    /// advantages = [2.12, 1.00, 4.74, 2.00]
+    /// returns    = advantages + values = [2.62, 2.00, 6.24, 4.00]
+    /// ```
+    #[test]
+    fn gae_matches_hand_computed_reference_with_terminal_and_truncation() {
+        let rewards = [1.0_f32, 2.0, 3.0, 4.0];
+        let values = [0.5_f32, 1.0, 1.5, 2.0];
+        let dones = [0.0_f32, 1.0, 0.0, 0.0];
+        let gamma = 0.9_f32;
+        let lambda = 0.8_f32;
+
+        let (adv, ret) = compute_gae_single_agent(&rewards, &values, &dones, gamma, lambda);
+
+        let expected_adv = [2.12_f32, 1.00, 4.74, 2.00];
+        let expected_ret = [2.62_f32, 2.00, 6.24, 4.00];
+
+        assert_eq!(adv.len(), 4);
+        assert_eq!(ret.len(), 4);
+        for (i, (&a, &e)) in adv.iter().zip(&expected_adv).enumerate() {
+            assert!(
+                (a - e).abs() < 1e-5,
+                "advantage[{i}] = {a}, expected {e} (terminal at t=1, truncation at t=3)"
+            );
+        }
+        for (i, (&r, &e)) in ret.iter().zip(&expected_ret).enumerate() {
+            assert!((r - e).abs() < 1e-5, "return[{i}] = {r}, expected {e}");
+        }
+
+        // Explicit invariant check on the terminal boundary: A_1 must equal
+        // exactly its own TD error (r_1 - V(s_1) = 1.0) with no leakage of
+        // the γλ carry from A_2 across the episode boundary.
+        assert!(
+            (adv[1] - (rewards[1] - values[1])).abs() < 1e-6,
+            "terminal-step advantage must equal its own TD error, no GAE carry-through"
+        );
+    }
+
+    /// A pure-terminal rollout (every step `done == 1`) must produce
+    /// advantages equal to each step's own one-step TD error with the
+    /// trailing bootstrap zeroed — there is no cross-step propagation at
+    /// all. This isolates the `(1 - done)` masking from the recursion.
+    #[test]
+    fn gae_all_terminal_collapses_to_td_errors() {
+        let rewards = [1.0_f32, -2.0, 0.5];
+        let values = [0.25_f32, 0.5, -0.5];
+        let dones = [1.0_f32, 1.0, 1.0];
+        let gamma = 0.99_f32;
+        let lambda = 0.95_f32;
+
+        let (adv, ret) = compute_gae_single_agent(&rewards, &values, &dones, gamma, lambda);
+
+        for i in 0..rewards.len() {
+            let td = rewards[i] - values[i]; // bootstrap and carry both masked
+            assert!((adv[i] - td).abs() < 1e-6, "adv[{i}] should be pure TD error");
+            assert!((ret[i] - (td + values[i])).abs() < 1e-6, "ret[{i}] = adv + value");
+        }
+    }
+
+    /// `normalize_advantages` must standardize to zero mean / unit variance
+    /// (population std) and preserve relative ordering / sign structure.
+    #[test]
+    fn normalize_advantages_zero_mean_unit_std() {
+        let adv = [2.12_f32, 1.00, 4.74, 2.00];
+        let out = normalize_advantages(&adv);
+
+        let n = out.len() as f64;
+        let mean: f64 = out.iter().map(|&x| x as f64).sum::<f64>() / n;
+        let var: f64 = out.iter().map(|&x| (x as f64 - mean).powi(2)).sum::<f64>() / n;
+        assert!(mean.abs() < 1e-5, "normalized mean should be ~0, got {mean}");
+        assert!(
+            (var.sqrt() - 1.0).abs() < 1e-4,
+            "normalized std should be ~1, got {}",
+            var.sqrt()
+        );
+
+        // Ordering preserved: the largest raw advantage stays the largest.
+        let argmax_raw = 2usize; // 4.74
+        let argmax_norm =
+            out.iter().enumerate().max_by(|a, b| a.1.partial_cmp(b.1).unwrap()).unwrap().0;
+        assert_eq!(argmax_raw, argmax_norm, "normalization must preserve ordering");
+    }
+
     /// Deterministic mock env: 4-dim obs (sin/cos-ish encoding of t),
     /// scalar rewards = sum of actions, never terminates within rollout.
     struct MockEnv {
