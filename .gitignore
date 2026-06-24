@@ -10,6 +10,16 @@ models/**/*.safetensors
 *.log
 checkpoint_*.pt
 *.tmp
+
+# bucket-brigade driver checkpoint artifacts (written to CWD/repo root by the
+# train_nfsp / train_psro examples; multi-MB Burn policy dumps — never commit).
+# Anchored to repo root so legitimate .bin/.json under web/ or tests/ are unaffected.
+/nfsp_*_final_*.bin
+/nfsp_*_final_*.json
+/psro_*_final_*.bin
+/psro_*_final_*.json
+/psro_*_iter*_agent*.bin
+/psro_*_iter*_meta_nash.json
 .wrangler/
 node_modules/
 .loom-in-use

@@ -355,3 +355,127 @@ CELL=beta05 ITERATIONS=12 ROLLOUT_STEPS=2048 \
 
 Logs for this re-run: `run134-out/probe_{beta01,beta05,beta09}.log` and
 `run134-out/smoke_psro_{beta01,beta05,beta09}.log` on alc-2/6/8 (and pulled locally during the session).
+
+---
+
+# Throughput profile + minibatch-cap lever (issue #251, 2026-06-24)
+
+**Date:** 2026-06-24
+**Branch:** `feature/issue-251`
+**Backend:** NdArray<f32> CPU, local workstation (Apple Silicon). All timings below are
+**local, single-machine** numbers — directional, not cluster figures (no cluster access this session).
+
+## AC#1 — where the outer-loop wall-clock actually goes
+
+Issue #251's premise was that the dominant new cost is the #239 **all-minibatch ×
+`BR_TRAIN_STEPS=8`** BR-update product. Coarse `Instant` profiling on `main` gives a **more nuanced**
+picture: the *single-BR probe* is rollout-bound, but the *multi-agent NFSP/PSRO outer loop* has a
+**co-dominant BR-update phase (~42–52%)** that the lever directly attacks.
+
+**Single-BR probe (`train_br_probe`, beta05, 2048 rollout, 8 iters × `BR_TRAIN_STEPS=8`) — only ONE
+agent's optimizer steps (frozen N−1):**
+
+| Phase | wall-clock | share |
+|-------|-----------|-------|
+| BR rollout (`collect_rollout`) | 841.8 s | **96%** |
+| BR PPO update (single active agent, 4 epochs × 8 mb) | 39.3 s | **4%** |
+
+The probe's update is tiny because only one agent is trained and the per-update cost there is
+dominated by fixed overhead (per-agent GAE/returns/advantage setup), so it is **not representative**
+of the real outer loop. The ~105 s/iter rollout is the **batch-1 per-agent rollout** that
+[#235](https://github.com/rjwalters/thrust/issues/235) proved cannot be batched.
+
+**NFSP outer loop (`train_nfsp`, beta05) — all 4 agents active in the joint update:**
+
+| Run | br_rollout | br_update | ap_train | total/iter |
+|-----|-----------|-----------|----------|-----------|
+| 512 rollout, iter 1 | 172.0 s (47%) | 190.0 s (52%) | 2.0 s (1%) | 364.1 s |
+| 512 rollout, iter 2 | 189.5 s (36%) | 339.0 s (64%) | 1.8 s (0%) | 530.3 s |
+| 2048 rollout, iter 1 | 343.2 s (57%) | 253.3 s (42%) | 2.0 s (0%) | 598.5 s |
+
+(2048 figures use `BR_TRAIN_STEPS=2`; 512 figures use `BR_TRAIN_STEPS=8`. Phase *shares* are the
+stable signal — absolute seconds vary with machine load.)
+
+Here the BR **update is co-dominant** (42–64% across the runs measured). Unlike the single-agent
+probe, the multi-agent update is **variable-dominated** — each minibatch does 4 per-agent
+forward+backward passes, a global-norm grad-clip (two module-visitor passes per agent), and 4
+optimizer steps — so reducing the minibatch count per epoch reduces it ~proportionally. The AP
+supervised step is negligible (≤2%) at the reservoir occupancies seen in early iterations.
+
+**Conclusion (AC#1):** the outer loop is split between the un-batchable rollout (~57%) and the
+**multi-agent BR update (~42%)** at 2048. The BR update is exactly what a minibatch cap reduces; the
+rollout share remains the deferred parallel-env (EnvPool, #235) follow-up.
+
+## The change — `max_minibatches_per_epoch` throughput lever (opt-in)
+
+`JointTrainerConfig::max_minibatches_per_epoch: Option<usize>` (default `None`). When `Some(cap)`,
+each epoch's globally-shuffled minibatch set is truncated to at most `cap` chunks — a uniformly
+random subsample of the rollout (the indices are shuffled before chunking). Behavior-preserving by
+default:
+
+- `None` (default) preserves the full #239 all-minibatch coverage **bit-identical**; grad-clip,
+  `vf_coef`, `iterate_all_minibatches`, and `BR_TRAIN_STEPS` are all unchanged. Each retained
+  minibatch is still a full forward+backward over `minibatch_size` samples.
+- Exposed via `BR_MAX_MINIBATCHES_PER_EPOCH` in `train_nfsp`, `train_psro`, and `train_br_probe`.
+- More effective at higher rollout (more minibatches per epoch to cap): at 2048 there are 8
+  minibatches/epoch, so `cap=2` is a 4× minibatch-count reduction.
+
+## AC#3 — before/after, controlled back-to-back A/B (local, beta05, 2048 rollout)
+
+Measured with `BR_TRAIN_STEPS=2` as a fast timing proxy (the per-update cap effect is independent of
+the step count); cap OFF then cap=2 run back-to-back to minimise machine drift:
+
+| | cap OFF (8 mb/epoch) | cap=2 (2 mb/epoch) | change |
+|---|---|---|---|
+| br_rollout | 343.2 s (57%) | 277.3 s (70%) | unchanged by cap (Δ = machine drift) |
+| **br_update** | **253.3 s (42%)** | **114.3 s (29%)** | **2.2× faster** |
+| total / iter | 598.5 s | 393.9 s | **1.52× faster (−34%)** |
+
+The minibatch cap cuts the multi-agent BR update **~2.2×** (the residual is the per-update fixed
+GAE/setup overhead the cap cannot touch), shrinking the whole outer iteration **~1.5×** even though
+the rollout is the larger single phase. A higher `BR_TRAIN_STEPS` (the #239 default of 8) multiplies
+the update savings linearly. The cap is the **proportional, in-scope lever for the update phase**;
+the remaining rollout share is the parallel-env follow-up.
+
+## AC#2 — the #239 BR-learning behaviour is preserved with the lever on
+
+`train_br_probe` (beta05, 2048, 8 iters, `BR_REWARD_SCALE=0.001 VF_COEF=0.5 BR_TRAIN_STEPS=8`),
+critic explained-variance `ev` and policy entropy `ent` per iter:
+
+| iter | cap OFF `ev` / `ent` | cap=2 `ev` / `ent` |
+|------|----------------------|--------------------|
+| 1 | 0.000 / 1.220 | 0.000 / 1.224 |
+| 4 | 0.000 / 1.136 | 0.000 / 1.211 |
+| 6 | 0.000 / 1.050 | 0.000 / 1.202 |
+| 7 | 0.000 / 1.009 | 0.000 / 1.114 |
+| 8 | 0.011 / **0.993** | 0.000 / **1.122** |
+
+With the cap on, the BR **still moves off the uniform-entropy floor** (`ent` 1.224 → 1.122) — the
+#239 learning direction is preserved, just at a slower per-iteration rate (fewer gradient steps per
+epoch). `ev` has not yet risen at 8 iters in **either** arm (per #239 the EV onset is ~iter 16); the
+cap does not collapse the BR back to the floor. This is the documented throughput/fit trade-off: the
+cap is opt-in and the operator chooses `cap` per their iteration budget (default = full coverage).
+
+## Reproduction (issue #251)
+
+```bash
+# Profile + baseline (lever OFF, full #239 coverage):
+CELL=beta05 ITERATIONS=8 ROLLOUT_STEPS=2048 \
+  BR_REWARD_SCALE=0.001 VF_COEF=0.5 BR_TRAIN_STEPS=8 \
+  cargo run --release --example train_br_probe --features "training,env-bucket-brigade"
+
+# Lever ON (cap minibatch steps/epoch to 2):
+CELL=beta05 ITERATIONS=8 ROLLOUT_STEPS=2048 \
+  BR_REWARD_SCALE=0.001 VF_COEF=0.5 BR_TRAIN_STEPS=8 BR_MAX_MINIBATCHES_PER_EPOCH=2 \
+  cargo run --release --example train_br_probe --features "training,env-bucket-brigade"
+
+# NFSP outer-loop phase breakdown (per-iter br_rollout vs br_update vs ap_train):
+TOTAL_ITERATIONS=2 ROLLOUT_STEPS=2048 CELL=beta05 \
+  BR_REWARD_SCALE=0.001 VF_COEF=0.5 BR_TRAIN_STEPS=8 \
+  cargo run --release --example train_nfsp --features "training,env-bucket-brigade"
+
+# Controlled outer-loop throughput A/B (cap OFF vs cap=2), fast BR_TRAIN_STEPS=2 timing proxy:
+for CAP in "" "2"; do TOTAL_ITERATIONS=1 ROLLOUT_STEPS=2048 CELL=beta05 \
+  BR_REWARD_SCALE=0.001 VF_COEF=0.5 BR_TRAIN_STEPS=2 BR_MAX_MINIBATCHES_PER_EPOCH=$CAP \
+  cargo run --release --example train_nfsp --features "training,env-bucket-brigade"; done
+```

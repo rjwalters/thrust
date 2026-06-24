@@ -406,6 +406,36 @@ pub struct JointTrainerConfig {
     /// behaviour), so existing NFSP/PSRO runs and determinism tests are
     /// bit-identical unless a caller opts in.
     pub critic_lr: Option<f64>,
+    /// Optional **cap on the number of minibatch gradient steps per epoch**
+    /// (issue #251, throughput lever).
+    ///
+    /// The #239 best-response fix sets
+    /// [`iterate_all_minibatches`](Self::iterate_all_minibatches) `= true`,
+    /// which walks *every* `minibatch_size` chunk of the rollout
+    /// each epoch. Combined with `br_train_steps_per_iteration = 8` over the
+    /// un-batchable (issue #235) bucket-brigade rollout, the per-iteration BR
+    /// update became the dominant outer-loop cost (>1 h/iter at 2048 rollout
+    /// — see issue #251). At `rollout_steps = 2048`, `minibatch_size = 256`
+    /// that is 8 minibatches × `n_epochs` × `br_train_steps` gradient steps
+    /// per outer iteration.
+    ///
+    /// When `Some(cap)`, after each epoch's minibatch index-sets are built
+    /// (and globally shuffled), the set is truncated to at most `cap`
+    /// minibatches — a uniformly-random subsample of the rollout, since the
+    /// indices were shuffled before chunking. This trades a bounded amount of
+    /// BR fit per epoch for throughput **without** reverting the #239
+    /// learning behaviour: grad-clip, `vf_coef`, `iterate_all_minibatches`,
+    /// and `br_train_steps_per_iteration` are all unchanged, and each capped
+    /// minibatch is still a full forward+backward over `minibatch_size`
+    /// samples. `cap` is clamped to at least 1 so a capped update never
+    /// degenerates to zero gradient steps.
+    ///
+    /// `None` (default) preserves the full all-minibatch coverage exactly, so
+    /// existing NFSP/PSRO runs and determinism tests are bit-identical unless
+    /// a caller opts in. With the default single-minibatch path
+    /// (`iterate_all_minibatches == false`) the per-epoch set already has one
+    /// entry, so any `cap >= 1` is a no-op there.
+    pub max_minibatches_per_epoch: Option<usize>,
 }
 
 impl Default for JointTrainerConfig {
@@ -425,6 +455,7 @@ impl Default for JointTrainerConfig {
             normalize_advantages: true,
             iterate_all_minibatches: false,
             critic_lr: None,
+            max_minibatches_per_epoch: None,
         }
     }
 }
@@ -499,6 +530,15 @@ pub struct JointStats {
     /// Total summed loss `Σ_i agent_loss_i + aux_loss` (averaged across
     /// PPO epochs).
     pub total_loss: f64,
+    /// Number of minibatch gradient steps actually taken across the whole
+    /// update (`Σ_epochs` minibatches walked). For the default
+    /// single-minibatch path this equals `n_epochs`; with
+    /// [`JointTrainerConfig::iterate_all_minibatches`] it equals
+    /// `n_epochs × ceil(num_steps / minibatch_size)`, and with
+    /// [`JointTrainerConfig::max_minibatches_per_epoch`] `= Some(cap)` it is
+    /// reduced to `n_epochs × min(cap, num_minibatches)`. Exposed so the
+    /// throughput lever (issue #251) is observable/testable.
+    pub num_mb_steps: usize,
 }
 
 impl JointStats {
@@ -514,6 +554,7 @@ impl JointStats {
             explained_var: vec![0.0; num_agents],
             aux_loss: 0.0,
             total_loss: 0.0,
+            num_mb_steps: 0,
         }
     }
 }
@@ -893,7 +934,7 @@ where
             // caller-supplied RNG so PSRO / NFSP runs stay reproducible
             // under their configured seeds (see issues #109 / #114).
             use rand::seq::SliceRandom;
-            let minibatches: Vec<Vec<usize>> = if self.config.iterate_all_minibatches {
+            let mut minibatches: Vec<Vec<usize>> = if self.config.iterate_all_minibatches {
                 generate_minibatch_indices_with_rng(num_steps, mb_size, rng)
             } else {
                 let mut indices: Vec<usize> = (0..num_steps).collect();
@@ -901,6 +942,19 @@ where
                 indices.truncate(mb_size);
                 vec![indices]
             };
+
+            // Issue #251 throughput lever: cap the number of minibatch
+            // gradient steps per epoch. The indices were globally shuffled
+            // before chunking, so keeping the first `cap` chunks is a
+            // uniformly-random subsample of the rollout. Clamp to >= 1 so a
+            // capped update never degenerates to zero steps. `None` (default)
+            // leaves the full all-minibatch coverage untouched.
+            if let Some(cap) = self.config.max_minibatches_per_epoch {
+                let cap = cap.max(1);
+                if cap < minibatches.len() {
+                    minibatches.truncate(cap);
+                }
+            }
 
             for indices in minibatches {
                 num_mb_steps += 1;
@@ -1150,6 +1204,7 @@ where
             stats.aux_loss /= n;
             stats.total_loss /= n;
         }
+        stats.num_mb_steps = num_mb_steps;
 
         Ok(stats)
     }
@@ -1581,6 +1636,65 @@ mod tests {
             assert!(stats.approx_kl[i].is_finite(), "approx_kl[{i}] finite");
             assert!(stats.explained_var[i].is_finite(), "explained_var[{i}] finite");
         }
+    }
+
+    #[test]
+    fn test_max_minibatches_per_epoch_caps_grad_steps() {
+        // Issue #251 throughput lever: assert `max_minibatches_per_epoch`
+        // reduces the number of minibatch gradient steps as configured, that
+        // its `None` default preserves the full all-minibatch behaviour, and
+        // that aggressive / edge settings do not panic.
+        //
+        // rollout_steps=64, minibatch_size=16 => 4 minibatches per epoch in
+        // the all-minibatch branch; n_epochs=2 => 8 full steps uncapped.
+        let num_agents = 2;
+        let obs_dim: usize = 4;
+        let action_dim: usize = 3;
+        let n_epochs = 2;
+        let rollout_steps = 64;
+        let minibatch_size = 16;
+
+        // Returns the `num_mb_steps` taken by one update under `config`.
+        let run = |iterate_all: bool, cap: Option<usize>| -> usize {
+            let device = Default::default();
+            let policies = make_mlp_policies(num_agents, obs_dim, action_dim, 16, &device);
+            let optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 3e-4);
+            let config = JointTrainerConfig {
+                num_agents,
+                rollout_steps,
+                n_epochs,
+                minibatch_size,
+                iterate_all_minibatches: iterate_all,
+                max_minibatches_per_epoch: cap,
+                ..Default::default()
+            };
+            let mut trainer =
+                JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
+            let mut env = MockEnv::new(num_agents, obs_dim);
+            let mut last_obs = env.reset_joint(None);
+            let mut rng = StdRng::seed_from_u64(0);
+            let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
+            trainer
+                .update(&rollout, &mut rng, |_f: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> { None })
+                .expect("update should not error")
+                .num_mb_steps
+        };
+
+        // All-minibatch, uncapped: every 16-sample chunk walked each epoch.
+        assert_eq!(run(true, None), n_epochs * (rollout_steps / minibatch_size));
+        // All-minibatch, cap=2: exactly 2 minibatch steps per epoch.
+        assert_eq!(run(true, Some(2)), n_epochs * 2);
+        // All-minibatch, cap=1: exactly 1 minibatch step per epoch.
+        assert_eq!(run(true, Some(1)), n_epochs);
+        // Cap >= available minibatches is a no-op (still full coverage).
+        assert_eq!(run(true, Some(99)), n_epochs * (rollout_steps / minibatch_size));
+        // cap=0 is clamped to 1 (never zero gradient steps; must not panic).
+        assert_eq!(run(true, Some(0)), n_epochs);
+
+        // Default single-minibatch path: one minibatch per epoch regardless,
+        // so a cap is a no-op and `num_mb_steps == n_epochs`.
+        assert_eq!(run(false, None), n_epochs);
+        assert_eq!(run(false, Some(2)), n_epochs);
     }
 
     #[test]

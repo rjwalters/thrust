@@ -251,6 +251,15 @@ fn main() -> Result<()> {
     let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5);
     let br_train_steps: usize =
         std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
+    // Issue #251 throughput lever: cap the number of minibatch gradient steps
+    // per epoch in the BR PPO update. `None` (default) keeps the #239
+    // all-minibatch full-rollout coverage bit-identical; a small value (e.g.
+    // 2) trades a bounded amount of BR fit for a large per-iter speedup over
+    // the un-batchable (#235) bucket-brigade rollout.
+    let max_minibatches_per_epoch: Option<usize> = std::env::var("BR_MAX_MINIBATCHES_PER_EPOCH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|v| *v > 0);
 
     tracing::info!("Starting PSRO bucket-brigade training (Burn backend: {BACKEND_LABEL})");
     tracing::info!("  cell             = {cell} (β={beta}, κ={kappa}, c={cost})");
@@ -302,6 +311,14 @@ fn main() -> Result<()> {
 
     tracing::info!("  vf_coef          = {vf_coef} (issue #239 value-loss weight)");
     tracing::info!("  br_train_steps   = {br_train_steps} (issue #239 BR updates/iter)");
+    match max_minibatches_per_epoch {
+        Some(cap) => tracing::info!(
+            "  br_max_mb/epoch  = {cap} (issue #251 throughput lever: capped minibatch subsample)"
+        ),
+        None => {
+            tracing::info!("  br_max_mb/epoch  = (unset — full #239 all-minibatch coverage)")
+        }
+    }
     let psro_config = PsroConfig {
         max_iterations: total_iterations,
         max_population_size: 50,
@@ -319,6 +336,8 @@ fn main() -> Result<()> {
         vf_coef,
         // Issue #239: consume the full rollout instead of one 256-sample draw.
         iterate_all_minibatches: true,
+        // Issue #251: optional cap on minibatch steps/epoch (None => full).
+        max_minibatches_per_epoch,
         ..Default::default()
     };
     let meta_solver: Box<dyn MetaSolver> = Box::new(
