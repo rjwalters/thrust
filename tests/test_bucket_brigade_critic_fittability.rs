@@ -61,11 +61,18 @@
 //! indicated fix for this cell.
 //!
 //! Caveat worth recording: the original episode-**contiguous** split gave
-//! strongly negative EV for both inputs, because per-episode return-level
-//! offsets (random opponents make each episode's overall fire severity vary
-//! wildly: return std ≈ 6000 on a mean of ≈ −12600) dominate the variance and
-//! do not transfer across held-out episodes. Shuffling isolates the
-//! within-state signal, which is what the critic needs for advantages.
+//! strongly negative *final-epoch* EV for both inputs, because per-episode
+//! return-level offsets (random opponents make each episode's overall fire
+//! severity vary wildly: return std ≈ 6000 on a mean of ≈ −12600) dominate the
+//! variance and do not transfer across held-out episodes. The harness tracks
+//! **best** held-out EV (early-stopping proxy) separately from **final**-epoch
+//! EV (see `best_ev`/`final_ev` below), and the tracked *best* EV stays mildly
+//! positive even under the contiguous split (≈ 0.23 local / ≈ 0.30 joint, a
+//! joint gain of ≈ +0.066 — still well under the 0.25 "meaningful partial
+//! observability" threshold); only the *final*-epoch EV goes strongly negative.
+//! Shuffling isolates the within-state obs→return signal, which is what the
+//! critic needs for advantages. Either way the conclusion is robust: partial
+//! observability is rejected under **both** the shuffled and contiguous splits.
 //!
 //! # Self-contained by design (issue #242 constraint)
 //!
