@@ -21,8 +21,11 @@ pub trait BackendOptimizer {
 
     /// Stage the maximum global gradient L2-norm.
     ///
-    /// The cap is applied inside [`Self::step_module`] before the
-    /// move-through update.
+    /// This only records the cap on the wrapper; the trainer bodies read it
+    /// back via [`BurnOptimizer::grad_clip_norm`] and apply the clip to the
+    /// gradient slice before their move-through `inner_mut().step(...)`
+    /// call (see the joint trainer's per-policy step, issue #239). The
+    /// trait-level [`Self::step_module`] fallback does not itself clip.
     fn clip_grad_norm(&mut self, max: f64);
 
     /// Burn-style move-through update.

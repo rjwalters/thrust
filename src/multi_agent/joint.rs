@@ -47,16 +47,28 @@
 //!
 //! # Minibatch sampling
 //!
-//! For simplicity (and to keep the smoke test deterministic) this first
-//! Burn-native cut takes **one** minibatch per epoch, sampled via
+//! By default (and to keep the smoke test deterministic) this trainer
+//! takes **one** minibatch per epoch, sampled via
 //! [`crate::train::ppo::loss::generate_minibatch_indices`] and truncated to
-//! `config.minibatch_size`. Iterating *all* minibatches per epoch is the
-//! more conventional PPO pattern and can be added without changing the
-//! public API.
+//! `config.minibatch_size`. Setting
+//! [`JointTrainerConfig::iterate_all_minibatches`] switches to the
+//! conventional PPO pattern of walking *every* `minibatch_size` chunk per
+//! epoch, so a large rollout is fully consumed instead of ~97% discarded
+//! (issue #239). The default stays single-minibatch so existing NFSP/PSRO
+//! determinism tests are bit-identical.
+//!
+//! # Gradient clipping
+//!
+//! `JointTrainerConfig::max_grad_norm` is applied as a **global** L2-norm
+//! clip on each policy's gradient slice before the optimizer step (issue
+//! #239): if the joint gradient norm exceeds the cap, every gradient is
+//! scaled down by `max_norm / ‖g‖`, preserving direction. This stops the
+//! raw-scale value-loss gradient from swamping the policy heads on the
+//! shared actor-critic trunk.
 
 use anyhow::{Result, anyhow};
 use burn::{
-    module::AutodiffModule,
+    module::{AutodiffModule, Module, ModuleVisitor, Param},
     optim::{GradientsParams, Optimizer},
     tensor::{Int, Tensor, backend::AutodiffBackend},
 };
@@ -64,7 +76,9 @@ use rand::rngs::StdRng;
 
 use crate::train::{
     optimizer::{BackendOptimizer, BurnOptimizer},
-    ppo::loss::{compute_policy_loss, compute_value_loss, scalar_f64},
+    ppo::loss::{
+        compute_policy_loss, compute_value_loss, generate_minibatch_indices_with_rng, scalar_f64,
+    },
 };
 
 // -----------------------------------------------------------------------
@@ -290,6 +304,19 @@ pub struct JointTrainerConfig {
     /// Standardize advantages to zero mean / unit variance per minibatch
     /// before computing the surrogate.
     pub normalize_advantages: bool,
+    /// Iterate over **all** minibatches per epoch instead of a single
+    /// truncated `minibatch_size` draw.
+    ///
+    /// The historical Burn-native cut took one shuffled minibatch per
+    /// epoch (issue #100 simplification), which discards ~97% of a large
+    /// rollout and starves the best-response (issue #239). When `true`,
+    /// each epoch shuffles the rollout once and walks every
+    /// `minibatch_size` chunk, the conventional PPO pattern.
+    ///
+    /// Defaults to `false` to keep existing NFSP/PSRO determinism tests
+    /// bit-identical; callers that want the full-rollout update (e.g. the
+    /// bucket-brigade examples) opt in explicitly.
+    pub iterate_all_minibatches: bool,
 }
 
 impl Default for JointTrainerConfig {
@@ -307,6 +334,7 @@ impl Default for JointTrainerConfig {
             minibatch_size: 256,
             max_grad_norm: 0.5,
             normalize_advantages: true,
+            iterate_all_minibatches: false,
         }
     }
 }
@@ -706,152 +734,194 @@ where
 
         let mut stats = JointStats::zeros(num_agents);
         let mb_size = self.config.minibatch_size.min(num_steps);
+        // Number of minibatch gradient steps actually taken across the
+        // whole update; used to average the accumulated per-step stats.
+        let mut num_mb_steps: usize = 0;
 
         for _epoch in 0..self.config.n_epochs {
-            // One shuffled minibatch per epoch. The shuffle uses the
-            // caller-supplied RNG so PSRO / NFSP runs are bit-reproducible
-            // under their configured seeds (see issue #109).
-            let mut indices: Vec<usize> = (0..num_steps).collect();
+            // Build this epoch's minibatch index-sets.
+            //
+            // * `iterate_all_minibatches == false` (default): one shuffled `minibatch_size`
+            //   draw per epoch — the historical #100 behaviour, kept bit-identical so
+            //   existing NFSP/PSRO determinism tests are unaffected.
+            // * `iterate_all_minibatches == true`: shuffle once and walk every
+            //   `minibatch_size` chunk so the BR consumes the full rollout instead of
+            //   discarding ~97% of it (issue #239).
+            //
+            // Both branches draw their shuffle randomness from the
+            // caller-supplied RNG so PSRO / NFSP runs stay reproducible
+            // under their configured seeds (see issues #109 / #114).
             use rand::seq::SliceRandom;
-            indices.shuffle(rng);
-            indices.truncate(mb_size);
+            let minibatches: Vec<Vec<usize>> = if self.config.iterate_all_minibatches {
+                generate_minibatch_indices_with_rng(num_steps, mb_size, rng)
+            } else {
+                let mut indices: Vec<usize> = (0..num_steps).collect();
+                indices.shuffle(rng);
+                indices.truncate(mb_size);
+                vec![indices]
+            };
 
-            // Per-agent obs minibatches: agent `i` reads from its own
-            // observation buffer at `rollout.observations_per_agent[i]`.
-            let obs_mb_per_agent: Vec<Tensor<B, 2>> = (0..num_agents)
-                .map(|i| {
-                    select_obs(
-                        &rollout.observations_per_agent[i],
-                        rollout.obs_dim,
+            for indices in minibatches {
+                num_mb_steps += 1;
+                // Per-agent obs minibatches: agent `i` reads from its own
+                // observation buffer at `rollout.observations_per_agent[i]`.
+                let obs_mb_per_agent: Vec<Tensor<B, 2>> = (0..num_agents)
+                    .map(|i| {
+                        select_obs(
+                            &rollout.observations_per_agent[i],
+                            rollout.obs_dim,
+                            &indices,
+                            &device,
+                        )
+                    })
+                    .collect();
+
+                // Per-agent forward + per-agent loss accumulation.
+                //
+                // We collect per-agent loss tensors and feature tensors first,
+                // sum them into a single `joint_loss`, then backward once. The
+                // gradients of `joint_loss` w.r.t. each policy's parameters are
+                // then extracted via `GradientsParams::from_grads` and applied
+                // per-policy through that policy's optimizer.
+                let mut per_agent_losses: Vec<Tensor<B, 1>> = Vec::with_capacity(num_agents);
+                let mut features: Vec<Tensor<B, 2>> = Vec::with_capacity(num_agents);
+
+                // Per-agent host scratch for stats.
+                let mut policy_loss_hosts = vec![0.0_f64; num_agents];
+                let mut value_loss_hosts = vec![0.0_f64; num_agents];
+                let mut entropy_hosts = vec![0.0_f64; num_agents];
+                let mut clip_frac_hosts = vec![0.0_f64; num_agents];
+                let mut kl_hosts = vec![0.0_f64; num_agents];
+                let mut ev_hosts = vec![0.0_f64; num_agents];
+
+                for i in 0..num_agents {
+                    let policy = self.policies[i]
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("policy {} is None mid-update", i))?;
+
+                    let obs_mb_i = obs_mb_per_agent[i].clone();
+                    let actions_mb = select_actions(
+                        &rollout.actions[i],
+                        rollout.num_action_dims,
                         &indices,
                         &device,
-                    )
-                })
-                .collect();
+                    );
+                    let old_lp_mb = select_f32_row(&rollout.log_probs[i], &indices, &device);
+                    let adv_mb = select_f32_row(&advantages_host[i], &indices, &device);
+                    let ret_mb = select_f32_row(&returns_host[i], &indices, &device);
+                    let old_v_mb = select_f32_row(&rollout.values[i], &indices, &device);
 
-            // Per-agent forward + per-agent loss accumulation.
-            //
-            // We collect per-agent loss tensors and feature tensors first,
-            // sum them into a single `joint_loss`, then backward once. The
-            // gradients of `joint_loss` w.r.t. each policy's parameters are
-            // then extracted via `GradientsParams::from_grads` and applied
-            // per-policy through that policy's optimizer.
-            let mut per_agent_losses: Vec<Tensor<B, 1>> = Vec::with_capacity(num_agents);
-            let mut features: Vec<Tensor<B, 2>> = Vec::with_capacity(num_agents);
+                    let (new_lp, entropy, values_mb) =
+                        policy.evaluate_actions_joint(obs_mb_i.clone(), actions_mb);
+                    let feat = policy.encoder_features_joint(obs_mb_i);
 
-            // Per-agent host scratch for stats.
-            let mut policy_loss_hosts = vec![0.0_f64; num_agents];
-            let mut value_loss_hosts = vec![0.0_f64; num_agents];
-            let mut entropy_hosts = vec![0.0_f64; num_agents];
-            let mut clip_frac_hosts = vec![0.0_f64; num_agents];
-            let mut kl_hosts = vec![0.0_f64; num_agents];
-            let mut ev_hosts = vec![0.0_f64; num_agents];
+                    let (policy_loss, clip_frac, kl) =
+                        compute_policy_loss(new_lp, old_lp_mb, adv_mb, self.config.clip_range);
+                    let (value_loss, explained_var) =
+                        compute_value_loss(values_mb, old_v_mb, ret_mb, self.config.clip_range_vf);
+                    let entropy_mean = entropy.mean();
 
-            for i in 0..num_agents {
-                let policy = self.policies[i]
-                    .as_ref()
-                    .ok_or_else(|| anyhow!("policy {} is None mid-update", i))?;
+                    // Host-side stats. We pull scalars from each per-agent loss
+                    // tensor *before* moving them into the joint sum so we don't
+                    // need to clone twice.
+                    policy_loss_hosts[i] = scalar_f64(policy_loss.clone());
+                    value_loss_hosts[i] = scalar_f64(value_loss.clone());
+                    entropy_hosts[i] = scalar_f64(entropy_mean.clone());
+                    clip_frac_hosts[i] = clip_frac;
+                    kl_hosts[i] = kl;
+                    ev_hosts[i] = explained_var;
 
-                let obs_mb_i = obs_mb_per_agent[i].clone();
-                let actions_mb =
-                    select_actions(&rollout.actions[i], rollout.num_action_dims, &indices, &device);
-                let old_lp_mb = select_f32_row(&rollout.log_probs[i], &indices, &device);
-                let adv_mb = select_f32_row(&advantages_host[i], &indices, &device);
-                let ret_mb = select_f32_row(&returns_host[i], &indices, &device);
-                let old_v_mb = select_f32_row(&rollout.values[i], &indices, &device);
+                    let agent_loss = policy_loss
+                        + value_loss.mul_scalar(self.config.vf_coef as f32)
+                        + entropy_mean.neg().mul_scalar(self.config.ent_coef as f32);
 
-                let (new_lp, entropy, values_mb) =
-                    policy.evaluate_actions_joint(obs_mb_i.clone(), actions_mb);
-                let feat = policy.encoder_features_joint(obs_mb_i);
+                    per_agent_losses.push(agent_loss);
+                    features.push(feat);
+                }
 
-                let (policy_loss, clip_frac, kl) =
-                    compute_policy_loss(new_lp, old_lp_mb, adv_mb, self.config.clip_range);
-                let (value_loss, explained_var) =
-                    compute_value_loss(values_mb, old_v_mb, ret_mb, self.config.clip_range_vf);
-                let entropy_mean = entropy.mean();
+                // Aggregate per-agent losses, then add the cross-agent aux term.
+                let mut joint_loss: Option<Tensor<B, 1>> = None;
+                for l in per_agent_losses {
+                    joint_loss = Some(match joint_loss.take() {
+                        Some(acc) => acc + l,
+                        None => l,
+                    });
+                }
+                let aux_opt = aux_fn(&features);
+                let aux_scalar: f64 =
+                    aux_opt.as_ref().map(|t| scalar_f64(t.clone())).unwrap_or(0.0);
+                stats.aux_loss += aux_scalar;
+                if let Some(aux) = aux_opt {
+                    joint_loss = Some(match joint_loss.take() {
+                        Some(acc) => acc + aux,
+                        None => aux,
+                    });
+                }
+                let joint_loss = joint_loss.ok_or_else(|| anyhow!("no losses to backprop"))?;
+                stats.total_loss += scalar_f64(joint_loss.clone());
 
-                // Host-side stats. We pull scalars from each per-agent loss
-                // tensor *before* moving them into the joint sum so we don't
-                // need to clone twice.
-                policy_loss_hosts[i] = scalar_f64(policy_loss.clone());
-                value_loss_hosts[i] = scalar_f64(value_loss.clone());
-                entropy_hosts[i] = scalar_f64(entropy_mean.clone());
-                clip_frac_hosts[i] = clip_frac;
-                kl_hosts[i] = kl;
-                ev_hosts[i] = explained_var;
+                // Single backward over the joint loss; the resulting `Gradients`
+                // carry grads for every policy's parameters. Sliced per-policy
+                // below.
+                //
+                // Burn's `Gradients` container is *consumed* per param when we
+                // call `from_module(&mut grads, policy_i)` — each visit removes
+                // policy `i`'s param tensors from the shared container. That's
+                // exactly the per-agent isolation we want: each optimizer only
+                // sees grads for its own policy's parameters, and a single
+                // backward feeds all of them.
+                let mut grads = joint_loss.backward();
 
-                let agent_loss = policy_loss
-                    + value_loss.mul_scalar(self.config.vf_coef as f32)
-                    + entropy_mean.neg().mul_scalar(self.config.ent_coef as f32);
+                for i in 0..num_agents {
+                    let policy = self.policies[i]
+                        .take()
+                        .ok_or_else(|| anyhow!("policy {} is None mid-step", i))?;
+                    // Drain gradient slice for policy `i` either way; this
+                    // keeps the `Gradients` container consistent across all
+                    // agents (Burn removes policy `i`'s params on
+                    // `from_module`, so we always do the drain).
+                    let policy_grads = GradientsParams::from_module(&mut grads, &policy);
+                    let updated = if active[i] {
+                        let lr = self.optimizers[i].learning_rate();
+                        // Global gradient-norm clipping (issue #239). The cap
+                        // configured via `JointTrainerConfig::max_grad_norm` is
+                        // staged on every optimizer in `new`; apply it here to
+                        // each policy's gradient slice before the move-through
+                        // step so the (potentially large) value-loss gradient
+                        // cannot swamp the shared actor-critic trunk. A `None`
+                        // cap leaves the gradients untouched.
+                        let policy_grads = match self.optimizers[i].grad_clip_norm() {
+                            Some(max_norm) if max_norm > 0.0 => clip_grads_by_global_norm::<B, P>(
+                                &policy,
+                                policy_grads,
+                                max_norm as f32,
+                            ),
+                            _ => policy_grads,
+                        };
+                        self.optimizers[i].inner_mut().step(lr, policy, policy_grads)
+                    } else {
+                        // Frozen agent: drop the gradients and put the policy
+                        // back unchanged. This is the freeze-N-1 invariant
+                        // PSRO's best-response step relies on.
+                        drop(policy_grads);
+                        policy
+                    };
+                    self.policies[i] = Some(updated);
 
-                per_agent_losses.push(agent_loss);
-                features.push(feat);
-            }
-
-            // Aggregate per-agent losses, then add the cross-agent aux term.
-            let mut joint_loss: Option<Tensor<B, 1>> = None;
-            for l in per_agent_losses {
-                joint_loss = Some(match joint_loss.take() {
-                    Some(acc) => acc + l,
-                    None => l,
-                });
-            }
-            let aux_opt = aux_fn(&features);
-            let aux_scalar: f64 = aux_opt.as_ref().map(|t| scalar_f64(t.clone())).unwrap_or(0.0);
-            stats.aux_loss += aux_scalar;
-            if let Some(aux) = aux_opt {
-                joint_loss = Some(match joint_loss.take() {
-                    Some(acc) => acc + aux,
-                    None => aux,
-                });
-            }
-            let joint_loss = joint_loss.ok_or_else(|| anyhow!("no losses to backprop"))?;
-            stats.total_loss += scalar_f64(joint_loss.clone());
-
-            // Single backward over the joint loss; the resulting `Gradients`
-            // carry grads for every policy's parameters. Sliced per-policy
-            // below.
-            //
-            // Burn's `Gradients` container is *consumed* per param when we
-            // call `from_module(&mut grads, policy_i)` — each visit removes
-            // policy `i`'s param tensors from the shared container. That's
-            // exactly the per-agent isolation we want: each optimizer only
-            // sees grads for its own policy's parameters, and a single
-            // backward feeds all of them.
-            let mut grads = joint_loss.backward();
-
-            for i in 0..num_agents {
-                let policy = self.policies[i]
-                    .take()
-                    .ok_or_else(|| anyhow!("policy {} is None mid-step", i))?;
-                // Drain gradient slice for policy `i` either way; this
-                // keeps the `Gradients` container consistent across all
-                // agents (Burn removes policy `i`'s params on
-                // `from_module`, so we always do the drain).
-                let policy_grads = GradientsParams::from_module(&mut grads, &policy);
-                let updated = if active[i] {
-                    let lr = self.optimizers[i].learning_rate();
-                    self.optimizers[i].inner_mut().step(lr, policy, policy_grads)
-                } else {
-                    // Frozen agent: drop the gradients and put the policy
-                    // back unchanged. This is the freeze-N-1 invariant
-                    // PSRO's best-response step relies on.
-                    drop(policy_grads);
-                    policy
-                };
-                self.policies[i] = Some(updated);
-
-                stats.policy_loss[i] += policy_loss_hosts[i];
-                stats.value_loss[i] += value_loss_hosts[i];
-                stats.entropy[i] += entropy_hosts[i];
-                stats.clip_fraction[i] += clip_frac_hosts[i];
-                stats.approx_kl[i] += kl_hosts[i];
-                stats.explained_var[i] += ev_hosts[i];
+                    stats.policy_loss[i] += policy_loss_hosts[i];
+                    stats.value_loss[i] += value_loss_hosts[i];
+                    stats.entropy[i] += entropy_hosts[i];
+                    stats.clip_fraction[i] += clip_frac_hosts[i];
+                    stats.approx_kl[i] += kl_hosts[i];
+                    stats.explained_var[i] += ev_hosts[i];
+                }
             }
         }
 
-        // Average across epochs.
-        let n = self.config.n_epochs as f64;
+        // Average across all minibatch gradient steps taken (one per
+        // minibatch per epoch). With the default single-minibatch path this
+        // is exactly `n_epochs`, preserving the historical averaging.
+        let n = num_mb_steps as f64;
         if n > 0.0 {
             for i in 0..num_agents {
                 stats.policy_loss[i] /= n;
@@ -872,6 +942,82 @@ where
 // -----------------------------------------------------------------------
 // Helpers
 // -----------------------------------------------------------------------
+
+/// Clip a policy's gradients to a global L2 norm (issue #239).
+///
+/// This is the standard PPO/A2C "global gradient norm clip": compute the
+/// L2 norm of the **concatenation** of every parameter's gradient, and if
+/// it exceeds `max_norm`, scale *all* gradients by
+/// `max_norm / (total_norm + eps)`. Unlike Burn's built-in
+/// `GradientClipping::Norm` (which clips each parameter tensor
+/// independently), this preserves the *direction* of the joint gradient —
+/// which is exactly what we need so the large shared-trunk value-loss
+/// gradient is tamed without distorting the relative scale of the policy
+/// and value contributions.
+///
+/// Implemented with two module visitor passes:
+/// 1. accumulate `Σ ‖g_p‖²` across all parameters `p`,
+/// 2. if the resulting norm exceeds `max_norm`, multiply every gradient by the
+///    clip coefficient and re-register it.
+///
+/// A non-finite or non-positive total norm leaves the gradients untouched.
+fn clip_grads_by_global_norm<B, M>(
+    module: &M,
+    grads: GradientsParams,
+    max_norm: f32,
+) -> GradientsParams
+where
+    B: AutodiffBackend,
+    M: Module<B>,
+{
+    // Burn stores gradient tensors on the *inner* (non-autodiff) backend,
+    // so we fetch / re-register them as `Tensor<B::InnerBackend, D>`.
+    type Inner<B> = <B as AutodiffBackend>::InnerBackend;
+
+    // Pass 1: sum of squared gradient norms.
+    struct NormAccumulator<'a, B: AutodiffBackend> {
+        grads: &'a GradientsParams,
+        sum_sq: f64,
+        _marker: core::marker::PhantomData<B>,
+    }
+    impl<B: AutodiffBackend> ModuleVisitor<B> for NormAccumulator<'_, B> {
+        fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+            if let Some(g) = self.grads.get::<Inner<B>, D>(param.id) {
+                let sq = g.powf_scalar(2.0).sum();
+                self.sum_sq += scalar_f64(sq);
+            }
+        }
+    }
+    let mut acc =
+        NormAccumulator::<B> { grads: &grads, sum_sq: 0.0, _marker: core::marker::PhantomData };
+    module.visit(&mut acc);
+
+    let total_norm = acc.sum_sq.sqrt();
+    if !total_norm.is_finite() || total_norm <= max_norm as f64 || max_norm <= 0.0 {
+        // Already within the cap (or degenerate) — nothing to scale.
+        return grads;
+    }
+    let clip_coef = (max_norm as f64 / (total_norm + 1e-6)) as f32;
+
+    // Pass 2: scale every gradient by the clip coefficient.
+    struct Scaler<'a, B: AutodiffBackend> {
+        grads: &'a mut GradientsParams,
+        coef: f32,
+        _marker: core::marker::PhantomData<B>,
+    }
+    impl<B: AutodiffBackend> ModuleVisitor<B> for Scaler<'_, B> {
+        fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+            if let Some(g) = self.grads.remove::<Inner<B>, D>(param.id) {
+                self.grads.register::<Inner<B>, D>(param.id, g.mul_scalar(self.coef));
+            }
+        }
+    }
+    let mut grads = grads;
+    let mut scaler =
+        Scaler::<B> { grads: &mut grads, coef: clip_coef, _marker: core::marker::PhantomData };
+    module.visit(&mut scaler);
+    grads
+}
 
 /// Per-agent single-trajectory GAE (host-side).
 ///
@@ -1322,5 +1468,110 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Issue #239: the global-norm clip must (a) leave an already-small
+    /// gradient untouched and (b) scale an oversized gradient down so its
+    /// global L2 norm equals the cap.
+    #[test]
+    fn test_clip_grads_by_global_norm() {
+        let device: NdArrayDevice = Default::default();
+        let policy = MlpBurnPolicy::<B>::new(4, 3, 16, &device);
+
+        // Build a real gradient via a forward/backward so the param ids in
+        // `GradientsParams` line up with the module's params.
+        let obs = Tensor::<B, 2>::from_data(
+            burn::tensor::TensorData::new(vec![0.1_f32; 4 * 8], [8, 4]),
+            &device,
+        );
+        let logits = policy.encoder_features_joint(obs);
+        let loss = logits.powf_scalar(2.0).sum();
+        let grads = GradientsParams::from_grads(loss.backward(), &policy);
+
+        // Helper: global L2 norm of a GradientsParams over `policy`'s params.
+        fn global_norm(policy: &MlpBurnPolicy<B>, grads: &GradientsParams) -> f64 {
+            struct Acc<'a> {
+                grads: &'a GradientsParams,
+                sum_sq: f64,
+            }
+            impl ModuleVisitor<B> for Acc<'_> {
+                fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+                    if let Some(g) =
+                        self.grads.get::<<B as AutodiffBackend>::InnerBackend, D>(param.id)
+                    {
+                        self.sum_sq += scalar_f64(g.powf_scalar(2.0).sum());
+                    }
+                }
+            }
+            let mut acc = Acc { grads, sum_sq: 0.0 };
+            policy.visit(&mut acc);
+            acc.sum_sq.sqrt()
+        }
+
+        let norm_before = global_norm(&policy, &grads);
+        assert!(norm_before.is_finite() && norm_before > 0.0);
+
+        // (a) A cap well above the gradient norm is a no-op.
+        let big_cap = norm_before * 10.0;
+        let unclipped =
+            clip_grads_by_global_norm::<B, MlpBurnPolicy<B>>(&policy, grads, big_cap as f32);
+        let norm_unclipped = global_norm(&policy, &unclipped);
+        assert!(
+            (norm_unclipped - norm_before).abs() < 1e-4,
+            "cap above norm must not change gradients: {norm_before} -> {norm_unclipped}"
+        );
+
+        // (b) A small cap scales the global norm down to (approximately) the
+        // cap.
+        let small_cap = (norm_before / 4.0) as f32;
+        let clipped =
+            clip_grads_by_global_norm::<B, MlpBurnPolicy<B>>(&policy, unclipped, small_cap);
+        let norm_clipped = global_norm(&policy, &clipped);
+        assert!(
+            (norm_clipped - small_cap as f64).abs() < 1e-3 * small_cap as f64 + 1e-4,
+            "clipped global norm {norm_clipped} should equal cap {small_cap}"
+        );
+    }
+
+    /// Issue #239: with `iterate_all_minibatches = true` the update walks
+    /// every minibatch per epoch (more gradient steps than the single-draw
+    /// default) and still produces finite stats.
+    #[test]
+    fn test_iterate_all_minibatches_runs() {
+        let device = Default::default();
+        let num_agents = 2;
+        let obs_dim: usize = 4;
+        let action_dim: usize = 3;
+        let policies = make_mlp_policies(num_agents, obs_dim, action_dim, 16, &device);
+        let optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 3e-4);
+
+        // 128-step rollout, minibatch 32 => 4 minibatches per epoch.
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: 128,
+            n_epochs: 2,
+            minibatch_size: 32,
+            iterate_all_minibatches: true,
+            ..Default::default()
+        };
+        let mut trainer =
+            JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
+
+        let mut env = MockEnv::new(num_agents, obs_dim);
+        let mut last_obs = env.reset_joint(None);
+        let mut rng = StdRng::seed_from_u64(0);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
+        let stats = trainer
+            .update(&rollout, &mut rng, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
+                None
+            })
+            .expect("update should not error");
+
+        for i in 0..num_agents {
+            assert!(stats.policy_loss[i].is_finite(), "policy_loss[{i}] finite");
+            assert!(stats.value_loss[i].is_finite(), "value_loss[{i}] finite");
+            assert!(stats.entropy[i].is_finite(), "entropy[{i}] finite");
+        }
+        assert!(stats.total_loss.is_finite());
     }
 }
