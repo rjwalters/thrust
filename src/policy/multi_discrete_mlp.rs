@@ -334,8 +334,8 @@ impl<B: Backend> MultiDiscreteMlpBurnPolicy<B> {
     /// Batched seeded sampler: one forward over `[N, obs_dim]`, then N
     /// host-side categorical draws in `row major → dim major` order.
     ///
-    /// Bit-identical to calling [`get_action_host_seeded`] once per row on
-    /// `[1, obs_dim]` slices **provided the rows are drawn from the same
+    /// Bit-identical to calling [`Self::get_action_host_seeded`] once per row
+    /// on `[1, obs_dim]` slices **provided the rows are drawn from the same
     /// policy** (same weights in the single batched forward, RNG consumed
     /// one draw per dim per row, ascending). The
     /// [`crate::multi_agent::joint::JointPolicy`]-trait batched entry point
