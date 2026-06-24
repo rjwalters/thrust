@@ -308,20 +308,27 @@ fn main() -> Result<()> {
         // BR-side diagnostic (issue #199): a weak best-response starves
         // the AP target. Surface the BR policy/value loss + entropy each
         // iteration so it is clear whether the RL side is learning.
-        let (br_pol, br_val, br_ent) = match &iter_stats.br_stats {
+        //
+        // Issue #241: also surface the critic explained-variance
+        // (`ev = 1 − Var(returns − values) / Var(returns)`, computed in the
+        // joint PPO update). EV near 0 or negative = critic not fitting;
+        // EV → 1 = critic fits. This is the most informative signal for the
+        // #239 "BR does not learn" investigation.
+        let (br_pol, br_val, br_ent, br_ev) = match &iter_stats.br_stats {
             Some(s) => {
                 let n = s.policy_loss.len().max(1) as f64;
                 (
                     s.policy_loss.iter().sum::<f64>() / n,
                     s.value_loss.iter().sum::<f64>() / n,
                     s.entropy.iter().sum::<f64>() / n,
+                    s.explained_var.iter().sum::<f64>() / n,
                 )
             }
-            None => (f64::NAN, f64::NAN, f64::NAN),
+            None => (f64::NAN, f64::NAN, f64::NAN, f64::NAN),
         };
         tracing::info!(
             "iter {:>3}/{}  reservoir_sizes={:?}  avg_ap_loss={:.4} (Δfloor={:+.4})  \
-             br[pol={:.4} val={:.4} ent={:.4}]  cum_br_pushes={}",
+             br[pol={:.4} val={:.4} ev={:.4} ent={:.4}]  cum_br_pushes={}",
             iter_stats.iteration,
             total_iterations,
             res_sizes,
@@ -329,6 +336,7 @@ fn main() -> Result<()> {
             ap_delta,
             br_pol,
             br_val,
+            br_ev,
             br_ent,
             iter_stats.cumulative_br_pushes
         );

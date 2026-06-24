@@ -288,3 +288,11 @@ required-features = ["training", "env-bucket-brigade"]
 name = "train_nfsp"
 path = "examples/games/bucket_brigade/train_nfsp.rs"
 required-features = ["training", "env-bucket-brigade"]
+
+# Standalone single-best-response A/B probe (issue #241): freeze N-1
+# opponents, train ONE PPO best-response on one cell, log per-iteration
+# val-loss / explained-variance / entropy / mean-return.
+[[example]]
+name = "train_br_probe"
+path = "examples/games/bucket_brigade/train_br_probe.rs"
+required-features = ["training", "env-bucket-brigade"]
