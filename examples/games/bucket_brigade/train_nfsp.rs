@@ -211,24 +211,35 @@ fn main() -> Result<()> {
     //     friendlier range for the BR critic (overridable via `BR_REWARD_SCALE`).
     let ap_coverage: f32 =
         std::env::var("AP_COVERAGE").ok().and_then(|s| s.parse().ok()).unwrap_or(2.0);
+    // Issue #239: dropped 0.01 -> 0.001. The single-BR probe (#241) showed the
+    // critic only starts fitting (explained-variance rises off ~0, entropy
+    // falls below the uniform 1.0 floor) once the value target is scaled to
+    // ~0.001 *and* the BR is trained harder (BR_TRAIN_STEPS=8, VF_COEF=0.5).
+    // At 0.01 the GAE return magnitude stays too large and ev stays pinned at
+    // 0. Affine rescale is return-invariant, so the optimum is unchanged.
     let br_reward_scale: f32 = std::env::var("BR_REWARD_SCALE")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(0.01);
+        .unwrap_or(0.001);
     // Issue #239: the BR oracle did not learn on bucket-brigade. Root cause
     // was the raw-scale value-loss gradient swamping the policy heads on the
     // shared actor-critic trunk, compounded by dead grad-clip config and BR
     // undertraining (one 256-sample minibatch per epoch). The knobs below
     // address that; all are env-overridable so the A/B harness in #239 can
     // sweep them.
-    //   * `VF_COEF` lowers the value-loss weight (0.5 -> 0.05) so the critic
-    //     gradient no longer dominates the shared trunk.
-    //   * `BR_TRAIN_STEPS` runs the PPO update more than once per iteration.
+    //   * `VF_COEF` weights the value-loss term in the combined loss. The #241
+    //     probe showed the critic fits BEST with the historical 0.5 (its shared
+    //     trunk builds Adam momentum alongside the policy); the earlier 0.05
+    //     hypothesis (H1: value gradient swamps the policy) was ruled out — at
+    //     scale 0.001 the value loss is ~8 yet the critic still needs the full 0.5
+    //     weight + more steps to start fitting. Default restored to 0.5.
+    //   * `BR_TRAIN_STEPS` runs the PPO update N times per iteration. The probe
+    //     needed 8 (not 1) before ev rose off 0 and entropy fell below 1.0.
     //   * grad-clip (`max_grad_norm`, default 0.5) is now actually applied in the
     //     joint update, and the update iterates ALL minibatches per epoch.
-    let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.05);
+    let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5);
     let br_train_steps: usize =
-        std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+        std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
     tracing::info!("  ap_coverage      = {ap_coverage} (issue #199 adaptive AP-step floor)");
     tracing::info!("  br_reward_scale  = {br_reward_scale} (issue #199 payoff rescale)");
     tracing::info!("  vf_coef          = {vf_coef} (issue #239 value-loss weight)");

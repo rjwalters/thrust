@@ -241,12 +241,16 @@ fn main() -> Result<()> {
         .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
     // Issue #239: BR-oracle learning knobs (see train_nfsp.rs for the full
-    // root-cause note). `VF_COEF` lowers the value-loss weight off the shared
-    // trunk; `BR_TRAIN_STEPS` runs more PPO updates per iteration; grad-clip
-    // (`max_grad_norm`) is now applied and the update walks all minibatches.
-    let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.05);
+    // root-cause note). The single-BR probe (#241) found the critic only
+    // starts fitting (explained-variance rises off ~0, entropy falls below the
+    // uniform 1.0 floor) with `BR_REWARD_SCALE=0.001 VF_COEF=0.5
+    // BR_TRAIN_STEPS=8`. PSRO's `BR_REWARD_SCALE` default is left at 1.0
+    // (no-op) to keep the operator-gated #134 PSRO re-run bit-identical; run
+    // with that recipe explicitly to enable the strong-BR path. grad-clip
+    // (`max_grad_norm`) is applied and the update walks all minibatches.
+    let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5);
     let br_train_steps: usize =
-        std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+        std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
 
     tracing::info!("Starting PSRO bucket-brigade training (Burn backend: {BACKEND_LABEL})");
     tracing::info!("  cell             = {cell} (β={beta}, κ={kappa}, c={cost})");

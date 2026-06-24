@@ -317,6 +317,37 @@ pub struct JointTrainerConfig {
     /// bit-identical; callers that want the full-rollout update (e.g. the
     /// bucket-brigade examples) opt in explicitly.
     pub iterate_all_minibatches: bool,
+    /// Optional **separate critic learning rate** (issue #239, ranked fix #4).
+    ///
+    /// The shared actor-critic trunk is trained with one optimizer and one
+    /// combined `policy + vf_coef·value − ent_coef·entropy` backward. On the
+    /// bucket-brigade cells the critic never fits (explained-variance pinned
+    /// at ~0 — see #239), so the normalized advantages are noise and the
+    /// policy gradient stays ~0 (entropy stuck at the uniform-max floor).
+    /// PR #240's grad-clip / all-minibatch / `vf_coef` knobs did not move
+    /// `ev` off 0, and dropping `BR_REWARD_SCALE` to 0.001 collapsed value
+    /// loss to ~8 yet `ev` *still* stayed flat — i.e. the critic is not
+    /// fitting even tiny well-scaled targets at the shared 3e-4 LR.
+    ///
+    /// When `Some(lr)`, the joint update splits the combined backward into
+    /// two passes per minibatch:
+    /// 1. **actor pass** — `policy − ent_coef·entropy` stepped through the
+    ///    usual per-agent optimizer at its construction LR;
+    /// 2. **critic pass** — `value_loss` alone stepped through a dedicated
+    ///    per-agent **critic optimizer** at `critic_lr`.
+    ///
+    /// Both passes update the full module (shared trunk + their respective
+    /// heads), but the critic gets its own Adam moment state and (typically
+    /// higher) LR, so it can fit the value target without the policy LR
+    /// dragging it. The critic optimizers are supplied via
+    /// [`JointMultiAgentTrainer::with_critic_optimizers`]; if `critic_lr` is
+    /// `Some` but no critic optimizers were supplied the trainer falls back
+    /// to the single combined backward (logged once at construction).
+    ///
+    /// Defaults to `None` (single combined backward — the historical
+    /// behaviour), so existing NFSP/PSRO runs and determinism tests are
+    /// bit-identical unless a caller opts in.
+    pub critic_lr: Option<f64>,
 }
 
 impl Default for JointTrainerConfig {
@@ -335,6 +366,7 @@ impl Default for JointTrainerConfig {
             max_grad_norm: 0.5,
             normalize_advantages: true,
             iterate_all_minibatches: false,
+            critic_lr: None,
         }
     }
 }
@@ -456,6 +488,13 @@ where
     policies: Vec<Option<P>>,
     /// One optimizer per policy.
     optimizers: Vec<BurnOptimizer<B, P, O>>,
+    /// Optional dedicated **critic** optimizer per policy (issue #239 fix
+    /// #4). Present only when [`JointTrainerConfig::critic_lr`] is `Some`
+    /// and the caller supplied them via
+    /// [`JointMultiAgentTrainer::with_critic_optimizers`]. When present, the
+    /// joint update splits actor / critic into two backward passes so the
+    /// critic can step at its own LR (see `critic_lr` docs). Empty otherwise.
+    critic_optimizers: Vec<BurnOptimizer<B, P, O>>,
     /// Trainer configuration.
     config: JointTrainerConfig,
     /// Device the policies live on.
@@ -501,7 +540,51 @@ where
         for opt in optimizers.iter_mut() {
             opt.clip_grad_norm(config.max_grad_norm);
         }
-        Ok(Self { policies: policies.into_iter().map(Some).collect(), optimizers, config, device })
+        Ok(Self {
+            policies: policies.into_iter().map(Some).collect(),
+            optimizers,
+            critic_optimizers: Vec::new(),
+            config,
+            device,
+        })
+    }
+
+    /// Construct a trainer with a **dedicated per-agent critic optimizer**
+    /// (issue #239, ranked fix #4).
+    ///
+    /// `critic_optimizers[i]` is paired with `policies[i]` and steps only the
+    /// value-loss gradient (a second backward over `value_loss` alone) at its
+    /// own learning rate. This decouples the critic's effective LR from the
+    /// actor's so the critic can fit the bucket-brigade value target (whose
+    /// explained-variance was pinned at ~0 under the single shared optimizer —
+    /// see [`JointTrainerConfig::critic_lr`]).
+    ///
+    /// Requires [`JointTrainerConfig::critic_lr`] to be `Some`; the value is
+    /// the LR the supplied critic optimizers were constructed with (recorded
+    /// for diagnostics — the actual step uses each critic optimizer's own
+    /// construction LR). The same `max_grad_norm` cap is staged on the critic
+    /// optimizers too.
+    pub fn with_critic_optimizers(
+        policies: Vec<P>,
+        optimizers: Vec<BurnOptimizer<B, P, O>>,
+        critic_optimizers: Vec<BurnOptimizer<B, P, O>>,
+        config: JointTrainerConfig,
+        device: B::Device,
+    ) -> Result<Self> {
+        if critic_optimizers.len() != policies.len() {
+            return Err(anyhow!(
+                "JointMultiAgentTrainer: critic_optimizers.len() ({}) != policies.len() ({})",
+                critic_optimizers.len(),
+                policies.len()
+            ));
+        }
+        let mut trainer = Self::new(policies, optimizers, config, device)?;
+        let mut critic_optimizers = critic_optimizers;
+        for opt in critic_optimizers.iter_mut() {
+            opt.clip_grad_norm(trainer.config.max_grad_norm);
+        }
+        trainer.critic_optimizers = critic_optimizers;
+        Ok(trainer)
     }
 
     /// Device the trainer (and all its policies) live on.
@@ -785,6 +868,17 @@ where
                 // per-policy through that policy's optimizer.
                 let mut per_agent_losses: Vec<Tensor<B, 1>> = Vec::with_capacity(num_agents);
                 let mut features: Vec<Tensor<B, 2>> = Vec::with_capacity(num_agents);
+                // Issue #239 fix #4: when a dedicated critic optimizer is
+                // present, the value-loss term is held out of the actor's
+                // joint loss and stepped separately at `critic_lr`. We keep
+                // each per-agent value-loss tensor (graph still alive) for a
+                // second backward below.
+                let split_critic = !self.critic_optimizers.is_empty();
+                let mut per_agent_value_losses: Vec<Tensor<B, 1>> = if split_critic {
+                    Vec::with_capacity(num_agents)
+                } else {
+                    Vec::new()
+                };
 
                 // Per-agent host scratch for stats.
                 let mut policy_loss_hosts = vec![0.0_f64; num_agents];
@@ -831,9 +925,19 @@ where
                     kl_hosts[i] = kl;
                     ev_hosts[i] = explained_var;
 
-                    let agent_loss = policy_loss
-                        + value_loss.mul_scalar(self.config.vf_coef as f32)
-                        + entropy_mean.neg().mul_scalar(self.config.ent_coef as f32);
+                    let entropy_term = entropy_mean.neg().mul_scalar(self.config.ent_coef as f32);
+                    let agent_loss = if split_critic {
+                        // Critic stepped separately at `critic_lr`; keep the
+                        // value-loss tensor (its autodiff graph is still live)
+                        // for the second backward, and exclude it from the
+                        // actor's joint loss.
+                        per_agent_value_losses.push(value_loss);
+                        policy_loss + entropy_term
+                    } else {
+                        policy_loss
+                            + value_loss.mul_scalar(self.config.vf_coef as f32)
+                            + entropy_term
+                    };
 
                     per_agent_losses.push(agent_loss);
                     features.push(feat);
@@ -914,6 +1018,60 @@ where
                     stats.clip_fraction[i] += clip_frac_hosts[i];
                     stats.approx_kl[i] += kl_hosts[i];
                     stats.explained_var[i] += ev_hosts[i];
+                }
+
+                // ---- Critic pass (issue #239 fix #4) -----------------------
+                // When a dedicated critic optimizer is present, run a second
+                // backward over the value loss alone and step it at the
+                // critic LR. This gives the critic its own Adam moment state
+                // and (typically higher) learning rate, decoupled from the
+                // actor, so it can fit the bucket-brigade value target whose
+                // explained-variance was otherwise pinned at ~0.
+                if split_critic {
+                    // Sum the per-agent value losses (weighted by vf_coef, so
+                    // the scalar magnitude matches the historical combined
+                    // term and the existing grad-clip cap stays calibrated).
+                    let mut critic_joint: Option<Tensor<B, 1>> = None;
+                    for vl in per_agent_value_losses {
+                        let term = vl.mul_scalar(self.config.vf_coef as f32);
+                        critic_joint = Some(match critic_joint.take() {
+                            Some(acc) => acc + term,
+                            None => term,
+                        });
+                    }
+                    let critic_joint =
+                        critic_joint.ok_or_else(|| anyhow!("no value losses to backprop"))?;
+                    let mut critic_grads = critic_joint.backward();
+
+                    // Indexing `self.policies` / `self.critic_optimizers` by `i`
+                    // is load-bearing (`.take()` mutates the `Option` slot), so
+                    // the range loop cannot be rewritten as an iterator over a
+                    // single slice; mirrors the actor step loop above.
+                    #[allow(clippy::needless_range_loop)]
+                    for i in 0..num_agents {
+                        let policy = self.policies[i]
+                            .take()
+                            .ok_or_else(|| anyhow!("policy {} is None mid-critic-step", i))?;
+                        let value_grads = GradientsParams::from_module(&mut critic_grads, &policy);
+                        let updated = if active[i] {
+                            let lr = self.critic_optimizers[i].learning_rate();
+                            let value_grads = match self.critic_optimizers[i].grad_clip_norm() {
+                                Some(max_norm) if max_norm > 0.0 => {
+                                    clip_grads_by_global_norm::<B, P>(
+                                        &policy,
+                                        value_grads,
+                                        max_norm as f32,
+                                    )
+                                }
+                                _ => value_grads,
+                            };
+                            self.critic_optimizers[i].inner_mut().step(lr, policy, value_grads)
+                        } else {
+                            drop(value_grads);
+                            policy
+                        };
+                        self.policies[i] = Some(updated);
+                    }
                 }
             }
         }
@@ -1691,5 +1849,99 @@ mod tests {
             assert!(stats.entropy[i].is_finite(), "entropy[{i}] finite");
         }
         assert!(stats.total_loss.is_finite());
+    }
+
+    /// Issue #239 fix #4: with a dedicated critic optimizer
+    /// (`with_critic_optimizers`) the update runs the actor and critic in two
+    /// backward passes, steps both, and still produces finite stats. Mirrors
+    /// `test_iterate_all_minibatches_runs` but exercises the split-critic path.
+    #[test]
+    fn test_split_critic_optimizer_runs() {
+        let device = Default::default();
+        let num_agents = 2;
+        let obs_dim: usize = 4;
+        let action_dim: usize = 3;
+        let policies = make_mlp_policies(num_agents, obs_dim, action_dim, 16, &device);
+        let optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 3e-4);
+        // Dedicated critic optimizers at a higher LR (the #239 fix #4 pattern).
+        let critic_optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 1e-3);
+
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: 128,
+            n_epochs: 2,
+            minibatch_size: 32,
+            iterate_all_minibatches: true,
+            critic_lr: Some(1e-3),
+            ..Default::default()
+        };
+        let mut trainer = JointMultiAgentTrainer::with_critic_optimizers(
+            policies,
+            optimizers,
+            critic_optimizers,
+            config,
+            device,
+        )
+        .unwrap();
+
+        let mut env = MockEnv::new(num_agents, obs_dim);
+        let mut last_obs = env.reset_joint(None);
+        let mut rng = StdRng::seed_from_u64(0);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
+        let stats = trainer
+            .update(&rollout, &mut rng, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
+                None
+            })
+            .expect("split-critic update should not error");
+
+        for i in 0..num_agents {
+            assert!(stats.policy_loss[i].is_finite(), "policy_loss[{i}] finite");
+            assert!(stats.value_loss[i].is_finite(), "value_loss[{i}] finite");
+            assert!(stats.entropy[i].is_finite(), "entropy[{i}] finite");
+            assert!(stats.explained_var[i].is_finite(), "explained_var[{i}] finite");
+        }
+        assert!(stats.total_loss.is_finite());
+    }
+
+    /// Issue #239 fix #4: supplying a critic-optimizer count that mismatches
+    /// the policy count is rejected at construction.
+    #[test]
+    fn test_with_critic_optimizers_length_mismatch_errors() {
+        let device = Default::default();
+        let num_agents = 2;
+        let policies = make_mlp_policies(num_agents, 4, 3, 8, &device);
+        let optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 3e-4);
+        // One too few critic optimizers.
+        let critic_optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents - 1, 1e-3);
+        let config = JointTrainerConfig { num_agents, ..Default::default() };
+        let result = JointMultiAgentTrainer::with_critic_optimizers(
+            policies,
+            optimizers,
+            critic_optimizers,
+            config,
+            device,
+        );
+        assert!(result.is_err(), "mismatched critic_optimizers length must be rejected");
+    }
+
+    /// Issue #239 fix #4 regression guard: the default trainer (no critic
+    /// optimizers) takes the single combined backward and is unaffected by
+    /// the split-critic plumbing — `critic_lr` defaults to `None`.
+    #[test]
+    fn test_default_path_has_no_critic_optimizers() {
+        let device = Default::default();
+        let num_agents = 2;
+        let policies = make_mlp_policies(num_agents, 4, 3, 8, &device);
+        let optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 3e-4);
+        let config = JointTrainerConfig { num_agents, ..Default::default() };
+        assert!(
+            JointTrainerConfig::default().critic_lr.is_none(),
+            "default critic_lr must be None"
+        );
+        let trainer = JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
+        assert!(
+            trainer.critic_optimizers.is_empty(),
+            "default trainer must carry no critic optimizers (single combined backward)"
+        );
     }
 }
