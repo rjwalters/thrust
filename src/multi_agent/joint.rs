@@ -126,6 +126,44 @@ pub trait JointPolicy<B: AutodiffBackend>: AutodiffModule<B> + Clone {
         rng: &mut StdRng,
     ) -> (Vec<i64>, Vec<f32>, Vec<f32>);
 
+    /// Batched seeded sampler: `obs` carries `N` rows scored through **this
+    /// one policy** in a single forward, returning `N` actions.
+    ///
+    /// # When this helps (and when it does not)
+    ///
+    /// This eliminates per-call batch-1 forward overhead on the NdArray
+    /// backend wherever many observations are scored through the **same**
+    /// model in one step — e.g. the constant-obs marginal probe
+    /// ([`crate::multi_agent::nfsp::NfspTrainer::action_marginal_for`]),
+    /// or a future parallel-env rollout where one frozen policy scores
+    /// many env rows.
+    ///
+    /// It does **not** apply across the per-agent forwards of NFSP's (or
+    /// PSRO's) rollout: those `num_agents` forwards each run a *distinct*
+    /// per-agent policy module, and a single batched forward applies one
+    /// weight set to every row — so stacking the agents' observations
+    /// into one `[N, obs_dim]` tensor would be semantically wrong. NFSP
+    /// runs a single shared joint episode (`env.step_joint`), so there is
+    /// no within-model batch dimension to collapse in the rollout itself;
+    /// the per-step forward count there is irreducible. See issue #235.
+    ///
+    /// # Determinism
+    ///
+    /// The default implementation simply calls
+    /// [`Self::get_action_host_seeded`] on the full `[N, obs_dim]` tensor,
+    /// which already draws RNG in row-major order. Implementors that
+    /// override this (the concrete MLP policies do) must keep the per-row
+    /// RNG draw order identical so the sampled action stream is
+    /// bit-for-bit reproducible under `PsroConfig::seed` / `NfspConfig::seed`
+    /// (issue #114).
+    fn get_actions_host_seeded_batched(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        self.get_action_host_seeded(obs, rng)
+    }
+
     /// Re-evaluate the policy on previously-sampled actions.
     ///
     /// `actions` is shape `[batch, num_dims]`. For scalar discrete policies
@@ -178,6 +216,16 @@ where
         (actions, log_probs, values)
     }
 
+    fn get_actions_host_seeded_batched(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        // One forward over all rows (same model) instead of per-row
+        // batch-1 forwards; RNG draw order unchanged (issue #235).
+        self.get_actions_host_seeded_batched(obs, rng)
+    }
+
     fn evaluate_actions_joint(
         &self,
         obs: Tensor<B, 2>,
@@ -212,6 +260,16 @@ where
         rng: &mut StdRng,
     ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
         self.get_action_host_seeded(obs, rng)
+    }
+
+    fn get_actions_host_seeded_batched(
+        &self,
+        obs: Tensor<B, 2>,
+        rng: &mut StdRng,
+    ) -> (Vec<i64>, Vec<f32>, Vec<f32>) {
+        // One forward over all rows (same model) instead of per-row
+        // batch-1 forwards; RNG draw order unchanged (issue #235).
+        self.get_actions_host_seeded_batched(obs, rng)
     }
 
     fn evaluate_actions_joint(

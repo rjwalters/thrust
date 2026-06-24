@@ -676,25 +676,35 @@ where
             .iter()
             .find_map(|r| r.items().first().map(|(obs, _)| obs.len()))
             .unwrap_or(1);
-        let obs_data: Vec<f32> = vec![0.0_f32; obs_dim];
-        let obs = Tensor::<B, 2>::from_data(TensorData::new(obs_data, [1, obs_dim]), &self.device);
         // Use a forward+softmax probe. Implementations of
         // `JointPolicy` for `MlpBurnPolicy` and
         // `MultiDiscreteMlpBurnPolicy` both implement the standard
         // policy-head structure; we don't have a direct `logits()`
-        // method on the trait, so we sample `get_action_host_seeded`
-        // repeatedly and take the empirical marginal as the diagnostic.
-        // For a single-row constant observation this is correct in
-        // expectation; it's a host-side probe with no autograd cost.
+        // method on the trait, so we sample the policy repeatedly and
+        // take the empirical marginal as the diagnostic. For a single-row
+        // constant observation this is correct in expectation; it's a
+        // host-side probe with no autograd cost.
+        //
+        // Issue #235: all `probes` rows are the **same constant
+        // observation** scored through the **same** policy, so we stack
+        // them into one `[probes, obs_dim]` tensor and do a *single*
+        // batched forward via `get_actions_host_seeded_batched` instead
+        // of `probes` batch-1 forwards. The batched sampler draws one
+        // `rng.random()` per row in ascending order — bit-identical to
+        // the old per-probe loop — so the seeded marginal trace is
+        // unchanged (guarded by `test_nfsp_avg_marginal_trace_is_bit_identical`).
         let probes = 128usize;
+        let obs_data: Vec<f32> = vec![0.0_f32; probes * obs_dim];
+        let obs =
+            Tensor::<B, 2>::from_data(TensorData::new(obs_data, [probes, obs_dim]), &self.device);
+        let (acts, _, _) = policy.get_actions_host_seeded_batched(obs, &mut self.rng);
         let mut counts = vec![0u32; action_dim];
-        for _ in 0..probes {
-            let (acts, _, _) = policy.get_action_host_seeded(obs.clone(), &mut self.rng);
-            if let Some(&a) = acts.first() {
-                let idx = a as usize;
-                if idx < action_dim {
-                    counts[idx] += 1;
-                }
+        // Scalar-discrete (`dims.len() == 1`) guaranteed above, so the
+        // batched action layout is one entry per row.
+        for &a in acts.iter().take(probes) {
+            let idx = a as usize;
+            if idx < action_dim {
+                counts[idx] += 1;
             }
         }
         Some(counts.iter().map(|&c| c as f32 / probes as f32).collect())
