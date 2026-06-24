@@ -42,11 +42,21 @@
 //! - `CELL` — one of `beta01|beta05|beta09` (default `beta05`).
 //! - `ITERATIONS` — number of BR rollout/update iterations (default 20).
 //! - `ROLLOUT_STEPS` — env steps collected per iteration (default 2048).
-//! - `VF_COEF` — value-loss weight in the joint loss (#240, default 0.05).
-//! - `BR_TRAIN_STEPS` — PPO updates per iteration (#240, default 1).
+//! - `VF_COEF` — value-loss weight in the joint loss (#240, default 0.5).
+//! - `BR_TRAIN_STEPS` — PPO updates per iteration (#240, default 8).
 //! - `BR_REWARD_SCALE` — affine reward rescale before the update (#240/#199,
-//!   default 0.01). Does not change the optimal policy; keeps the `[−700, 0]`
+//!   default 0.001). Does not change the optimal policy; keeps the `[−700, 0]`
 //!   payoff band in a critic-friendly range.
+//! - `CRITIC_LR` — optional dedicated critic learning rate (#239 fix #4). Unset
+//!   (default) => single shared actor+critic optimizer. When set, the joint
+//!   update splits actor/critic into two backward passes and steps the critic
+//!   at this LR. In the #239 A/B this split did NOT improve critic fit over the
+//!   single optimizer (it can hurt); kept gated/off as a knob.
+//!
+//! The defaults above are the empirically-winning #239 settings: with them the
+//! critic explained-variance rises off ~0 (to ~0.3 by iter 16 on beta05) and
+//! the policy entropy falls below the uniform 1.0 floor — the directional win
+//! the #239 acceptance criteria ask for.
 //!
 //! All of these reuse the exact same plumbing the NFSP/PSRO trainers use;
 //! this example introduces no new training knobs.
@@ -130,13 +140,24 @@ fn main() -> Result<()> {
 
     // #240 knobs — identical semantics and defaults to train_nfsp.rs so the
     // probe and the full trainer can be A/B'd against each other directly.
-    let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.05);
+    // Defaults updated to the #239 empirical win: at these settings the critic
+    // explained-variance rises off ~0 and the policy entropy falls below the
+    // uniform 1.0 floor within ~8 iters on cell beta05 (vs. flat ev=0 /
+    // entropy≈1.22 at the earlier 0.05 / 1 / 0.01 defaults).
+    let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5);
     let br_train_steps: usize =
-        std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+        std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
     let br_reward_scale: f32 = std::env::var("BR_REWARD_SCALE")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(0.01);
+        .unwrap_or(0.001);
+    // #239 fix #4: optional dedicated critic LR. When set, the joint update
+    // splits actor/critic into two backward passes and steps the critic at
+    // this LR (vs. the actor's 3e-4), so the critic can fit the value target.
+    let critic_lr: Option<f64> = std::env::var("CRITIC_LR")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|v| *v > 0.0);
 
     tracing::info!("Single-BR probe (issue #241) — Burn backend: {BACKEND_LABEL}");
     tracing::info!("  cell             = {cell} (β={beta}, κ={kappa}, c={cost})");
@@ -146,6 +167,14 @@ fn main() -> Result<()> {
     tracing::info!("  vf_coef          = {vf_coef} (#240 value-loss weight)");
     tracing::info!("  br_train_steps   = {br_train_steps} (#240 PPO updates/iter)");
     tracing::info!("  br_reward_scale  = {br_reward_scale} (#240/#199 payoff rescale)");
+    match critic_lr {
+        Some(lr) => {
+            tracing::info!("  critic_lr        = {lr} (#239 fix #4: separate critic optimizer)")
+        }
+        None => {
+            tracing::info!("  critic_lr        = (unset — single shared actor+critic optimizer)")
+        }
+    }
 
     let device: burn::tensor::Device<InnerBackend> = Default::default();
 
@@ -183,11 +212,32 @@ fn main() -> Result<()> {
         vf_coef,
         // #240: consume the full rollout instead of one 256-sample draw.
         iterate_all_minibatches: true,
+        // #239 fix #4: dedicated critic LR (None => single shared optimizer).
+        critic_lr,
         ..Default::default()
     };
 
-    let mut trainer =
-        JointMultiAgentTrainer::<B, _, _>::new(policies, optimizers, joint_config, device)?;
+    let mut trainer = match critic_lr {
+        Some(lr) => {
+            // Dedicated per-agent critic optimizer at `critic_lr`. The actor
+            // optimizers keep the construction LR (3e-4); the critic steps the
+            // value-loss gradient separately at `lr`.
+            let critic_optimizers: Vec<_> = (0..NUM_AGENTS)
+                .map(|_| {
+                    let inner = AdamConfig::new().init();
+                    BurnOptimizer::new(inner, lr)
+                })
+                .collect();
+            JointMultiAgentTrainer::<B, _, _>::with_critic_optimizers(
+                policies,
+                optimizers,
+                critic_optimizers,
+                joint_config,
+                device,
+            )?
+        }
+        None => JointMultiAgentTrainer::<B, _, _>::new(policies, optimizers, joint_config, device)?,
+    };
 
     // Freeze-N−1: only BR_AGENT's optimizer steps; opponents stay fixed.
     let active_mask: Vec<bool> = (0..NUM_AGENTS).map(|i| i == BR_AGENT).collect();
