@@ -479,3 +479,106 @@ for CAP in "" "2"; do TOTAL_ITERATIONS=1 ROLLOUT_STEPS=2048 CELL=beta05 \
   BR_REWARD_SCALE=0.001 VF_COEF=0.5 BR_TRAIN_STEPS=2 BR_MAX_MINIBATCHES_PER_EPOCH=$CAP \
   cargo run --release --example train_nfsp --features "training,env-bucket-brigade"; done
 ```
+
+---
+
+# Lever sweep for the #239 efficacy gap (issue #252, 2026-06-24)
+
+**Date:** 2026-06-24
+**Branch:** `feature/issue-252`
+**Backend:** NdArray<f32> CPU, local workstation (28 cores). **Every number below is local,
+small/short-budget, and directional** — there was no cluster access this session. Do **not** read
+these as cluster figures.
+
+Issue #252 asked which lever, if any, closes the gap between the #239 best-response fix's weak
+cluster behaviour (critic explained-variance `ev` plateauing at ~0.15, entropy ≥ 1.0 on 2/3 cells,
+flat `mean_ep_return`) and the ~0.48 achievable EV ceiling established by the #242 fittability
+diagnostic (`tests/test_bucket_brigade_critic_fittability.rs`: best held-out `local_obs → return`
+EV ≈ 0.48). One lever at a time was swept off the current default baseline
+(`BR_REWARD_SCALE=0.001 VF_COEF=0.5 BR_TRAIN_STEPS=8`, 2048 rollout), beta05.
+
+## Headline result — the EV "plateau" was premature stopping, not a cap
+
+The single most important question was **"does `ev` keep climbing past iter 12, or is it capped at
+~0.15?"** Answer: **it keeps climbing, all the way to (and past) the ~0.48 ceiling.** The cluster's
+~0.15 reading was an artifact of stopping the probe at iter 12 — the EV onset is slow (~iter 8) and
+the rise continues for another ~15 iterations.
+
+`train_br_probe`, beta05, 2048 rollout, baseline knobs, **40 iters** (selected rows; the run was
+captured through iter 39):
+
+| iter | `ev` | `ent` | `mean_ep_return` | note |
+|------|------|-------|------------------|------|
+| 1 | 0.000 | 1.220 | −25 549 | uniform start |
+| 7 | 0.000 | 1.009 | −27 107 | critic still flat |
+| 8 | 0.011 | **0.993** | −26 643 | EV onset; the *only* sub-1.0 entropy reading |
+| 9 | 0.132 | 1.004 | −26 760 | EV rising |
+| 12 | 0.172 | 1.056 | −30 293 | **where the cluster stopped (~0.15–0.17)** |
+| 16 | 0.329 | 1.120 | −24 334 | matches the original local "0.33" claim |
+| 20 | 0.341 | 1.111 | −26 832 | still climbing |
+| 25 | **0.478** | 1.156 | −28 214 | **reaches the ~0.48 #242 ceiling** |
+| 29 | 0.489 | 1.178 | −24 256 | at ceiling |
+| 33 | 0.580 | 1.125 | −26 629 | on-policy EV overshoots the offline 0.48 |
+| 38 | 0.564 | 1.115 | −27 585 | plateaued ~0.48–0.58 |
+| 39 | 0.552 | 1.134 | −27 927 | plateaued |
+
+**Reading:**
+
+- **`ev` is NOT capped at ~0.15.** Given enough iterations the per-agent BR critic fits to the
+  full #242 ceiling (`ev` ≈ 0.48 by iter 25, oscillating 0.48–0.58 thereafter; the on-policy PPO
+  `ev`, measured on the current batch, runs a touch above the offline held-out 0.48). The headroom
+  the issue worried about **is captured — by Lever 1 (more iterations) alone.** The cluster's
+  "EV → 0.15 plateau" was reading the trajectory at iter 12, before the rise finished.
+- **But the objective is still not met.** Two things the issue cares about do **not** improve, even
+  with a fully-fit critic:
+  - **Entropy never settles below the uniform floor.** There is a single transient dip to 0.993 at
+    iter 8; as `ev` climbs the policy entropy *recovers* to ~1.10–1.18 and stays there. The
+    "entropy < 1.0" signal is fragile and, here, non-monotone.
+  - **`mean_ep_return` is flat** (~−24k to −30k, no trend) across all 39 iters. A critic that
+    predicts returns at the achievable ceiling does **not** translate into a stronger best response.
+
+This is the crux finding: **critic *fit* is not the bottleneck** (it is solvable with more
+iterations), so strengthening the critic further cannot be the unblock for #134. The bottleneck is
+that a well-fit per-agent critic does not yield a higher-return policy — which points at the
+policy-improvement / advantage side and **re-opens the centralized-critic question #242 set aside**
+(a per-agent critic that fits its *own* return target is still not enough to drive the BR).
+
+## Lever 2 — separate critic optimizer (`CRITIC_LR`, #239 fix #4): harmful
+
+`train_br_probe`, beta05, 2048, baseline knobs + `CRITIC_LR=1e-3` (splits actor/critic into two
+backward passes, steps the value head at 1e-3 vs the actor's 3e-4), 20 iters:
+
+| iter | `ev` | `ent` | `mean_ep_return` |
+|------|------|-------|------------------|
+| 1 | 0.000 | 1.209 | −26 064 |
+| 8 | 0.000 | 1.190 | −30 558 |
+| 14 | 0.000 | 1.079 | −24 782 |
+| 20 | 0.000 | 0.922 | −29 153 |
+
+`ev` stays pinned at ~0.000 for the **entire** run — the separate critic optimizer **breaks** the
+EV-rising behaviour the shared optimizer produces (value loss stays ~11–16, never collapses). This
+confirms #239's "unhelpful in isolation" finding and sharpens it: at the tested LR the split is
+**actively harmful** to critic fit. Note the entropy still drifts to 0.92 *without any critic fit* —
+reinforcing that entropy decline is **not** evidence the critic is working (see also the 512-rollout
+control below).
+
+## Control — entropy collapse without critic fit (512 rollout)
+
+A cheap control that screened whether a smaller rollout could stand in for 2048 (it cannot, but the
+result is independently informative). `train_br_probe`, beta05, **512** rollout, baseline knobs, 40
+iters:
+
+| iter | `ev` | `ent` | `mean_ep_return` |
+|------|------|-------|------------------|
+| 1 | −0.001 | 1.193 | −25 520 |
+| 8 | 0.000 | 0.944 | −26 465 |
+| 20 | 0.000 | 0.617 | −22 900 |
+| 40 | −0.001 | 0.306 | −22 680 |
+
+At 512 the critic **never fits** (`ev` ≈ 0 throughout — the per-update batch is too small for the
+value head), yet the policy entropy **collapses to 0.31** and `mean_ep_return` stays flat. Two
+consequences: (1) the critic is **data-hungry** — it needs the larger 2048 batch to fit, so the
+#251 minibatch-cap lever (which *reduces* per-epoch data) would hurt, not help, EV; and (2) the
+"entropy < 1.0" acceptance signal is **unreliable in isolation** — here entropy crosses well below
+1.0 with *zero* critic fit and *zero* return improvement. The real objective is `mean_ep_return`,
+and it does not move in any 512 or 2048 configuration tested.

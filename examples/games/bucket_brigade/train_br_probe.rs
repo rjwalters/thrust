@@ -26,7 +26,7 @@
 //! # Usage
 //!
 //! ```bash
-//! # Default A/B probe (cell β=0.5, 20 iters, ndarray CPU backend):
+//! # Default A/B probe (cell β=0.5, 30 iters, ndarray CPU backend):
 //! cargo run --release --example train_br_probe \
 //!     --features "training,env-bucket-brigade"
 //!
@@ -40,7 +40,8 @@
 //! # Env-var knobs
 //!
 //! - `CELL` — one of `beta01|beta05|beta09` (default `beta05`).
-//! - `ITERATIONS` — number of BR rollout/update iterations (default 20).
+//! - `ITERATIONS` — number of BR rollout/update iterations (default 30; see
+//!   `DEFAULT_ITERATIONS` — raised from 20 per the #252 sweep).
 //! - `ROLLOUT_STEPS` — env steps collected per iteration (default 2048).
 //! - `VF_COEF` — value-loss weight in the joint loss (#240, default 0.5).
 //! - `BR_TRAIN_STEPS` — PPO updates per iteration (#240, default 8).
@@ -53,10 +54,19 @@
 //!   at this LR. In the #239 A/B this split did NOT improve critic fit over the
 //!   single optimizer (it can hurt); kept gated/off as a knob.
 //!
-//! The defaults above are the empirically-winning #239 settings: with them the
-//! critic explained-variance rises off ~0 (to ~0.3 by iter 16 on beta05) and
-//! the policy entropy falls below the uniform 1.0 floor — the directional win
-//! the #239 acceptance criteria ask for.
+//! The defaults above are the empirically-winning #239 settings. With them, on
+//! beta05 (2048 rollout) the critic explained-variance rises off ~0 — onset is
+//! slow (~iter 8) and the climb continues for ~15 more iterations, reaching the
+//! ~0.48 fittability ceiling (#242) by ~iter 25. The policy entropy only dips
+//! to the uniform 1.0 floor transiently (~iter 8) and then recovers above it.
+//! Because the EV onset is slow and the rise is long, reading the trajectory
+//! too early (e.g. at iter 12) badly understates the fit — see the #252 lever
+//! sweep in `docs/research/2026-06-bucket-brigade-validation.md`, which found
+//! the reported "EV plateaus at ~0.15" was premature stopping, not a cap. The
+//! `DEFAULT_ITERATIONS` below was raised accordingly so the default run reaches
+//! the EV plateau rather than truncating mid-climb. NOTE: a fully-fit critic
+//! did NOT improve `mean_ep_return` in that sweep — critic fit is not the
+//! bottleneck.
 //!
 //! All of these reuse the exact same plumbing the NFSP/PSRO trainers use;
 //! this example introduces no new training knobs.
@@ -89,7 +99,12 @@ const BACKEND_LABEL: &str = "Wgpu<f32, i32> + Autodiff (GPU: Vulkan/Metal/DX12/W
 const NUM_AGENTS: usize = 4;
 const HIDDEN_DIM: usize = 64;
 const SEED: u64 = 42;
-const DEFAULT_ITERATIONS: usize = 20;
+// Raised 20 → 30 per the #252 sweep: the EV onset is ~iter 8 and the rise to
+// the ~0.48 #242 ceiling is not complete until ~iter 25, so the prior default
+// of 20 truncated mid-climb (and the habitual iter-12 read understated it as
+// ~0.15). 30 reaches the EV plateau so the default probe run is not misleading.
+// Override with ITERATIONS for shorter/longer runs.
+const DEFAULT_ITERATIONS: usize = 30;
 const DEFAULT_ROLLOUT_STEPS: usize = 2048;
 const DEFAULT_CELL: &str = "beta05";
 /// The single agent we train a best-response for. The other
@@ -141,9 +156,10 @@ fn main() -> Result<()> {
     // #240 knobs — identical semantics and defaults to train_nfsp.rs so the
     // probe and the full trainer can be A/B'd against each other directly.
     // Defaults updated to the #239 empirical win: at these settings the critic
-    // explained-variance rises off ~0 and the policy entropy falls below the
-    // uniform 1.0 floor within ~8 iters on cell beta05 (vs. flat ev=0 /
-    // entropy≈1.22 at the earlier 0.05 / 1 / 0.01 defaults).
+    // explained-variance rises off ~0 on cell beta05 (onset ~iter 8, climbing to
+    // the ~0.48 #242 ceiling by ~iter 25), vs. flat ev=0 / entropy≈1.22 at the
+    // earlier 0.05 / 1 / 0.01 defaults. The entropy dips to the uniform 1.0 floor
+    // only transiently (~iter 8) and recovers above it (see the #252 sweep).
     let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5);
     let br_train_steps: usize =
         std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);
