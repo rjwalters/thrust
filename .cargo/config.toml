@@ -1,5 +1,9 @@
+# Use the fast lld linker. We pass it via `-fuse-ld=lld` rather than also
+# pinning `linker = "clang"`: the default gcc/cc driver (present on every Linux
+# box) honors `-fuse-ld=lld` too, so requiring clang added a dependency without
+# benefit — fresh machines failed with an opaque "linker `clang` not found".
+# Only `lld` itself is needed now (sudo apt install -y lld).
 [target.x86_64-unknown-linux-gnu]
-linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
 [target.x86_64-apple-darwin]
