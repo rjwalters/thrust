@@ -98,7 +98,12 @@ const BACKEND_LABEL: &str = "Wgpu<f32, i32> + Autodiff (GPU: Vulkan/Metal/DX12/W
 
 const NUM_AGENTS: usize = 4;
 const HIDDEN_DIM: usize = 64;
-const SEED: u64 = 42;
+/// Base RNG seed. Override with the `SEED` env var (default 42) so multiple
+/// machines can run independent replicates of the same config (issue #134
+/// seeded validation). Behavior-preserving when `SEED` is unset.
+fn base_seed() -> u64 {
+    std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(42)
+}
 // Raised 20 → 30 per the #252 sweep: the EV onset is ~iter 8 and the rise to
 // the ~0.48 #242 ceiling is not complete until ~iter 25, so the prior default
 // of 20 truncated mid-climb (and the habitual iter-12 read understated it as
@@ -211,7 +216,7 @@ fn main() -> Result<()> {
 
     let device: burn::tensor::Device<InnerBackend> = Default::default();
 
-    let probe = make_cell_env(beta, kappa, cost, Some(SEED));
+    let probe = make_cell_env(beta, kappa, cost, Some(base_seed()));
     let obs_dim = probe.obs_dim();
     drop(probe);
     tracing::info!("  obs_dim          = {obs_dim}");
@@ -225,7 +230,7 @@ fn main() -> Result<()> {
                 obs_dim,
                 action_dims(),
                 HIDDEN_DIM,
-                SEED ^ (i as u64).wrapping_add(1),
+                base_seed() ^ (i as u64).wrapping_add(1),
                 &device,
             )
         })
@@ -277,9 +282,9 @@ fn main() -> Result<()> {
     // Freeze-N−1: only BR_AGENT's optimizer steps; opponents stay fixed.
     let active_mask: Vec<bool> = (0..NUM_AGENTS).map(|i| i == BR_AGENT).collect();
 
-    let mut rng = rand::rngs::StdRng::seed_from_u64(SEED);
-    let mut env = make_cell_env(beta, kappa, cost, Some(SEED));
-    let mut last_obs = env.reset_joint(Some(SEED));
+    let mut rng = rand::rngs::StdRng::seed_from_u64(base_seed());
+    let mut env = make_cell_env(beta, kappa, cost, Some(base_seed()));
+    let mut last_obs = env.reset_joint(Some(base_seed()));
 
     tracing::info!("------------------------------------------------------------");
     let training_start = std::time::Instant::now();

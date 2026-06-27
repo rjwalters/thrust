@@ -91,7 +91,12 @@ const BACKEND_LABEL: &str = "Wgpu<f32, i32> + Autodiff (GPU: Vulkan/Metal/DX12/W
 
 const NUM_AGENTS: usize = 4;
 const HIDDEN_DIM: usize = 64;
-const SEED: u64 = 42;
+/// Base RNG seed. Override with the `SEED` env var (default 42) so multiple
+/// machines can run independent replicates of the same config (issue #134
+/// seeded validation). Behavior-preserving when `SEED` is unset.
+fn base_seed() -> u64 {
+    std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(42)
+}
 const DEFAULT_TOTAL_ITERATIONS: usize = 50;
 const DEFAULT_ROLLOUT_STEPS: usize = 2048;
 const DEFAULT_CELL: &str = "beta05";
@@ -141,11 +146,11 @@ fn eval_per_step_team_reward(
     seed_xor: u64,
 ) -> f32 {
     use rand::SeedableRng;
-    let mut env = make_cell_env(beta, kappa, cost, Some(SEED ^ seed_xor));
-    let mut last_obs = env.reset_joint(Some(SEED ^ seed_xor));
+    let mut env = make_cell_env(beta, kappa, cost, Some(base_seed() ^ seed_xor));
+    let mut last_obs = env.reset_joint(Some(base_seed() ^ seed_xor));
     let mut total_team_reward: f32 = 0.0;
     let mut steps: usize = 0;
-    let mut rng = rand::rngs::StdRng::seed_from_u64(SEED ^ seed_xor.wrapping_add(1));
+    let mut rng = rand::rngs::StdRng::seed_from_u64(base_seed() ^ seed_xor.wrapping_add(1));
     for _ in 0..EVAL_STEPS {
         let mut joint_actions: Vec<Vec<i64>> = Vec::with_capacity(NUM_AGENTS);
         for i in 0..NUM_AGENTS {
@@ -194,7 +199,7 @@ fn main() -> Result<()> {
 
     let device: burn::tensor::Device<InnerBackend> = Default::default();
 
-    let probe = make_cell_env(beta, kappa, cost, Some(SEED));
+    let probe = make_cell_env(beta, kappa, cost, Some(base_seed()));
     let obs_dim = probe.obs_dim();
     drop(probe);
     tracing::info!("  obs_dim          = {obs_dim}");
@@ -269,7 +274,7 @@ fn main() -> Result<()> {
         avg_policy_lr: 5e-3,
         avg_policy_min_reservoir_coverage: ap_coverage,
         br_reward_scale,
-        seed: SEED,
+        seed: base_seed(),
     };
     let joint_config = JointTrainerConfig {
         num_agents: NUM_AGENTS,
@@ -291,7 +296,7 @@ fn main() -> Result<()> {
         let inner = AdamConfig::new().init();
         BurnOptimizer::new(inner, 3e-4)
     };
-    let env_factory = move || make_cell_env(beta, kappa, cost, Some(SEED));
+    let env_factory = move || make_cell_env(beta, kappa, cost, Some(base_seed()));
 
     let mut trainer = NfspTrainer::<
         B,
