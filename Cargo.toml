@@ -296,3 +296,12 @@ required-features = ["training", "env-bucket-brigade"]
 name = "train_br_probe"
 path = "examples/games/bucket_brigade/train_br_probe.rs"
 required-features = ["training", "env-bucket-brigade"]
+
+# Best-response improvability oracle (issue #259): score scripted policies
+# (uniform, specialist, firefighter family + random search) for the single BR
+# agent vs N-1 frozen uniform opponents; report best achievable per-step team
+# return vs the uniform baseline. The non-PPO "improvability gate" (AC#1).
+[[example]]
+name = "br_oracle"
+path = "examples/games/bucket_brigade/br_oracle.rs"
+required-features = ["training", "env-bucket-brigade"]

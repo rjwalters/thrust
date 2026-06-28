@@ -52,6 +52,9 @@ pub mod bucket_brigade_baselines;
 /// Bucket-brigade-specific scoring metrics (`gap_closed`).
 #[cfg(feature = "env-bucket-brigade")]
 pub mod bucket_brigade_metrics;
+/// Bucket-brigade best-response improvability oracle (issue #259).
+#[cfg(feature = "env-bucket-brigade")]
+pub mod bucket_brigade_oracle;
 /// Multi-agent environment trait.
 pub mod environment;
 /// Synchronized joint multi-agent PPO trainer.

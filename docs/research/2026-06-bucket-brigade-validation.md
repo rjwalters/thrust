@@ -648,3 +648,85 @@ return regardless of critic quality.** The bottleneck is upstream of NFSP/PSRO �
 BR objective/credit-assignment on this game, not in the meta-solver or the average policy.
 Accordingly **#230** (α-rank solve cost) stays correctly gated: there is still no
 demonstrated PSRO convergence to make that perf work worthwhile.
+
+---
+
+# Improvability gate — does a better-than-uniform BR even exist? (issue #259, 2026-06-28)
+
+## Why this run
+
+The Stage-1 sweep above settled that the BR's **critic** fits (EV ≈ 0.57) yet team return
+stays flat — but it did not answer the prior question: **is there anything for the policy
+to find?** Every closed predecessor (#239, #252, #241) patched the PPO/critic side and
+under-delivered. Issue #259 imposes an **improvability gate**: before touching the PPO
+update, establish — via a **non-PPO** method — whether a better-than-uniform best-response
+*exists at all* against the same frozen-uniform opponents `train_br_probe` trains against.
+
+## Method — a scripted (NN-free, PPO-free) oracle
+
+New harness: `examples/games/bucket_brigade/br_oracle.rs` + library
+`src/multi_agent/bucket_brigade_oracle.rs`. It freezes `N−1 = 3` **uniform-random**
+opponents (the clean idealization of `train_br_probe`'s freshly-initialized,
+≈uniform frozen nets) and scores a battery of **scripted** policies for the single BR
+agent (agent 0), reporting best-achievable per-step **team** return and per-step / per-episode
+**BR-agent** return vs the all-uniform baseline. Candidates: `uniform` (baseline),
+`always_rest`, the `specialist` baseline (the literal `gap_closed_cell == 1.0` endpoint),
+deterministic firefighters (owned-only and any-house, `work=1.0`), and a 64-sample random
+search over a `FirefighterParams { scope_owned_only, work_prob }` family that *contains*
+the specialist. All candidates share one per-episode seed stream (variance reduction).
+400 eval episodes/cell, all three no-convergence cells.
+
+## Result — no improvable team-return gap (gate: branch 1, flat)
+
+| BR policy (agent 0; other 3 uniform) | per-step **team** | per-step **BR-agent** | per-ep **BR-agent** |
+|------|------|------|------|
+| `uniform` (baseline) | −673.950 | −205.448 | −27 634 |
+| `always_rest` | −673.886 | −201.979 | −27 372 |
+| `specialist` | −678.519 | −196.504 | −27 831 |
+| `firefighter[owned, work=1.0]` | −675.822 | −194.403 | −27 144 |
+| `firefighter[any, work=1.0]` | −674.063 | −204.604 | −29 732 |
+| `search_best firefighter[owned, work=0.853]` | −676.583 | −197.760 | −27 587 |
+
+**Ceiling (best team return) = `always_rest` at −673.886 vs baseline −673.950 → team gap
+= +0.064/step = +0.01% of |baseline|.** The strongest *known* policy (specialist) and an
+aggressive any-house firefighter are both **worse** on team return than doing nothing,
+because fighting fires costs `c = 0.5`/night while three uniform-random teammates let the
+village ruin regardless. Even the BR agent's **own** return — the quantity `train_br_probe`
+actually optimizes — has a ceiling only **+0.95%** above uniform (best `firefighter[owned]`
+−194.4 vs −205.4/step), and that small edge comes from *resting more* (avoiding wasted
+work cost), not from coordinating a save. All three cells (β = 0.1 / 0.5 / 0.9) produced
+**identical** aggregate statistics under the shared seed stream — matching this repo's own
+committed per-cell baselines (`MINSPEC_RANDOM_BETA01/05/09` and
+`MINSPEC_SPECIALIST_BETA01/05/09` are byte-identical) and the documented
+"wasteland-collapse" dynamics: once a handful of fires ignite, Bernoulli burn-out ruins
+the ring within a few nights and the per-step ruined-house penalty swamps any single
+agent's fire-fighting.
+
+## Implication — the #134 direction is exhausted at the BR level
+
+This is **outcome 1** of the #259 gate (oracle ≈ uniform): **no PPO/policy fix is
+warranted.** The flat `mean_ep_return` the Stage-1 sweep observed is not a bug in the PPO
+update — it is a property of the *game* in the single-BR-vs-frozen-uniform regime. With
+3 of 4 agents frozen uniform, the BR agent's marginal contribution to **team** return is
+~0 (+0.01% ceiling) and to its **own** return is ~+0.95% (achieved by resting, not
+saving). There is nothing for the policy gradient to climb toward, so a well-fit critic
+correctly reports near-zero advantage and the policy correctly stays near uniform.
+
+The #259 **AC#2** (instrument/patch the PPO update) is therefore **correctly skipped** —
+its precondition (a real improvable gap) is not met. For **#134 / #230**: this is the BR-level
+confirmation that the no-convergence cells are not unblockable by tuning the best-response.
+The single-agent best-response problem against uniform opponents is itself near-flat;
+PSRO/NFSP inherit a BR with no team-return headroom, so the negative result stands and
+**#230** remains correctly gated. Any future attempt to revive the #134 direction must
+change the **game/credit-assignment regime** (e.g. a per-agent shaped reward that gives a
+single firefighter a non-trivial marginal return, or co-adapting opponents rather than
+frozen-uniform), not the PPO optimizer.
+
+Reproduce:
+
+```bash
+for c in beta01 beta05 beta09; do
+  CELL=$c EVAL_EPISODES=400 \
+    cargo run --release --example br_oracle --features "training,env-bucket-brigade"
+done
+```
