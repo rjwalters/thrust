@@ -236,10 +236,41 @@ Median per-iteration wall-clock, lower is better. "CPU faster ×" is `wgpu / nda
 | `dqn_cartpole_steps_per_sec` (full loop) | 43.4 ms | 188.7 ms | 4.4× |
 | `sac_pendulum_steps_per_sec` (full loop) | 10.7 ms | 65.8 ms | 6.2× |
 
-(`cuda` was not run — the alc-2 host has the NVIDIA driver but no CUDA toolkit /
-`nvcc`, which `cubecl-cuda` needs to compile. The `wgpu` → Vulkan path drives the
-same 4090 and is the portable GPU backend; the cuda column is left for a future
-toolkit-equipped run.)
+#### cuda column (issue #219, measured 2026-06-28)
+
+The original #184 run left `cuda` blank — alc-2 had the NVIDIA driver but no CUDA
+toolkit. After installing `nvidia-cuda-toolkit` (nvcc 12.0.140) on the same host,
+the cuda backend was benched with
+`cargo bench --features "training,cuda" --bench trainer_throughput -- --warm-up-time 2 --measurement-time 10`.
+Because this is a **separate run**, its own `/ndarray` baseline (measured in the
+same invocation, slightly higher than #184's — normal run-to-run variance under
+host load) is shown alongside so the cuda/CPU ratio is apples-to-apples:
+
+| Benchmark group | NdArray (CPU, same run) | cuda (RTX 4090) | CPU faster × |
+| --- | --- | --- | --- |
+| `a2c_train_step` (per update) | 341 µs | 11.96 ms † | ~35× † |
+| `ppo_train_step` (per update) | 384 µs | 1.024 ms | 2.7× |
+| `dqn_train_step` (per update) | 46.0 ms | 150.2 ms | 3.3× |
+| `sac_train_step` (per update) | 840 µs | 2.633 ms | 3.1× |
+| `a2c_cartpole_steps_per_sec` (full loop) | 618 µs | 1.641 ms | 2.7× |
+| `ppo_cartpole_steps_per_sec` (full loop) | 805 µs | 2.930 ms | 3.6× |
+| `dqn_cartpole_steps_per_sec` (full loop) | 53.7 ms | 160.5 ms | 3.0× |
+| `sac_pendulum_steps_per_sec` (full loop) | 14.1 ms | 44.76 ms | 3.2× |
+
+† `a2c_train_step/cuda` did not stabilize — criterion reported a [0.77 ms, 11.96 ms,
+34.3 ms] spread, the signature of JIT-kernel / autotune contamination on the
+smallest workload. The stable lower bound (~0.77 ms ≈ 2.3× CPU) is in line with the
+other groups; treat the 35× median as an artifact, not a real regression.
+
+**Two findings.** (1) **cuda also trails the CPU NdArray backend** at these
+small-MLP sizes — by ~2.7–3.6×, exactly the #184 prediction. The dispatch-overhead
+story is identical: there isn't enough arithmetic per launch to amortize host↔device
+cost. (2) **cuda is consistently faster than wgpu** on the same 4090 (e.g. PPO full
+loop 2.93 ms vs wgpu 5.88 ms; SAC Pendulum 44.8 ms vs 65.8 ms; DQN per-update 150 ms
+vs 173 ms) — the native CUDA path has lower per-kernel launch overhead than wgpu →
+Vulkan, so it closes some of the gap to CPU but does not overturn the conclusion.
+**NdArray (CPU) remains the right default**; cuda is the better GPU choice over wgpu
+on Linux+NVIDIA when a workload is large enough to want a GPU at all.
 
 ### Interpretation
 

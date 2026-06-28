@@ -1,0 +1,33 @@
+a2c_train_step/ndarray/synthetic_batch
+                        time:   [340.45 µs 340.63 µs 340.76 µs]
+ppo_train_step/ndarray/synthetic_batch
+                        time:   [384.16 µs 384.30 µs 384.42 µs]
+a2c_cartpole_steps_per_sec/ndarray/rollout_plus_update
+                        time:   [617.97 µs 618.30 µs 618.65 µs]
+ppo_cartpole_steps_per_sec/ndarray/rollout_plus_update
+                        time:   [805.15 µs 805.42 µs 805.66 µs]
+dqn_train_step/ndarray/replay_minibatch
+                        time:   [45.911 ms 45.984 ms 46.067 ms]
+dqn_cartpole_steps_per_sec/ndarray/env_step_plus_update
+                        time:   [53.636 ms 53.701 ms 53.771 ms]
+sac_train_step/ndarray/replay_minibatch
+                        time:   [839.32 µs 840.48 µs 841.53 µs]
+sac_pendulum_steps_per_sec/ndarray/env_step_plus_update
+                        time:   [14.046 ms 14.051 ms 14.056 ms]
+a2c_train_step/cuda/synthetic_batch
+                        time:   [765.74 µs 11.956 ms 34.335 ms]
+ppo_train_step/cuda/synthetic_batch
+                        time:   [1.0205 ms 1.0239 ms 1.0276 ms]
+a2c_cartpole_steps_per_sec/cuda/rollout_plus_update
+                        time:   [1.6298 ms 1.6410 ms 1.6549 ms]
+ppo_cartpole_steps_per_sec/cuda/rollout_plus_update
+                        time:   [2.9180 ms 2.9297 ms 2.9445 ms]
+dqn_train_step/cuda/replay_minibatch
+                        time:   [149.24 ms 150.17 ms 151.73 ms]
+dqn_cartpole_steps_per_sec/cuda/env_step_plus_update
+                        time:   [160.11 ms 160.53 ms 160.97 ms]
+sac_train_step/cuda/replay_minibatch
+                        time:   [2.6269 ms 2.6330 ms 2.6396 ms]
+sac_pendulum_steps_per_sec/cuda/env_step_plus_update
+                        time:   [44.682 ms 44.762 ms 44.856 ms]
+EXIT=0
