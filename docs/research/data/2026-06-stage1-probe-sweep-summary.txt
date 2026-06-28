@@ -1,0 +1,18 @@
+beta01   base     n=40  early5=-28119    late5=-27884    -> flat
+beta05   base     n=38  early5=-27884    late5=-27285    -> flat
+beta09   base     n=40  early5=-28529    late5=-27481    -> flat
+beta01   vf1      n=36  early5=-28102    late5=-27305    -> flat
+beta05   vf1      n=39  early5=-27455    late5=-28454    -> flat
+beta09   vf1      n=40  early5=-28002    late5=-27988    -> flat
+beta01   br16     n=18  early5=-28281    late5=-27609    -> flat
+beta05   br16     n=19  early5=-27727    late5=-27302    -> flat
+beta09   br16     n=20  early5=-28066    late5=-27737    -> flat
+beta01   bigroll  n=8   early5=-27877    late5=-28303    -> flat
+beta05   bigroll  n=8   early5=-28046    late5=-27983    -> flat
+beta09   bigroll  n=8   early5=-27738    late5=-28354    -> flat
+beta01   rs01     n=40  early5=-28386    late5=-27971    -> flat
+beta05   rs01     n=40  early5=-28076    late5=-27303    -> flat
+beta09   rs01     n=37  early5=-27506    late5=-27214    -> flat
+beta01   combo    n=4   INSUFFICIENT
+beta05   combo    n=3   INSUFFICIENT
+beta09   combo    n=4   INSUFFICIENT

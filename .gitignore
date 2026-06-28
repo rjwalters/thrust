@@ -67,3 +67,4 @@ venv/
 .loom/state.json
 .loom/*.log
 .loom/*.sock
+alc_results_*/
