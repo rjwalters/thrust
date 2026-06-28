@@ -582,3 +582,69 @@ consequences: (1) the critic is **data-hungry** — it needs the larger 2048 bat
 "entropy < 1.0" acceptance signal is **unreliable in isolation** — here entropy crosses well below
 1.0 with *zero* critic fit and *zero* return improvement. The real objective is `mean_ep_return`,
 and it does not move in any 512 or 2048 configuration tested.
+
+# Stage-1 cluster probe sweep — the diagnostic-first ladder (2026-06-26/28)
+
+**Issue:** [#134](https://github.com/rjwalters/thrust/issues/134) · **PR:** #256 ·
+**Hardware:** alcubierre cluster, 6 worker nodes (alc-2/4/5/6/7/8), NdArray CPU backend.
+
+## Why this run
+
+Every prior probe was *local micro-budget* (512–2048 rollout). The open question
+the negative result hinges on is whether the BR inner loop can raise team return
+**at all** at a larger budget, or across an untried lever. Rather than spend the
+cluster window on the full 6-run PSRO/NFSP protocol (which #239/#251/#252 predicted
+would reproduce non-convergence slowly and expensively), we ran a **diagnostic-first
+ladder**: a parallel `train_br_probe` sweep at **8192 rollout** over 3 cells × 6 knob
+sets as a *gate* — only a knob set that raises `mean_ep_return` would have advanced to
+seeded full runs. (`scripts/weekend_alc_dispatch.sh`; gate + collection in
+`scripts/alc_finalize_stage1.sh`.)
+
+## Knob grid
+
+`base` (8192×8, the #239 defaults), `vf1` (`VF_COEF=1.0`), `br16` (`BR_TRAIN_STEPS=16`),
+`rs01` (`BR_REWARD_SCALE=0.01`), `bigroll` (`ROLLOUT_STEPS=16384`), `combo`
+(16384 × 16 trainsteps × `VF_COEF=1.0`). One probe per (cell, knobset); `BR_MAX_MINIBATCHES_PER_EPOCH`
+deliberately left unset (the 512 control above shows capping data hurts the data-hungry critic).
+
+## Result — gate FAIL: 0 of 15 evaluable runs raise team return
+
+Gate metric = mean of the last-5 vs first-5 iters' `mean_ep_return`; "win" = >5% less
+negative. **No knob set won on any cell.** Every run sits in the −27k to −28.5k band
+(±2% noise; several drift *worse* late-than-early). Representative β=0.5 results:
+
+| knobset (β=0.5) | `ev` early→late | `mean_ep_return` early5→late5 | verdict |
+|------|------|------|------|
+| `base` 8192×8 | 0.00 → **0.565** | −27 884 → −27 285 | flat |
+| `vf1` VF_COEF=1.0 | 0.00 → **0.583** | −27 455 → −28 454 | flat |
+| `br16` 16 trainsteps | 0.00 → **0.575** | −27 727 → −27 302 | flat |
+| `bigroll` 16384 rollout | 0.00 → 0.328¹ | −28 046 → −27 983 | flat |
+| `rs01` BR_REWARD_SCALE=0.01 | 0.00 → 0.053² | −28 076 → −27 303 | flat |
+
+¹ `bigroll`/`combo` were stopped early (16384 rollout ran ~3.8 h/iter and ~6.9 h/iter
+respectively — a 5–11 day tail for confirmatory data on an already-flat trend); they
+were flat through the iters completed. ² `BR_REWARD_SCALE=0.01` (vs the 0.001 default)
+visibly *degrades* critic fit (EV 0.05 vs 0.57) — the larger band hurts the value head.
+
+## The load-bearing finding — the critic fits, and it does not matter
+
+This sweep **settles** the question the earlier `≤2048` probes left ambiguous. At 8192
+rollout the critic reaches **EV ≈ 0.57** on `base`/`vf1`/`br16` — well past the
+~0.48 "fittability ceiling" reported at 2048 (#242/#252), i.e. a genuinely *well-fit*
+value head — and `mean_ep_return` **still does not move**. Combined with the 512 control
+(entropy collapses to 0.31 with zero critic fit and zero return gain), the BR inner loop
+now shows return is flat **across the entire EV spectrum**: EV≈0 (512), EV≈0.5 (8192),
+larger rollout, more trainsteps, higher value weight. **Critic fit is conclusively not
+the bottleneck**, and no tested PPO-side lever raises team return on these cells.
+
+## Implication for #134 / #230
+
+The gate failed, so the seeded full PSRO/NFSP runs (Stage 2) were **not** launched — a
+fast non-convergent BR has no research value, and PSRO/NFSP both inherit this BR. This is
+the most thoroughly-evidenced statement of the #134 negative result to date: across three
+re-runs and now a 5-lever 8192-rollout sweep, **neither trainer beats PPO on the
+no-convergence cells, because the underlying PPO best-response does not improve team
+return regardless of critic quality.** The bottleneck is upstream of NFSP/PSRO — in the
+BR objective/credit-assignment on this game, not in the meta-solver or the average policy.
+Accordingly **#230** (α-rank solve cost) stays correctly gated: there is still no
+demonstrated PSRO convergence to make that perf work worthwhile.
