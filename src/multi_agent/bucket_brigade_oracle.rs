@@ -32,7 +32,8 @@
 //! ## What the oracle searches over
 //!
 //! A single BR agent's only lever in this game is *how it fights fires*. The
-//! [`FirefighterParams`] family captures that lever:
+//! [`FirefighterParams`](crate::multi_agent::bucket_brigade_oracle::FirefighterParams)
+//! family captures that lever:
 //!
 //! * `scope_owned_only` — fight only round-robin-owned houses (the specialist)
 //!   vs. **any** burning house (a more aggressive firefighter).
@@ -504,13 +505,21 @@ mod tests {
     #[test]
     fn oracle_runs_and_is_sane() {
         let mut env = make_cell_env(BucketBrigadeCell::Beta05, 4, 42);
+        let num_agents = 4;
+        let eval_episodes = 30;
+        let search_episodes = 10;
+        let num_search = 8;
+        let seed = 42;
+        let step_cap = 500;
         let report = run_oracle(
-            &mut env, 4, NUM_HOUSES, // eval_episodes
-            30, // search_episodes
-            10, // num_search
-            8, // seed
-            42, // step_cap
-            500,
+            &mut env,
+            num_agents,
+            NUM_HOUSES,
+            eval_episodes,
+            search_episodes,
+            num_search,
+            seed,
+            step_cap,
         );
 
         assert!(report.baseline.eval.per_step_team().is_finite());
@@ -530,7 +539,7 @@ mod tests {
     /// burning.
     #[test]
     fn firefighter_owned_matches_specialist_on_burning_owned() {
-        let mut houses = vec![0u8; NUM_HOUSES];
+        let mut houses = [0u8; NUM_HOUSES];
         houses[4] = HOUSE_BURNING; // agent 0 owns house 4 (4 % 4 == 0)
         let mut flat = vec![0.0f32; 1 + NUM_HOUSES + 64];
         for (i, &h) in houses.iter().enumerate() {
