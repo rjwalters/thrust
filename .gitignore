@@ -60,6 +60,11 @@ node_modules/
 .envrc
 .envrc.*
 
+# dotenv secrets (crates.io token, etc.) — never commit
+.env
+.env.*
+!.env.example
+
 # Python venvs (used pre-Burn for libtorch sourcing)
 venv/
 .venv/
