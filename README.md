@@ -10,7 +10,7 @@
 
 ## 🎮 [**Try the Live Demo**](https://rjwalters.github.io/thrust/)
 
-Watch trained RL agents play CartPole and Snake in real-time, running entirely in your browser via WebAssembly!
+Watch trained RL agents play CartPole, Snake, and Pong in real-time, running entirely in your browser via WebAssembly!
 
 Thrust is a modern reinforcement learning library built from the ground up in Rust, designed for maximum speed, memory safety, and scalability. Inspired by [PufferLib](https://github.com/PufferAI/PufferLib), Thrust combines the raw performance of Rust with the [Burn](https://burn.dev) tensor framework's multi-backend GPU support (CUDA / ROCm / Metal / Vulkan / WebGPU / NdArray CPU) to deliver fast training without any C++ FFI dependencies.
 
@@ -31,16 +31,20 @@ Our goal is to create the fastest, safest, and most ergonomic reinforcement lear
 - 🎮 **Live Demos**: Train agents and deploy them in the browser via WebAssembly
 - 🎯 **Production Ready**: Built for research and industry use cases
 
-## 🚧 Project Status
+## 📦 Project Status
 
-**🎯 v0.1.0 (initial release)** — The training stack is complete and runnable
-end-to-end: five single-agent algorithms (PPO, A2C, DQN, SAC, BC), two
-multi-agent meta-solvers (PSRO, NFSP), nine environments, and twelve runnable
-[examples](docs/EXAMPLES.md). Public-API surface is documented (`docs.rs`),
-warning-free, and packaged for crates.io.
+**v0.2.0 — published on [crates.io](https://crates.io/crates/thrust-rl).** The
+full loop is shipped: train in Rust, export the policy, and run the trained
+agent in the browser via WebAssembly. That covers five single-agent algorithms
+(PPO, A2C, DQN, SAC, BC), two multi-agent meta-solvers (PSRO, NFSP), nine
+environments, twelve runnable [examples](docs/EXAMPLES.md), WASM bindings
+(`src/wasm.rs`), and a [live demo](https://rjwalters.github.io/thrust/) with
+CartPole, Snake, Pong, and a contextual-bandit playground. The public API is
+documented on [docs.rs](https://docs.rs/thrust-rl), warning-free, and packaged
+for crates.io.
 
-Still ahead: complete WASM bindings, a public live-demo deployment, and the
-broader Phase 3/4 feature set.
+Active work is advanced algorithm features (LSTM policies, prioritized replay,
+distributed training) and long-budget multi-agent research validation (#134).
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes, [docs/RELEASING.md](docs/RELEASING.md)
 for the publish process, and [ROADMAP.md](ROADMAP.md) for the detailed
@@ -59,7 +63,7 @@ development schedule.
 - [x] Snake environment (multi-agent support)
 - [x] SimpleBandit environment (contextual bandits)
 
-### Phase 2: Multi-Agent & WASM (In Progress)
+### Phase 2: Multi-Agent & WASM (Mostly Complete ✅)
 - [x] Multi-agent training infrastructure (`multi_agent::PolicyLearner` is experimental — API may change)
 - [x] Population-based training design
 - [x] PSRO with α-rank meta-solver (N-player)
@@ -67,8 +71,8 @@ development schedule.
 - [x] Bucket Brigade cooperative-MARL integration
 - [x] Pure Rust inference (Burn backend or hand-rolled WASM path)
 - [x] Universal inference system (JSON model format)
-- [ ] Complete WASM bindings
-- [ ] Browser-based demos
+- [x] Complete WASM bindings (`src/wasm.rs`)
+- [x] Browser-based demos ([live](https://rjwalters.github.io/thrust/): CartPole, Snake, Pong, bandit)
 - [ ] Multi-agent communication channels
 
 ### Phase 3: Features
@@ -82,11 +86,11 @@ development schedule.
 - [ ] Mixed precision training
 - [ ] Distributed training
 
-### Phase 4: Demo Site
-- [ ] WebAssembly policy compilation
-- [ ] Browser inference engine
+### Phase 4: Demo Site (Live ✅)
+- [x] WebAssembly policy compilation
+- [x] Browser inference engine
 - [ ] Live training dashboard
-- [ ] Public demo deployment
+- [x] Public demo deployment ([rjwalters.github.io/thrust](https://rjwalters.github.io/thrust/))
 
 ## 🏗️ Architecture
 
@@ -172,7 +176,7 @@ The bandit trainer is just one of **twelve** runnable examples. See the
 algorithm (PPO, A2C, DQN, SAC, BC, PSRO, NFSP) across all environments, with
 copy-paste run commands and the env vars each one honors.
 
-### Library Usage (Coming Soon)
+### Library Usage
 
 ```rust
 use thrust_rl::prelude::*;
@@ -183,12 +187,14 @@ use thrust_rl::prelude::*;
 
 ## 📊 Performance
 
-Benchmarks are being re-run against the Burn backend; numbers will be
-published once the new baseline is stable.
+A [criterion](https://github.com/bheisler/criterion.rs) throughput harness
+(`benches/trainer_throughput.rs`) measures per-update and full-loop steps/sec
+for PPO, A2C, DQN, and SAC. Measured CPU-vs-GPU numbers (Burn NdArray vs. `wgpu`
+on an RTX 4090) are in [docs/BURN_BACKENDS.md](docs/BURN_BACKENDS.md).
 
 ## 🤝 Contributing
 
-We welcome contributions! This is an ambitious project in its early stages.
+We welcome contributions! Thrust is published and actively developed.
 
 **Ways to contribute:**
 - 🐛 Report bugs and issues
@@ -198,7 +204,7 @@ We welcome contributions! This is an ambitious project in its early stages.
 - ⚡ Optimize performance
 - 🎨 Design the demo website
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [WORKPLAN.md](WORKPLAN.md) for areas where we need help.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [ROADMAP.md](ROADMAP.md) for areas where we need help.
 
 ## 📄 License
 
