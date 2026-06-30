@@ -80,8 +80,8 @@ development schedule.
 - [x] Continuous-control environments (PendulumSwingUp, ContinuousLqr, MountainCarContinuous)
 - [x] A2C (Advantage Actor-Critic)
 - [x] Behavioral cloning / imitation learning
+- [x] Prioritized experience replay (sum-tree buffer; `DqnConfig::prioritized_replay`)
 - [ ] LSTM policy support
-- [ ] Prioritized experience replay
 - [ ] V-trace importance sampling
 - [ ] Mixed precision training
 - [ ] Distributed training
