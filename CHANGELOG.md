@@ -15,6 +15,73 @@ release procedure (tagging, GitHub Release creation, and `cargo publish`).
 
 Nothing yet.
 
+## [0.2.0] - 2026-06-30
+
+### Summary
+
+The multi-agent research release. 0.2.0 matures the population-based
+multi-agent stack — PSRO (with an α-rank meta-solver) and approximate
+NFSP — to the point of running the Bucket Brigade workshop paper's
+no-convergence cells end to end, adds the A2C algorithm, and lands
+substantial training-throughput work. It also closes out that research
+question: an extensive validation effort (documented under
+`docs/research/`) concluded — and root-caused via a non-PPO improvability
+oracle — that neither PSRO nor NFSP beats PPO on those cells because the
+single best-response has ~no team-return headroom against frozen-uniform
+opponents. The negative result and its mechanism are fully documented.
+
+All changes are additive; existing public APIs are unchanged (MINOR bump
+per the pre-1.0 policy).
+
+### Added
+
+#### Algorithms & training
+- **A2C**: `A2cTrainer` with an un-clipped advantage-actor-critic loss,
+  smoke tests, a CartPole example, opt-in learning-curve CSV export, and a
+  convergence test (#156, #158).
+- **PSRO**: payoff-magnitude fixes for α-rank saturation plus best-response
+  critic reward scaling, making the α-rank meta-solver usable at the
+  no-convergence cells' payoff scale (#225).
+- **NFSP**: adaptive average-policy supervised-step floor and reward scaling
+  to address average-policy under-training (#223).
+- **Joint trainer**: tunable best-response-fit defaults and an optional
+  separate critic optimizer (#239).
+
+#### Bucket Brigade research tooling
+- Critic **explained-variance** diagnostic surfaced from the joint PPO
+  update, plus a standalone single-best-response A/B probe harness
+  (`train_br_probe`) for fast critic-fit investigation (#241, #247).
+- Non-PPO **best-response improvability oracle** (`bucket_brigade_oracle`
+  module + `br_oracle` example): scores scripted/searched policies against
+  frozen-uniform opponents to bound achievable best-response return (#259).
+- Cell-specific `gap_closed_cell` reporting in the bucket-brigade examples
+  (#220).
+- `SEED` env override across the bucket-brigade training examples for
+  seeded multi-host replication, plus cluster run/dispatch scripts (#256).
+
+#### Features
+- Off-by-default `blas-threaded` feature for threaded NdArray matmul (#237).
+- Opt-in `max_minibatches_per_epoch` best-response-update throughput lever
+  (#254).
+
+### Changed
+- Dropped the `linker = "clang"` pin in `.cargo/config.toml`, keeping the
+  fast `lld` linker via `-fuse-ld=lld` (works with the universal gcc/cc
+  driver; removes a needless clang requirement) (#257).
+
+### Fixed
+- Best-response PPO update now applies the configured grad-norm clip and
+  iterates all minibatches per epoch (previously the clip was dead and most
+  of each rollout was discarded) (#240).
+- Snake env food respawn is now deterministic via an owned seeded RNG.
+- Cleared `env-bucket-brigade` clippy lints and gated them in CI (#231).
+
+### Performance
+- PSRO round-robin best-response loop parallelized with rayon (#238).
+- NFSP per-agent average-policy supervised training parallelized with rayon
+  (#236), and per-step seeded sampling batched through a single model
+  forward (#249).
+
 ## [0.1.0] - 2026-06-08
 
 First publishable release of thrust-rl. Locks in the foundation laid by
@@ -135,5 +202,6 @@ relative to "no published version".
 - `bincode` dependency was removed to resolve RUSTSEC-2025-0141 (#37).
 - Misleading `target_synced` field on `DQNStepStats` (#66).
 
-[Unreleased]: https://github.com/rjwalters/thrust/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/rjwalters/thrust/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/rjwalters/thrust/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/rjwalters/thrust/releases/tag/v0.1.0

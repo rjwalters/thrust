@@ -68,3 +68,4 @@ venv/
 .loom/*.log
 .loom/*.sock
 alc_results_*/
+.loom/sweep-checkpoint/
