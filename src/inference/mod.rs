@@ -5,7 +5,7 @@
 //! tensor stack used on the training side (see `src/train/`, `src/policy/`)
 //! so the WASM bundle stays small — Burn's WebGPU backend has a
 //! non-trivial WASM bundle-size cost on a pre-1.0 backend. See
-//! `WASM_ROADMAP.md` and Burn migration epic #65 (phase 6 closure) for
+//! `docs/WASM_ROADMAP.md` and Burn migration epic #65 (phase 6 closure) for
 //! the rationale.
 //!
 //! Forward pass only — no autodiff, no training.

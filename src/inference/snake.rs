@@ -2,7 +2,7 @@
 //!
 //! Pure Rust implementation of Snake CNN forward pass. Stays off the Burn
 //! tensor stack used on the training side so the WASM bundle stays small;
-//! see `crate::inference` module docs and `WASM_ROADMAP.md`.
+//! see `crate::inference` module docs and `docs/WASM_ROADMAP.md`.
 
 use serde::{Deserialize, Serialize};
 

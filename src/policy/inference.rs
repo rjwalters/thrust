@@ -4,7 +4,7 @@
 //! that stays off the training-side Burn tensor stack so it can compile to
 //! WebAssembly with a minimal bundle size. The training side (PPO/DQN) runs
 //! on Burn; weights are exported as JSON and consumed here for browser
-//! inference. See `crate::inference` module docs and `WASM_ROADMAP.md`.
+//! inference. See `crate::inference` module docs and `docs/WASM_ROADMAP.md`.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

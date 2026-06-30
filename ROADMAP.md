@@ -274,7 +274,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 ## References
 
-- [MULTI_AGENT_DESIGN.md](MULTI_AGENT_DESIGN.md) - Multi-agent architecture
-- [WASM_ROADMAP.md](WASM_ROADMAP.md) - WASM visualization plan
+- [MULTI_AGENT_DESIGN.md](docs/MULTI_AGENT_DESIGN.md) - Multi-agent architecture
+- [WASM_ROADMAP.md](docs/WASM_ROADMAP.md) - WASM visualization plan
 - [VERSIONS.md](VERSIONS.md) - Version compatibility matrix
 - [PROJECT_STATUS.md](PROJECT_STATUS.md) - Detailed status updates
