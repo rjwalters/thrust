@@ -9,6 +9,13 @@ rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 [target.x86_64-apple-darwin]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
+# getrandom 0.3 (pulled by rand 0.9) has no default backend on
+# wasm32-unknown-unknown. This cfg selects the JS backend and pairs with the
+# `wasm_js` feature enabled in Cargo.toml's wasm32 target table — both are
+# required for the WASM build (web demo / GitHub Pages) to compile.
+[target.wasm32-unknown-unknown]
+rustflags = ['--cfg', 'getrandom_backend="wasm_js"']
+
 [build]
 # Use all available CPU cores for parallel compilation
 jobs = 8

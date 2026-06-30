@@ -25,11 +25,8 @@ exclude = [
     "*.safetensors",
     "*.onnx",
     "models/**",
-    "cartpole_optimization_results.json",
-    "cartpole_model*.json",
-    # Web demo & legacy demo assets.
+    # Web demo assets.
     "web/**",
-    "web-old/**",
     # Optional Bucket Brigade submodule (only built with the
     # `env-bucket-brigade` feature; consumers can vendor it themselves).
     "envs/**",
@@ -45,8 +42,8 @@ exclude = [
     ".claude/**",
     ".github/**",
     # Project planning docs that aren't consumed by `cargo doc`.
-    "WASM_ROADMAP.md",
-    "MULTI_AGENT_DESIGN.md",
+    "docs/WASM_ROADMAP.md",
+    "docs/MULTI_AGENT_DESIGN.md",
     "VERSIONS.md",
     "package.json",
 ]
@@ -93,9 +90,10 @@ serde_json = "1.0"
 tracing = { version = "0.1", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
-# Random number generation
+# Random number generation. `rand 0.9` pulls `getrandom 0.3` transitively; the
+# wasm32 backend for getrandom is configured in the wasm-only target table near
+# the end of this file (see `[target.'cfg(target_arch = "wasm32")'.dependencies]`).
 rand = { version = "0.9" }
-getrandom = { version = "0.2", features = ["js"] }
 
 # Multi-threading and channels (not available in WASM)
 crossbeam-channel = { version = "0.5", optional = true }
@@ -127,6 +125,14 @@ wasm-bindgen = { version = "0.2", optional = true }
 web-sys = { version = "0.3", features = ["console"], optional = true }
 js-sys = { version = "0.3", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
+
+# wasm32-only deps. `getrandom 0.3` (pulled by `rand 0.9`) has no default
+# backend on wasm32-unknown-unknown — it needs the `wasm_js` feature here PLUS
+# `--cfg getrandom_backend="wasm_js"` (set in .cargo/config.toml). Gated to
+# wasm32 so the wasm-bindgen/js-sys deps this feature pulls stay out of native
+# and the published-crate dependency graph.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [features]
 default = ["training"]
