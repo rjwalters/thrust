@@ -30,10 +30,15 @@ Two load-bearing decisions, plus the two subordinate ones the curator raised:
 2. **Minibatch strategy → full-sequence (Strategy A), one env-trajectory = one
    sequence.** Minibatch over *environments*, keep each env's `T`-step trajectory
    temporally intact as a `[N_env, T, obs_dim]` rank-3 tensor, and reset the LSTM
-   state at `terminated` flags *inside* the forward pass. No hidden states need
-   to be stored for the training pass; only the rollout-time states are recorded
-   (for warm-starting and debugging). Fixed-length subsequences (SB3
-   `RecurrentPPO` Strategy B) are a deferred optimization, not a v1 requirement.
+   state at **episode boundaries** (`terminated || truncated`) *inside* the
+   forward pass. Note the asymmetry with GAE: value bootstrapping resets on
+   `terminated` alone (truncation keeps bootstrapping), but hidden-state reset
+   follows episode *starts* — `terminated || truncated` — because a truncated
+   step is still the end of an episode in the buffer (see the GAE-vs-state-reset
+   note under Q2). No hidden states need to be stored for the training pass; only
+   the rollout-time states are recorded (for warm-starting and debugging).
+   Fixed-length subsequences (SB3 `RecurrentPPO` Strategy B) are a deferred
+   optimization, not a v1 requirement.
 3. **Trainer API → new `RecurrentPPOTrainer<B, P, O>`, not a parameterized
    existing trainer.** The feedforward trainer's evaluate closure is hard-typed
    to rank-2 observations (`Tensor<B, 2>`, `trainer.rs:168`); recurrence needs
@@ -115,7 +120,8 @@ impl RecurrentRolloutBuffer {
                                h: &[f32], c: &[f32]) { /* ... */ }
 
     /// Materialize a full-sequence batch: obs as [N_env, T, obs_dim], plus
-    /// per-(step,env) terminated flags so the trainer can reset state mid-forward.
+    /// per-(step,env) episode-start flags (terminated || truncated) so the
+    /// trainer can reset state mid-forward at episode boundaries.
     pub fn to_sequence_batch<B: Backend>(&self, device: &B::Device)
         -> RecurrentRolloutBatch<B> { /* ... */ }
 }
@@ -128,7 +134,10 @@ grids (`storage.rs:253-255`), and that layout is unchanged.
 **Why store `(h_t, c_t)` at all if full-sequence training re-derives them?**
 Two reasons: (a) warm-starting — the recurrent state carried across rollout
 *iterations* (the state at the last step of iteration `k` seeds step 0 of
-iteration `k+1` for envs that did not reset), and (b) it is the storage hook
+iteration `k+1` for envs that did not reset — i.e. envs that neither
+`terminated` **nor** `truncated` on that last step; a time-limit truncation
+ends the episode and must seed step 0 with a zeroed state, not the carried
+one), and (b) it is the storage hook
 Strategy B needs if it is ever adopted. v1 uses the stored states only for
 warm-start; the training forward recomputes states from the initial state.
 
@@ -159,9 +168,10 @@ defined only over an ordered sequence.
 `T = num_steps`. A minibatch is a subset of the `N_env` environments; within a
 minibatch the tensor is `[n_env_in_batch, T, obs_dim]` — exactly the rank Burn's
 LSTM forward consumes (see Q4). Episode boundaries *inside* a sequence are
-handled by resetting `(h, c) → 0` at steps where `terminated[step][env]` is true,
-during the forward pass, not by cutting the sequence. This is the standard
-"reset state at dones" recurrent-PPO forward.
+handled by resetting `(h, c) → 0` at steps where the episode ends —
+`terminated[step][env] || truncated[step][env]` — during the forward pass, not
+by cutting the sequence. This is the standard "reset state at episode starts"
+recurrent-PPO forward.
 
 Concretely the recurrent trainer replaces the shuffle-and-gather path with an
 env-major shuffle:
@@ -171,13 +181,41 @@ env-major shuffle:
 let mut env_ids: Vec<usize> = (0..num_envs).collect();
 env_ids.shuffle(rng);
 for env_chunk in env_ids.chunks(envs_per_minibatch) {
-    // obs_seq: [chunk_len, T, obs_dim]; terminated_seq: [chunk_len, T]
-    // evaluate_sequences runs the LSTM over T, resetting (h,c) at terminated=true
+    // obs_seq: [chunk_len, T, obs_dim]; episode_end_seq: [chunk_len, T]
+    //   where episode_end = terminated || truncated
+    // evaluate_sequences runs the LSTM over T, resetting (h,c) at episode ends
 }
 ```
 
 `envs_per_minibatch` is the recurrent analogue of `batch_size` (a count of whole
 trajectories, not loose timesteps).
+
+### GAE bootstrapping vs. hidden-state reset — a deliberate asymmetry
+
+The reset condition for the LSTM state is **not** the same as the reset
+condition GAE uses, and implementers must not "fix" one to match the other:
+
+- **GAE / value bootstrapping** resets on `terminated` **only**
+  (`src/buffer/rollout/gae.rs`). A time-limit `truncated` step is *not* a true
+  terminal — the value target should continue to bootstrap from the next state's
+  value, so truncation must **not** zero the return. This is correct and stays
+  as-is.
+- **Hidden-state reset** follows **episode boundaries**, i.e.
+  `terminated || truncated`. Thrust's rollout loop resets the environment on
+  either flag (`examples/games/cartpole/train_cartpole_modern.rs:204` computes
+  `done = terminated || truncated`; line 214 resets on it), and CartPole /
+  MaskedCartPole truncate at `max_steps = 500` (`src/env/games/cartpole.rs:105`).
+  After a truncation the next observation in the buffer belongs to a **fresh
+  episode**, so carrying the LSTM state across that boundary leaks stale memory
+  into a new episode — precisely the corruption this design exists to prevent.
+  This bites hardest late in training, when a good policy hits the 500-step
+  truncation routinely.
+
+This is exactly the distinction SB3's `RecurrentPPO` encodes with its
+`episode_starts` array (episode-boundary semantics) kept separate from the
+value-bootstrap terminal flag. The buffer therefore exposes an
+episode-start/done flag (`terminated || truncated`) for state reset while GAE
+keeps consuming `terminated` alone.
 
 ### Why not Strategy B (SB3 `RecurrentPPO` fixed-length subsequences) in v1
 
@@ -222,8 +260,8 @@ pub fn train_step<F>(
 ```
 
 Recurrent evaluation needs rank-3 observations (`[n_env, T, obs_dim]`) plus an
-initial-state argument and per-step `terminated` flags — an incompatible
-signature. Changing `train_step` in place is a contract break for every caller
+initial-state argument and per-step episode-boundary flags
+(`terminated || truncated`, for state reset) — an incompatible signature. Changing `train_step` in place is a contract break for every caller
 (e.g. the doctest-style call `|p, o, a| p.evaluate_actions(o, a)` at
 `trainer.rs:425`). A sibling trainer keeps the blast radius at zero, exactly as
 `DISTRIBUTED_TRAINING_DESIGN.md` chose an actor-learner *around* the existing
@@ -256,7 +294,7 @@ Confirmed against `burn-nn-0.21.0/src/modules/rnn/` in the local registry:
 
   This maps *directly* onto Strategy A: feed `[n_env, T, obs_dim]`, take the
   `[n_env, T, hidden]` output into the policy/value heads, and reset state at
-  `terminated` between sub-segments.
+  episode boundaries (`terminated || truncated`) between sub-segments.
 
 - **`LstmState<B, 2>` is `{ cell, hidden }`, each `[batch, hidden_size]`**
   (`lstm.rs:11-15`) — the two tensors `RecurrentRolloutBuffer` records per step.
@@ -322,8 +360,8 @@ above. Each is filed with `loom:triage` and references #262.
 
 | Phase | Scope | Key deliverables | Depends on |
 | --- | --- | --- | --- |
-| 1 | `LstmBurnPolicy<B>` + seeded LSTM init | `src/policy/lstm.rs`: LSTM trunk + policy/value heads; `forward_step(obs, state)`; `evaluate_sequences(obs_seq, actions, init_state, terminated)`; `LstmBurnConfig { seed }` overriding all 8 gate `Linear`s via `seeded_layer_weights`; bit-identical-seed test | none |
-| 2 | `RecurrentRolloutBuffer` + full-sequence sampler | New buffer type with per-step `(h, c)` storage + `add_recurrent_state`; `to_sequence_batch` → `[N_env, T, obs_dim]`; env-major sequence sampler with `terminated`-driven state reset; GAE reused; existing `RolloutBuffer` untouched | Phase 1 (for state shapes) |
+| 1 | `LstmBurnPolicy<B>` + seeded LSTM init | `src/policy/lstm.rs`: LSTM trunk + policy/value heads; `forward_step(obs, state)`; `evaluate_sequences(obs_seq, actions, init_state, episode_starts)` (episode_starts = per-step `terminated \|\| truncated`, for state reset); `LstmBurnConfig { seed }` overriding all 8 gate `Linear`s via `seeded_layer_weights`; bit-identical-seed test | none |
+| 2 | `RecurrentRolloutBuffer` + full-sequence sampler | New buffer type with per-step `(h, c)` storage + `add_recurrent_state`; `to_sequence_batch` → `[N_env, T, obs_dim]`; env-major sequence sampler with episode-boundary (`terminated \|\| truncated`) state reset; GAE reused (bootstraps on `terminated` only — see the GAE-vs-state-reset note under Q2); existing `RolloutBuffer` untouched | Phase 1 (for state shapes) |
 | 3 | `RecurrentPPOTrainer` + MaskedCartPole + end-to-end example | New `src/train/ppo/recurrent_trainer.rs` (rank-3 forward, reuses `loss.rs`); `src/env/games/masked_cartpole.rs` (drop velocity dims); `examples/recurrent_ppo_masked_cartpole.rs` showing the recurrent policy learns where a feedforward baseline cannot | Phases 1 + 2 |
 
 Deferred (not filed, reserved by the `(h, c)` storage hook): Strategy B
