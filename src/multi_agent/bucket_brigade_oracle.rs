@@ -298,7 +298,7 @@ pub struct CoalitionEval {
 /// `coalition` follows its assigned scripted policy and every remaining agent
 /// acts uniform-random, accumulating team and coalition-return statistics.
 ///
-/// This is the k≥1 generalization of [`evaluate`]: with a one-element coalition
+/// This is the k≥1 generalization of `evaluate`: with a one-element coalition
 /// `[(0, policy)]` it reproduces the original single-BR improvability gate;
 /// with `k` elements it scripts `k` coordinated deviators against `N−k` frozen
 /// uniform opponents (issue #268).
@@ -731,7 +731,7 @@ fn coalition_candidates(k: usize, search_best: FirefighterParams) -> Vec<(String
 ///
 /// Freezes `N−k` uniform opponents and scripts the first `k` agents as
 /// coordinated deviators. Evaluates the coalition-candidate battery (see
-/// [`coalition_candidates`]) against the **same** per-episode seed stream as
+/// `coalition_candidates`) against the **same** per-episode seed stream as
 /// the all-uniform baseline, then reports the ceiling gap and an episode-level
 /// percentile bootstrap CI on the per-episode team-return gap. `k = 1`
 /// reproduces the [`run_oracle`] single-BR gate.
