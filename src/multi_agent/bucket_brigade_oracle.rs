@@ -210,7 +210,11 @@ impl FirefighterParams {
 }
 
 /// A named scripted BR policy the oracle can evaluate.
-enum BrPolicy {
+///
+/// Cloneable so a single policy can be replicated across the agents of a
+/// coalition (see [`run_coalition_oracle`]).
+#[derive(Debug, Clone, Copy)]
+pub enum BrPolicy {
     /// Uniform-random over `MultiDiscrete([num_houses, 2, 2])` — the baseline
     /// (identical in distribution to a frozen opponent).
     Uniform,
@@ -223,9 +227,15 @@ enum BrPolicy {
 }
 
 impl BrPolicy {
+    /// Compute the action for `agent_id` under this policy given its flat
+    /// observation. `agent_id` is threaded through so ownership-scoped policies
+    /// (`Specialist`, owned-only `Firefighter`) resolve the correct
+    /// round-robin-owned houses for *this* deviator — essential once a
+    /// coalition scripts more than one agent.
     fn action(
         &self,
         flat_obs: &[f32],
+        agent_id: usize,
         num_agents: usize,
         num_houses: usize,
         rng: &mut StdRng,
@@ -233,8 +243,8 @@ impl BrPolicy {
         match self {
             BrPolicy::Uniform => uniform_action(num_houses, rng),
             BrPolicy::AlwaysRest => [0, MODE_REST, MODE_REST],
-            BrPolicy::Specialist => specialist_action(flat_obs, BR_AGENT, num_agents, num_houses),
-            BrPolicy::Firefighter(p) => p.action(flat_obs, BR_AGENT, num_agents, num_houses, rng),
+            BrPolicy::Specialist => specialist_action(flat_obs, agent_id, num_agents, num_houses),
+            BrPolicy::Firefighter(p) => p.action(flat_obs, agent_id, num_agents, num_houses, rng),
         }
     }
 }
@@ -257,19 +267,75 @@ fn evaluate(
     rng: &mut StdRng,
     step_cap: usize,
 ) -> OracleEval {
+    // The k=1 improvability gate is the coalition oracle with a single
+    // deviator (agent 0). Delegate so the two paths never drift apart.
+    let coalition = [(BR_AGENT, *policy)];
+    evaluate_coalition(env, &coalition, num_agents, num_houses, episode_seeds, rng, step_cap).eval
+}
+
+/// Return statistics for a coalition evaluation, carrying the **per-episode
+/// per-step** team-return series in addition to the aggregate [`OracleEval`].
+///
+/// The per-episode series is the length-normalized statistic the episode-level
+/// bootstrap CI on the team-return gap (issue #268) resamples. Length
+/// normalization (mean reward *per step* within each episode) matters: raw
+/// per-episode totals are dominated by episode-length variance (episodes run
+/// 10–1000 steps), which swamps the per-step team-return signal #259 measured.
+/// Resampling per-step means over episodes keeps the CI comparable to the #259
+/// per-step numbers while still being an episode-level bootstrap.
+#[derive(Debug, Clone)]
+pub struct CoalitionEval {
+    /// Aggregate statistics (per-step / per-episode means).
+    pub eval: OracleEval,
+    /// Mean *per-step* team return (summed across all `N` agents, averaged over
+    /// that episode's steps) for each episode, in `episode_seeds` order.
+    /// Length == `episode_seeds.len()`. Empty-episode (zero-step) entries are
+    /// impossible: the env always runs `min_nights` before it can terminate.
+    pub per_episode_team_per_step: Vec<f64>,
+}
+
+/// Roll out `episode_seeds.len()` episodes where every `(agent_id, policy)` in
+/// `coalition` follows its assigned scripted policy and every remaining agent
+/// acts uniform-random, accumulating team and coalition-return statistics.
+///
+/// This is the k≥1 generalization of `evaluate`: with a one-element coalition
+/// `[(0, policy)]` it reproduces the original single-BR improvability gate;
+/// with `k` elements it scripts `k` coordinated deviators against `N−k` frozen
+/// uniform opponents (issue #268).
+///
+/// The reported `br_return_sum` in the returned [`OracleEval`] is the summed
+/// **own** return of the coalition members (the quantity a coordinated method
+/// would optimize). Each episode resets the env with the corresponding seed in
+/// `episode_seeds`, so passing the **same** seed list to the baseline and to
+/// every candidate is the variance-reduction control that makes the per-episode
+/// gap series a paired comparison.
+#[allow(clippy::too_many_arguments)]
+pub fn evaluate_coalition(
+    env: &mut BucketBrigadeMaEnv,
+    coalition: &[(usize, BrPolicy)],
+    num_agents: usize,
+    num_houses: usize,
+    episode_seeds: &[u64],
+    rng: &mut StdRng,
+    step_cap: usize,
+) -> CoalitionEval {
     let mut team_return_sum = 0.0_f64;
     let mut br_return_sum = 0.0_f64;
     let mut total_steps = 0_usize;
+    let mut per_episode_team_per_step = Vec::with_capacity(episode_seeds.len());
 
     for &seed in episode_seeds {
         let mut obs = env.reset(Some(seed));
+        let mut ep_team = 0.0_f64;
+        let mut ep_steps = 0_usize;
         for _ in 0..step_cap {
             let actions: Vec<[u8; 3]> = (0..num_agents)
                 .map(|a| {
-                    let act = if a == BR_AGENT {
-                        policy.action(&obs[a], num_agents, num_houses, rng)
-                    } else {
-                        uniform_action(num_houses, rng)
+                    let act = match coalition.iter().find(|(id, _)| *id == a) {
+                        Some((id, policy)) => {
+                            policy.action(&obs[a], *id, num_agents, num_houses, rng)
+                        }
+                        None => uniform_action(num_houses, rng),
                     };
                     [act[0] as u8, act[1] as u8, act[2] as u8]
                 })
@@ -277,16 +343,77 @@ fn evaluate(
             let res = env.step(&actions);
             let step_team: f64 = res.rewards.iter().map(|&r| r as f64).sum();
             team_return_sum += step_team;
-            br_return_sum += res.rewards[BR_AGENT] as f64;
+            ep_team += step_team;
+            for (id, _) in coalition {
+                br_return_sum += res.rewards[*id] as f64;
+            }
             total_steps += 1;
+            ep_steps += 1;
             obs = res.observations;
             if res.done {
                 break;
             }
         }
+        // Length-normalized per-step team return for this episode (see
+        // `CoalitionEval` docs for why totals are unusable). `ep_steps` is
+        // always >= 1 here (the env runs at least one step before `done`).
+        per_episode_team_per_step.push(if ep_steps == 0 {
+            0.0
+        } else {
+            ep_team / ep_steps as f64
+        });
     }
 
-    OracleEval { episodes: episode_seeds.len(), total_steps, team_return_sum, br_return_sum }
+    CoalitionEval {
+        eval: OracleEval {
+            episodes: episode_seeds.len(),
+            total_steps,
+            team_return_sum,
+            br_return_sum,
+        },
+        per_episode_team_per_step,
+    }
+}
+
+/// Percentile bootstrap 95%-style CI on the mean of a per-episode series.
+///
+/// Resamples `values` with replacement `n_boot` times, computes the mean of
+/// each resample, and returns the `(alpha/2, 1−alpha/2)` empirical quantiles of
+/// the bootstrap distribution of the mean. Self-contained (no external crate),
+/// mirroring the episode-level resampling the conditional-entropy pipeline uses
+/// elsewhere in bucket-brigade.
+///
+/// Returns `(NaN, NaN)` for an empty input. For `alpha = 0.05` the interval is
+/// the 2.5th–97.5th percentile of resampled means. A lower bound strictly above
+/// zero on the *gap* series is the decision rule for `k*` (issue #268).
+pub fn bootstrap_mean_ci(
+    values: &[f64],
+    n_boot: usize,
+    alpha: f64,
+    rng: &mut StdRng,
+) -> (f64, f64) {
+    let n = values.len();
+    if n == 0 || n_boot == 0 {
+        return (f64::NAN, f64::NAN);
+    }
+    let mut means: Vec<f64> = Vec::with_capacity(n_boot);
+    for _ in 0..n_boot {
+        let mut acc = 0.0_f64;
+        for _ in 0..n {
+            let idx = rng.random_range(0..n);
+            acc += values[idx];
+        }
+        means.push(acc / n as f64);
+    }
+    means.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let lo_q = alpha / 2.0;
+    let hi_q = 1.0 - alpha / 2.0;
+    let quantile = |q: f64| -> f64 {
+        // Nearest-rank quantile on the sorted bootstrap means.
+        let rank = (q * (n_boot as f64 - 1.0)).round() as usize;
+        means[rank.min(n_boot - 1)]
+    };
+    (quantile(lo_q), quantile(hi_q))
 }
 
 /// One labeled row of the oracle report.
@@ -478,6 +605,251 @@ pub fn run_oracle(
         .unwrap_or(0);
 
     OracleReport { baseline, candidates, best_idx }
+}
+
+/// One labeled coalition-candidate row: a policy assignment for the `k`
+/// deviators plus its evaluation against the frozen uniform remainder.
+#[derive(Debug, Clone)]
+pub struct CoalitionRow {
+    /// Human-readable coalition label (e.g. `"all_specialist"`).
+    pub label: String,
+    /// Aggregate evaluation statistics for this coalition.
+    pub eval: OracleEval,
+    /// Per-episode *per-step* team return, shared-seed-aligned with the
+    /// baseline so `candidate − baseline` is a paired per-episode gap
+    /// series.
+    pub per_episode_team_per_step: Vec<f64>,
+}
+
+/// Full result of a coalition improvability-gate run on one cell for a fixed
+/// coalition size `k` (issue #268).
+#[derive(Debug, Clone)]
+pub struct CoalitionOracleReport {
+    /// Coalition size (number of scripted deviators).
+    pub k: usize,
+    /// The all-uniform baseline row (no deviators).
+    pub baseline: CoalitionRow,
+    /// Every evaluated coalition assignment, in evaluation order.
+    pub candidates: Vec<CoalitionRow>,
+    /// Index into `candidates` of the highest per-episode team return (the
+    /// ceiling for this `k`).
+    pub best_idx: usize,
+    /// Point estimate the CI brackets: the **episode-mean** of the per-episode
+    /// per-step team-return gap (ceiling − baseline), i.e. every episode
+    /// weighted equally regardless of length. This is the statistic the
+    /// episode-level bootstrap resamples, so it — not the step-weighted
+    /// [`CoalitionOracleReport::team_gap_per_step`] — is the number that lies
+    /// inside `[gap_ci_lo, gap_ci_hi]`.
+    pub gap_mean: f64,
+    /// Bootstrap CI lower bound on `gap_mean` (episode-level resampling).
+    pub gap_ci_lo: f64,
+    /// Bootstrap CI upper bound on `gap_mean` (episode-level resampling).
+    pub gap_ci_hi: f64,
+}
+
+impl CoalitionOracleReport {
+    /// The ceiling row: the coalition achieving the highest per-step team
+    /// return at this `k`.
+    pub fn best(&self) -> &CoalitionRow {
+        &self.candidates[self.best_idx]
+    }
+
+    /// Absolute per-step team-return improvement of the ceiling over the
+    /// all-uniform baseline. This is the quantity the bootstrap CI brackets.
+    pub fn team_gap_per_step(&self) -> f64 {
+        self.best().eval.per_step_team() - self.baseline.eval.per_step_team()
+    }
+
+    /// Ceiling's per-step team improvement as a fraction of `|baseline|` — a
+    /// scale-free "how flat is it" measure. Small ⇒ flat.
+    pub fn team_gap_fraction(&self) -> f64 {
+        let base = self.baseline.eval.per_step_team();
+        if base == 0.0 {
+            return f64::NAN;
+        }
+        self.team_gap_per_step() / base.abs()
+    }
+
+    /// Whether this `k` clears the coordination threshold: a *statistically
+    /// positive* team-return gap, i.e. the bootstrap CI lower bound is strictly
+    /// above zero. `k*` for a cell is the smallest `k` for which this holds.
+    pub fn is_k_star(&self) -> bool {
+        self.gap_ci_lo > 0.0
+    }
+}
+
+/// Build the coalition-candidate battery for `k` deviators (agents `0..k`).
+///
+/// Homogeneous assignments replicate one policy across all `k` deviators;
+/// heterogeneous assignments (only meaningful for `k ≥ 2`) mix roles to match
+/// the heterogeneous double-oracle profile shapes called out in issue #268
+/// (one aggressive "Hero" firefighter, or one abstainer, plus specialists).
+/// `search_best` is the best homogeneous firefighter found by the random
+/// search.
+fn coalition_candidates(k: usize, search_best: FirefighterParams) -> Vec<(String, Vec<BrPolicy>)> {
+    let homogeneous = |label: &str, p: BrPolicy| (label.to_string(), vec![p; k]);
+    let ff = |owned: bool| {
+        BrPolicy::Firefighter(FirefighterParams { scope_owned_only: owned, work_prob: 1.0 })
+    };
+
+    let mut out = vec![
+        homogeneous("all_always_rest", BrPolicy::AlwaysRest),
+        homogeneous("all_specialist", BrPolicy::Specialist),
+        homogeneous("all_firefighter[owned,work=1.0]", ff(true)),
+        homogeneous("all_firefighter[any,work=1.0]", ff(false)),
+        homogeneous(
+            &format!(
+                "all_search_best[{},work={:.3}]",
+                if search_best.scope_owned_only {
+                    "owned"
+                } else {
+                    "any"
+                },
+                search_best.work_prob
+            ),
+            BrPolicy::Firefighter(search_best),
+        ),
+    ];
+
+    if k >= 2 {
+        // One aggressive any-house "Hero" firefighter + (k−1) owned specialists.
+        let mut hero_plus_specialists = vec![ff(false)];
+        hero_plus_specialists.extend(std::iter::repeat_n(BrPolicy::Specialist, k - 1));
+        out.push(("hero[any]+specialists".to_string(), hero_plus_specialists));
+
+        // One abstainer (always-rest) + (k−1) owned specialists.
+        let mut rest_plus_specialists = vec![BrPolicy::AlwaysRest];
+        rest_plus_specialists.extend(std::iter::repeat_n(BrPolicy::Specialist, k - 1));
+        out.push(("rest+specialists".to_string(), rest_plus_specialists));
+    }
+
+    out
+}
+
+/// Run the coalition improvability-gate oracle on one cell for a fixed
+/// coalition size `k` (issue #268).
+///
+/// Freezes `N−k` uniform opponents and scripts the first `k` agents as
+/// coordinated deviators. Evaluates the coalition-candidate battery (see
+/// `coalition_candidates`) against the **same** per-episode seed stream as
+/// the all-uniform baseline, then reports the ceiling gap and an episode-level
+/// percentile bootstrap CI on the per-episode team-return gap. `k = 1`
+/// reproduces the [`run_oracle`] single-BR gate.
+///
+/// # Arguments
+///
+/// * `k` — coalition size (`1..=num_agents`).
+/// * `eval_episodes` / `search_episodes` / `num_search` — as in [`run_oracle`].
+/// * `n_boot` — bootstrap resamples for the gap CI (e.g. 1000).
+/// * `alpha` — CI significance level (e.g. 0.05 for a 95% CI).
+#[allow(clippy::too_many_arguments)]
+pub fn run_coalition_oracle(
+    env: &mut BucketBrigadeMaEnv,
+    num_agents: usize,
+    num_houses: usize,
+    k: usize,
+    eval_episodes: usize,
+    search_episodes: usize,
+    num_search: usize,
+    seed: u64,
+    step_cap: usize,
+    n_boot: usize,
+    alpha: f64,
+) -> CoalitionOracleReport {
+    assert!(k >= 1 && k <= num_agents, "coalition size k={k} out of range 1..={num_agents}");
+
+    // Shared per-episode seed streams (variance reduction across candidates and
+    // the baseline). Identical derivation to `run_oracle` so k=1 lines up.
+    let eval_seeds: Vec<u64> = (0..eval_episodes as u64).map(|i| seed ^ (0x9E3779B9 ^ i)).collect();
+    let search_seeds: Vec<u64> =
+        (0..search_episodes as u64).map(|i| seed ^ (0x85EBCA6B ^ i)).collect();
+
+    // Assign a policy set to agents 0..k. Each candidate reseeds the RNG from
+    // `seed` so candidates differ only in the coalition policy, not opponent
+    // randomness.
+    let assign = |policies: &[BrPolicy]| -> Vec<(usize, BrPolicy)> {
+        policies.iter().enumerate().map(|(a, p)| (a, *p)).collect()
+    };
+    let score = |env: &mut BucketBrigadeMaEnv, policies: &[BrPolicy]| -> CoalitionEval {
+        let coalition = assign(policies);
+        let mut rng = StdRng::seed_from_u64(seed);
+        evaluate_coalition(env, &coalition, num_agents, num_houses, &eval_seeds, &mut rng, step_cap)
+    };
+
+    // --- Baseline: all agents uniform (empty coalition). ---
+    let baseline_eval = {
+        let mut rng = StdRng::seed_from_u64(seed);
+        evaluate_coalition(env, &[], num_agents, num_houses, &eval_seeds, &mut rng, step_cap)
+    };
+    let baseline = CoalitionRow {
+        label: "all_uniform (baseline)".to_string(),
+        eval: baseline_eval.eval,
+        per_episode_team_per_step: baseline_eval.per_episode_team_per_step,
+    };
+
+    // --- Randomized search over the firefighter family (homogeneous over k). ---
+    let mut search_rng = StdRng::seed_from_u64(seed ^ 0xD1B54A32);
+    let mut best_params = FirefighterParams { scope_owned_only: true, work_prob: 1.0 };
+    let mut best_search_team = f64::NEG_INFINITY;
+    for _ in 0..num_search {
+        let params = FirefighterParams {
+            scope_owned_only: search_rng.random::<bool>(),
+            work_prob: search_rng.random::<f32>(),
+        };
+        let coalition = assign(&vec![BrPolicy::Firefighter(params); k]);
+        let mut rng = StdRng::seed_from_u64(seed);
+        let eval = evaluate_coalition(
+            env,
+            &coalition,
+            num_agents,
+            num_houses,
+            &search_seeds,
+            &mut rng,
+            step_cap,
+        );
+        if eval.eval.per_step_team() > best_search_team {
+            best_search_team = eval.eval.per_step_team();
+            best_params = params;
+        }
+    }
+
+    // --- Score the full candidate battery on the eval seed set. ---
+    let mut candidates: Vec<CoalitionRow> = Vec::new();
+    for (label, policies) in coalition_candidates(k, best_params) {
+        let ev = score(env, &policies);
+        candidates.push(CoalitionRow {
+            label,
+            eval: ev.eval,
+            per_episode_team_per_step: ev.per_episode_team_per_step,
+        });
+    }
+
+    // Ceiling = candidate with the highest (aggregate) per-step team return.
+    let best_idx = candidates
+        .iter()
+        .enumerate()
+        .max_by(|(_, a), (_, b)| {
+            a.eval.per_step_team().partial_cmp(&b.eval.per_step_team()).unwrap()
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+
+    // Episode-level paired per-step gap series (ceiling − baseline) → bootstrap CI.
+    let gap_series: Vec<f64> = candidates[best_idx]
+        .per_episode_team_per_step
+        .iter()
+        .zip(baseline.per_episode_team_per_step.iter())
+        .map(|(c, b)| c - b)
+        .collect();
+    let gap_mean = if gap_series.is_empty() {
+        f64::NAN
+    } else {
+        gap_series.iter().sum::<f64>() / gap_series.len() as f64
+    };
+    let mut boot_rng = StdRng::seed_from_u64(seed ^ 0xA5A5_5A5A);
+    let (gap_ci_lo, gap_ci_hi) = bootstrap_mean_ci(&gap_series, n_boot, alpha, &mut boot_rng);
+
+    CoalitionOracleReport { k, baseline, candidates, best_idx, gap_mean, gap_ci_lo, gap_ci_hi }
 }
 
 #[cfg(test)]

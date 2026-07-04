@@ -30,13 +30,34 @@
 //! done
 //! ```
 //!
+//! # Coalition mode (issue #268)
+//!
+//! Setting the `K` env var switches the harness into the **coalition
+//! improvability gate**: it sweeps coalition size `k = 1..=K` over all three
+//! no-convergence cells, scripting `k` coordinated deviators against `N−k`
+//! frozen uniform opponents, and prints a `k × cell` table plus the per-cell
+//! **k\*** verdict (smallest `k` whose per-episode team-return-gap bootstrap CI
+//! lower bound is strictly positive).
+//!
+//! ```bash
+//! # Measure the coordination threshold k* on all three cells:
+//! K=4 EVAL_EPISODES=400 \
+//!     cargo run --release --example br_oracle \
+//!         --features "training,env-bucket-brigade"
+//! ```
+//!
 //! # Env-var knobs
 //!
-//! - `CELL` — one of `beta01|beta05|beta09` (default `beta05`).
+//! - `CELL` — one of `beta01|beta05|beta09` (default `beta05`). Ignored in
+//!   coalition mode (all three cells are swept).
+//! - `K` — if set, run the coalition sweep for `k = 1..=K` (issue #268).
 //! - `EVAL_EPISODES` — episodes for the final reported numbers (default 400).
 //! - `SEARCH_EPISODES` — episodes used to score each searched firefighter
 //!   (default 40).
 //! - `NUM_SEARCH` — number of random firefighters to sample (default 64).
+//! - `N_BOOT` — bootstrap resamples for the gap CI in coalition mode (default
+//!   1000).
+//! - `ALPHA` — CI significance level in coalition mode (default 0.05 → 95% CI).
 //! - `SEED` — base RNG seed (default 42).
 //! - `STEP_CAP` — per-episode step bound (default 1000; the env terminates on
 //!   its own once all houses are safe or ruined after `min_nights`).
@@ -46,7 +67,7 @@ use thrust_rl::{
     env::games::bucket_brigade::{BucketBrigadeMaEnv, NUM_HOUSES, registry},
     multi_agent::{
         bucket_brigade_baselines::BucketBrigadeCell,
-        bucket_brigade_oracle::{OracleReport, run_oracle},
+        bucket_brigade_oracle::{OracleReport, run_coalition_oracle, run_oracle},
     },
 };
 
@@ -126,8 +147,125 @@ fn print_report(cell: &str, report: &OracleReport) {
     tracing::info!("------------------------------------------------------------");
 }
 
+/// Coalition improvability-gate sweep (issue #268): for each no-convergence
+/// cell, sweep `k = 1..=k_max` and print the `k × cell` team-return-gap table
+/// with bootstrap CIs, then the per-cell `k*` verdict.
+#[allow(clippy::too_many_arguments)]
+fn run_coalition_sweep(
+    k_max: usize,
+    eval_episodes: usize,
+    search_episodes: usize,
+    num_search: usize,
+    seed: u64,
+    step_cap: usize,
+    n_boot: usize,
+    alpha: f64,
+) {
+    tracing::info!("Coalition improvability-gate oracle (issue #268)");
+    tracing::info!("  k sweep         = 1..={k_max}");
+    tracing::info!("  num_agents      = {NUM_AGENTS}");
+    tracing::info!("  eval_episodes   = {eval_episodes}");
+    tracing::info!("  search_episodes = {search_episodes}");
+    tracing::info!("  num_search      = {num_search}");
+    tracing::info!("  n_boot          = {n_boot}  alpha = {alpha}");
+    tracing::info!("  seed            = {seed}  step_cap = {step_cap}");
+    tracing::info!("============================================================");
+    tracing::info!(
+        "  gap_ep = episode-mean per-step team gap (CI is on this);  gap_agg = step-weighted"
+    );
+    tracing::info!(
+        "{:<8} {:>2}  {:<34} {:>10} {:>10} {:>10} {:>10} {:>4}",
+        "cell",
+        "k",
+        "ceiling",
+        "gap_ep",
+        "gap_agg",
+        "CI_lo",
+        "CI_hi",
+        "k*?",
+    );
+
+    for cell_e in BucketBrigadeCell::all() {
+        let cell = match cell_e {
+            BucketBrigadeCell::Beta01 => "beta01",
+            BucketBrigadeCell::Beta05 => "beta05",
+            BucketBrigadeCell::Beta09 => "beta09",
+        };
+        let mut k_star: Option<usize> = None;
+        for k in 1..=k_max {
+            let mut env = make_cell_env(cell_e, seed);
+            let report = run_coalition_oracle(
+                &mut env,
+                NUM_AGENTS,
+                NUM_HOUSES,
+                k,
+                eval_episodes,
+                search_episodes,
+                num_search,
+                seed,
+                step_cap,
+                n_boot,
+                alpha,
+            );
+            let is_star = report.is_k_star();
+            if is_star && k_star.is_none() {
+                k_star = Some(k);
+            }
+            tracing::info!(
+                "{:<8} {:>2}  {:<34} {:>10.3} {:>10.3} {:>10.3} {:>10.3} {:>4}",
+                cell,
+                k,
+                report.best().label,
+                report.gap_mean,
+                report.team_gap_per_step(),
+                report.gap_ci_lo,
+                report.gap_ci_hi,
+                if is_star { "yes" } else { "no" },
+            );
+            // Per-candidate breakdown (per-step team return + gap vs baseline)
+            // so the appended research-doc table can cite every coalition, not
+            // just the ceiling.
+            let base_ps = report.baseline.eval.per_step_team();
+            for row in &report.candidates {
+                tracing::info!(
+                    "           |- {:<40} per_step_team={:>10.3}  gap={:>+8.3}",
+                    row.label,
+                    row.eval.per_step_team(),
+                    row.eval.per_step_team() - base_ps,
+                );
+            }
+        }
+        match k_star {
+            Some(k) => tracing::info!(
+                "  => cell {cell}: k* = {k} (smallest k with CI_lo > 0; coordination threshold exists)"
+            ),
+            None => tracing::info!(
+                "  => cell {cell}: NO k* <= {k_max} (flat landscape; CI spans zero at k={k_max} — near-degenerate cell)"
+            ),
+        }
+        tracing::info!("------------------------------------------------------------");
+    }
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
+
+    // Coalition mode (issue #268): triggered by the `K` env var.
+    if let Ok(k_str) = std::env::var("K") {
+        let k_max: usize = k_str.parse().unwrap_or_else(|_| panic!("K must be a positive integer"));
+        assert!((1..=NUM_AGENTS).contains(&k_max), "K={k_max} out of range 1..={NUM_AGENTS}");
+        run_coalition_sweep(
+            k_max,
+            env_usize("EVAL_EPISODES", 400),
+            env_usize("SEARCH_EPISODES", 40),
+            env_usize("NUM_SEARCH", 64),
+            env_usize("SEED", 42) as u64,
+            env_usize("STEP_CAP", 1000),
+            env_usize("N_BOOT", 1000),
+            std::env::var("ALPHA").ok().and_then(|s| s.parse().ok()).unwrap_or(0.05),
+        );
+        return Ok(());
+    }
 
     let cell = std::env::var("CELL").unwrap_or_else(|_| DEFAULT_CELL.to_string());
     let cell_e = cell_enum(&cell);
