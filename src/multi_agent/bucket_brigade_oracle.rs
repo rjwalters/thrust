@@ -58,9 +58,10 @@
 //!   the target.
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
+use serde::Serialize;
 
 use crate::{
-    env::games::bucket_brigade::BucketBrigadeMaEnv,
+    env::games::bucket_brigade::{BucketBrigadeMaEnv, registry},
     multi_agent::bucket_brigade_baselines::specialist_action,
 };
 
@@ -850,6 +851,155 @@ pub fn run_coalition_oracle(
     let (gap_ci_lo, gap_ci_hi) = bootstrap_mean_ci(&gap_series, n_boot, alpha, &mut boot_rng);
 
     CoalitionOracleReport { k, baseline, candidates, best_idx, gap_mean, gap_ci_lo, gap_ci_hi }
+}
+
+// ===========================================================================
+// Phase-diagram sweep (issue #269)
+// ===========================================================================
+//
+// The coalition oracle above measures k* on a *single* (β, κ, c) cell. Issue
+// #269 sweeps k* across the full (β, κ, c) phase-diagram grid (the same grid
+// `envs/bucket-brigade/experiments/scripts/compute_nash_phase_diagram.py`
+// defines). The types and `run_phase_cell` helper below are the per-cell unit
+// of that sweep: they own env construction from raw floats (the raw-float
+// generalization of the `BucketBrigadeCell`-keyed constructor) and emit a
+// serializable per-cell record so a driver can parallelize over cells (rayon)
+// and write one JSON file per cell.
+
+/// One `k`-slice of a phase-diagram cell sweep: the coalition-oracle summary
+/// for a fixed coalition size `k` on one cell.
+#[derive(Debug, Clone, Serialize)]
+pub struct PhaseKRecord {
+    /// Coalition size (number of scripted deviators).
+    pub k: usize,
+    /// Episode-mean per-step team-return gap (ceiling − baseline). The point
+    /// estimate the bootstrap CI brackets.
+    pub gap_mean: f64,
+    /// Bootstrap CI lower bound on `gap_mean`.
+    pub gap_ci_lo: f64,
+    /// Bootstrap CI upper bound on `gap_mean`.
+    pub gap_ci_hi: f64,
+    /// Step-weighted per-step team-return gap of the ceiling over the
+    /// all-uniform baseline (the aggregate companion to `gap_mean`).
+    pub team_gap_per_step: f64,
+    /// Label of the ceiling coalition assignment at this `k`.
+    pub best_coalition_policy: String,
+    /// Whether this `k` clears the coordination threshold (CI lower bound
+    /// strictly above zero).
+    pub is_k_star: bool,
+}
+
+/// One phase-diagram cell record: the `k = 1..=k_max` coalition sweep for a
+/// fixed `(β, κ, c)` triple plus the derived per-cell `k*`.
+///
+/// `cell_tag` uses the canonical `b{β:.2}_k{κ:.2}_c{c:.2}` format shared with
+/// `compute_nash_phase_diagram.py::_cell_tag` and `BucketBrigadeCell::tag`, so
+/// records join against the downstream verdict / entropy artifacts by tag.
+#[derive(Debug, Clone, Serialize)]
+pub struct PhaseCellRecord {
+    /// Canonical `b{β:.2}_k{κ:.2}_c{c:.2}` join key.
+    pub cell_tag: String,
+    /// Fire-spread probability β (`prob_fire_spreads_to_neighbor`).
+    pub beta: f32,
+    /// Single-agent extinguish probability κ
+    /// (`prob_solo_agent_extinguishes_fire`).
+    pub kappa: f32,
+    /// Work cost c (`cost_to_work_one_night`).
+    pub c: f32,
+    /// Smallest `k` whose gap CI lower bound is strictly positive, or `None`
+    /// if no `k <= k_max` clears zero (flat / near-degenerate cell).
+    pub k_star: Option<usize>,
+    /// Per-`k` coalition-oracle summaries, `k = 1..=k_max` in order.
+    pub per_k: Vec<PhaseKRecord>,
+}
+
+/// Filesystem-safe cell tag: `b{β:.2}_k{κ:.2}_c{c:.2}`.
+///
+/// Byte-for-byte identical to `compute_nash_phase_diagram.py::_cell_tag` so the
+/// Rust k* records and the Python Nash verdicts key against the same string.
+pub fn phase_cell_tag(beta: f32, kappa: f32, c: f32) -> String {
+    format!("b{beta:.2}_k{kappa:.2}_c{c:.2}")
+}
+
+/// Construct the bucket-brigade multi-agent env for a raw `(β, κ, c)` cell.
+///
+/// The raw-float generalization of the `BucketBrigadeCell`-keyed constructors
+/// in `br_oracle.rs` / `train_br_probe.rs`: starts from the
+/// `minimal_specialization-v1` base scenario (the family the asymmetric-NE
+/// search was calibrated on) and overrides only the three swept fields, exactly
+/// as the Python `_make_scenario` does.
+pub fn make_phase_cell_env(
+    beta: f32,
+    kappa: f32,
+    c: f32,
+    num_agents: usize,
+    seed: u64,
+) -> BucketBrigadeMaEnv {
+    let mut scenario = registry::get_scenario_by_id("minimal_specialization-v1")
+        .expect("minimal_specialization-v1 must resolve in the registry");
+    scenario.prob_fire_spreads_to_neighbor = beta;
+    scenario.prob_solo_agent_extinguishes_fire = kappa;
+    scenario.cost_to_work_one_night = c;
+    BucketBrigadeMaEnv::new(scenario, num_agents, Some(seed))
+}
+
+/// Run the full `k = 1..=k_max` coalition sweep for one `(β, κ, c)` cell and
+/// return its serializable [`PhaseCellRecord`] (issue #269).
+///
+/// Rebuilds a fresh env per `k` (identical to the single-cell sweep in
+/// `br_oracle.rs`) so every `k` sees the same env-construction seed, and reuses
+/// the shared per-episode seed stream inside [`run_coalition_oracle`] — the
+/// same measurement protocol the #268 gate used. Self-contained (owns env
+/// construction) so a driver can call it under `rayon::par_iter` with one cell
+/// per task.
+#[allow(clippy::too_many_arguments)]
+pub fn run_phase_cell(
+    beta: f32,
+    kappa: f32,
+    c: f32,
+    num_agents: usize,
+    num_houses: usize,
+    k_max: usize,
+    eval_episodes: usize,
+    search_episodes: usize,
+    num_search: usize,
+    seed: u64,
+    step_cap: usize,
+    n_boot: usize,
+    alpha: f64,
+) -> PhaseCellRecord {
+    let mut per_k = Vec::with_capacity(k_max);
+    let mut k_star: Option<usize> = None;
+    for k in 1..=k_max {
+        let mut env = make_phase_cell_env(beta, kappa, c, num_agents, seed);
+        let report = run_coalition_oracle(
+            &mut env,
+            num_agents,
+            num_houses,
+            k,
+            eval_episodes,
+            search_episodes,
+            num_search,
+            seed,
+            step_cap,
+            n_boot,
+            alpha,
+        );
+        let is_star = report.is_k_star();
+        if is_star && k_star.is_none() {
+            k_star = Some(k);
+        }
+        per_k.push(PhaseKRecord {
+            k,
+            gap_mean: report.gap_mean,
+            gap_ci_lo: report.gap_ci_lo,
+            gap_ci_hi: report.gap_ci_hi,
+            team_gap_per_step: report.team_gap_per_step(),
+            best_coalition_policy: report.best().label.clone(),
+            is_k_star: is_star,
+        });
+    }
+    PhaseCellRecord { cell_tag: phase_cell_tag(beta, kappa, c), beta, kappa, c, k_star, per_k }
 }
 
 #[cfg(test)]

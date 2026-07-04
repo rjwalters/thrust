@@ -16,7 +16,9 @@ use thrust_rl::{
     env::games::bucket_brigade::{BucketBrigadeMaEnv, NUM_HOUSES, registry},
     multi_agent::{
         bucket_brigade_baselines::BucketBrigadeCell,
-        bucket_brigade_oracle::{bootstrap_mean_ci, run_coalition_oracle},
+        bucket_brigade_oracle::{
+            bootstrap_mean_ci, phase_cell_tag, run_coalition_oracle, run_phase_cell,
+        },
     },
 };
 
@@ -119,4 +121,44 @@ fn bootstrap_ci_is_well_ordered() {
     // Empty input degrades gracefully to NaN bounds.
     let (elo, ehi) = bootstrap_mean_ci(&[], 1000, 0.05, &mut rng);
     assert!(elo.is_nan() && ehi.is_nan());
+}
+
+/// Phase-diagram sweep smoke test (issue #269): `run_phase_cell` on the
+/// canonical no-convergence cell (β=0.5, κ=0.1, c=0.5) at a trivially small
+/// budget produces a well-formed serializable record — canonical
+/// `b{β:.2}_k{κ:.2}_c{c:.2}` cell tag, one `PhaseKRecord` per k in order,
+/// finite well-ordered CIs, and a `k_star` consistent with the per-k
+/// `is_k_star` flags. Also pins the tag format itself so it stays joinable
+/// with `compute_nash_phase_diagram.py::_cell_tag` output.
+#[test]
+fn phase_cell_record_smoke() {
+    assert_eq!(phase_cell_tag(0.5, 0.1, 0.5), "b0.50_k0.10_c0.50");
+    assert_eq!(phase_cell_tag(0.1, 0.3, 1.0), "b0.10_k0.30_c1.00");
+    assert_eq!(phase_cell_tag(0.9, 0.7, 2.0), "b0.90_k0.70_c2.00");
+
+    let record =
+        run_phase_cell(0.5, 0.1, 0.5, NUM_AGENTS, NUM_HOUSES, 2, 50, 10, 4, 42, 500, 200, 0.05);
+    assert_eq!(record.cell_tag, "b0.50_k0.10_c0.50");
+    assert_eq!(record.beta, 0.5);
+    assert_eq!(record.kappa, 0.1);
+    assert_eq!(record.c, 0.5);
+    assert_eq!(record.per_k.len(), 2);
+    for (i, pk) in record.per_k.iter().enumerate() {
+        assert_eq!(pk.k, i + 1, "per_k must be ordered k=1..=k_max");
+        assert!(pk.gap_mean.is_finite());
+        assert!(pk.gap_ci_lo.is_finite() && pk.gap_ci_hi.is_finite());
+        assert!(pk.gap_ci_lo <= pk.gap_ci_hi, "k={} CI lo <= hi", pk.k);
+        assert_eq!(pk.is_k_star, pk.gap_ci_lo > 0.0);
+        assert!(!pk.best_coalition_policy.is_empty());
+    }
+    // k_star is the smallest k with is_k_star, or None if no k clears zero.
+    let expected_k_star = record.per_k.iter().find(|p| p.is_k_star).map(|p| p.k);
+    assert_eq!(record.k_star, expected_k_star);
+
+    // The record serializes to JSON with the schema fields downstream joins
+    // rely on.
+    let json = serde_json::to_value(&record).expect("record must serialize");
+    assert_eq!(json["cell_tag"], "b0.50_k0.10_c0.50");
+    assert!(json["per_k"].as_array().is_some_and(|a| a.len() == 2));
+    assert!(json["per_k"][0]["best_coalition_policy"].is_string());
 }
