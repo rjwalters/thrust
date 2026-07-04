@@ -2,6 +2,11 @@ import { test, expect } from "@playwright/test";
 
 const BASE_URL = "https://rjwalters.info/thrust";
 
+// The training dashboard is a new, static (no-WASM) page. It is tested against
+// the local dev server (started by playwright.config.ts `webServer`) rather than
+// the production URL above, since it is not deployed until this change merges.
+const LOCAL_URL = "http://localhost:5173/thrust";
+
 test("home page loads", async ({ page }) => {
 	const errors: string[] = [];
 
@@ -76,5 +81,31 @@ test("snake page loads", async ({ page }) => {
 	}
 
 	expect(title).toContain("Snake");
+	expect(errors.length).toBe(0);
+});
+
+test("training dashboard page loads", async ({ page }) => {
+	const errors: string[] = [];
+
+	page.on("pageerror", (error) => {
+		errors.push(error.message);
+		console.log("[PAGE ERROR]", error.message);
+	});
+
+	console.log("\n=== Navigating to Training Dashboard page ===");
+	await page.goto(`${LOCAL_URL}/dashboard`, { waitUntil: "networkidle" });
+
+	const title = await page.textContent("h1");
+	console.log("Page title:", title);
+
+	// The CSV curves should load and render an SVG chart (recharts).
+	await expect(page.locator(".recharts-surface").first()).toBeVisible();
+
+	if (errors.length > 0) {
+		console.log("Errors found:");
+		errors.forEach((err) => console.log("  -", err));
+	}
+
+	expect(title).toContain("Training");
 	expect(errors.length).toBe(0);
 });

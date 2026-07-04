@@ -92,6 +92,28 @@ export default function Home() {
 						</div>
 					</Link>
 
+					<Link
+						to="/dashboard"
+						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"
+					>
+						<h2 className="text-3xl font-bold text-white mb-4">
+							Training Dashboard
+						</h2>
+						<p className="text-white/80 mb-4">
+							Watch three RL algorithms — A2C, DQN and PPO — learn to balance
+							CartPole. Reward curves from recorded training runs, overlaid for a
+							side-by-side comparison.
+						</p>
+						<div className="text-sm text-white/60">
+							<span className="bg-white/20 px-3 py-1 rounded-full">
+								Learning Curves
+							</span>
+							<span className="bg-white/20 px-3 py-1 rounded-full ml-2">
+								Multi-Algorithm
+							</span>
+						</div>
+					</Link>
+
 					<a
 						href="https://rjwalters.info/bucket-brigade/"
 						target="_blank"
