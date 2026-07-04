@@ -261,6 +261,10 @@ pub fn compute_vtrace_advantages(
 }
 
 #[cfg(test)]
+// Reference constants below are copied verbatim from the Python
+// reference (`scripts/vtrace_ref.py`) at 10 decimal places for
+// auditable 1:1 correspondence; f32 truncates them at compile time.
+#[allow(clippy::excessive_precision)]
 mod tests {
     use super::*;
     use crate::buffer::rollout::{gae::compute_gae_single_env, storage::RolloutBuffer};
