@@ -51,6 +51,21 @@ pub struct A2cConfig {
     /// rollout before computing the policy loss.
     pub normalize_advantages: bool,
 
+    /// If true, replace GAE with V-trace (Espeholt et al. 2018) for
+    /// off-policy correction. Requires that target-policy log-probs be
+    /// supplied to the rollout preprocessing step. Defaults to `false`,
+    /// leaving existing A2C behavior unchanged.
+    pub use_vtrace: bool,
+
+    /// V-trace rho clipping threshold (Espeholt 2018, eq. 1). Ignored when
+    /// `use_vtrace = false`. Typical value: `1.0` (the IMPALA paper
+    /// default).
+    pub vtrace_rho_bar: f32,
+
+    /// V-trace c clipping threshold (Espeholt 2018, eq. 2). Ignored when
+    /// `use_vtrace = false`. Typical value: `1.0`.
+    pub vtrace_c_bar: f32,
+
     /// Seed threaded into seeded network init (e.g.
     /// [`MlpBurnConfig::with_seed`](crate::policy::mlp::MlpBurnConfig::with_seed))
     /// for reproducibility. Two trainers built with the same `seed`
@@ -70,6 +85,9 @@ impl Default for A2cConfig {
             num_envs: 16,
             max_grad_norm: 0.5,
             normalize_advantages: true,
+            use_vtrace: false,
+            vtrace_rho_bar: 1.0,
+            vtrace_c_bar: 1.0,
             seed: 0,
         }
     }
@@ -108,6 +126,12 @@ impl A2cConfig {
         }
         if self.max_grad_norm <= 0.0 {
             return Err(anyhow!("max_grad_norm must be positive, got {}", self.max_grad_norm));
+        }
+        if self.vtrace_rho_bar <= 0.0 {
+            return Err(anyhow!("vtrace_rho_bar must be positive, got {}", self.vtrace_rho_bar));
+        }
+        if self.vtrace_c_bar <= 0.0 {
+            return Err(anyhow!("vtrace_c_bar must be positive, got {}", self.vtrace_c_bar));
         }
         Ok(())
     }
@@ -168,6 +192,24 @@ impl A2cConfig {
         self
     }
 
+    /// Enable or disable V-trace off-policy correction (replaces GAE).
+    pub fn use_vtrace(mut self, enabled: bool) -> Self {
+        self.use_vtrace = enabled;
+        self
+    }
+
+    /// Set the V-trace rho clipping threshold (Espeholt 2018, eq. 1).
+    pub fn vtrace_rho_bar(mut self, rho_bar: f32) -> Self {
+        self.vtrace_rho_bar = rho_bar;
+        self
+    }
+
+    /// Set the V-trace c clipping threshold (Espeholt 2018, eq. 2).
+    pub fn vtrace_c_bar(mut self, c_bar: f32) -> Self {
+        self.vtrace_c_bar = c_bar;
+        self
+    }
+
     /// Set the reproducibility seed.
     pub fn seed(mut self, seed: u64) -> Self {
         self.seed = seed;
@@ -192,6 +234,10 @@ mod tests {
         assert_eq!(config.num_envs, 16);
         assert_eq!(config.max_grad_norm, 0.5);
         assert!(config.normalize_advantages);
+        // V-trace defaults leave existing behavior unchanged.
+        assert!(!config.use_vtrace);
+        assert_eq!(config.vtrace_rho_bar, 1.0);
+        assert_eq!(config.vtrace_c_bar, 1.0);
         assert_eq!(config.seed, 0);
     }
 
@@ -234,6 +280,23 @@ mod tests {
         // Invalid max_grad_norm
         assert!(A2cConfig::new().max_grad_norm(0.0).validate().is_err());
         assert!(A2cConfig::new().max_grad_norm(-1.0).validate().is_err());
+
+        // V-trace clip thresholds must be positive.
+        assert!(A2cConfig::new().vtrace_rho_bar(0.0).validate().is_err());
+        assert!(A2cConfig::new().vtrace_rho_bar(-0.5).validate().is_err());
+        assert!(A2cConfig::new().vtrace_rho_bar(1.0).validate().is_ok());
+        assert!(A2cConfig::new().vtrace_c_bar(0.0).validate().is_err());
+        assert!(A2cConfig::new().vtrace_c_bar(-0.5).validate().is_err());
+        assert!(A2cConfig::new().vtrace_c_bar(1.0).validate().is_ok());
+        // Enabling V-trace with valid thresholds is accepted.
+        assert!(
+            A2cConfig::new()
+                .use_vtrace(true)
+                .vtrace_rho_bar(0.8)
+                .vtrace_c_bar(1.2)
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]
@@ -248,6 +311,9 @@ mod tests {
             .num_envs(8)
             .max_grad_norm(1.0)
             .normalize_advantages(false)
+            .use_vtrace(true)
+            .vtrace_rho_bar(0.9)
+            .vtrace_c_bar(1.1)
             .seed(42);
 
         assert!(config.validate().is_ok());
@@ -260,6 +326,9 @@ mod tests {
         assert_eq!(config.num_envs, 8);
         assert_eq!(config.max_grad_norm, 1.0);
         assert!(!config.normalize_advantages);
+        assert!(config.use_vtrace);
+        assert_eq!(config.vtrace_rho_bar, 0.9);
+        assert_eq!(config.vtrace_c_bar, 1.1);
         assert_eq!(config.seed, 42);
     }
 }

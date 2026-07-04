@@ -24,11 +24,13 @@ pub use sampling::{
     train_val_split,
 };
 pub use storage::{RolloutBatch, RolloutBuffer, RolloutBurnTensors};
+pub use vtrace::compute_vtrace_advantages;
 
 // Submodules
 mod gae;
 mod sampling;
 mod storage;
+mod vtrace;
 
 #[cfg(test)]
 mod tests;
@@ -71,6 +73,41 @@ impl RolloutBuffer {
         gae_lambda: f32,
     ) {
         gae::compute_advantages_partial(self, valid_steps, last_values, gamma, gae_lambda);
+    }
+
+    /// Compute V-trace targets and advantages (Espeholt et al. 2018) for
+    /// off-policy correction.
+    ///
+    /// Convenience wrapper around the module-level
+    /// [`compute_vtrace_advantages`]. The buffer's stored `log_probs` are
+    /// treated as the behavior-policy log-probs; `target_log_probs`
+    /// (`[num_steps][num_envs]`) are the current target policy's log-probs
+    /// reevaluated over the stored observations/actions. Results are
+    /// written into `advantages`/`returns` exactly like
+    /// [`Self::compute_advantages`], so `get_batch()` works as usual.
+    ///
+    /// # Arguments
+    /// * `target_log_probs` - Target-policy log-probs `[num_steps][num_envs]`
+    /// * `last_values` - Bootstrap `V(s_{T+1})` per environment `[num_envs]`
+    /// * `gamma` - Discount factor
+    /// * `rho_bar` - IS ratio clip for the TD target (typically 1.0)
+    /// * `c_bar` - IS ratio clip for the trace coefficient (typically 1.0)
+    pub fn compute_vtrace_advantages(
+        &mut self,
+        target_log_probs: &[Vec<f32>],
+        last_values: &[f32],
+        gamma: f32,
+        rho_bar: f32,
+        c_bar: f32,
+    ) {
+        vtrace::compute_vtrace_advantages(
+            self,
+            target_log_probs,
+            last_values,
+            gamma,
+            rho_bar,
+            c_bar,
+        );
     }
 
     /// Get a batch of all data from the buffer
