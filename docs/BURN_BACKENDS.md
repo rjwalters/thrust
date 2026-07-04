@@ -294,6 +294,11 @@ best reserved for large-model / high-parallelism configurations. This is the
 quantified version of the [Performance note](#performance-note) and the
 validation-run observations above.
 
+> **Mixed precision (FP16/BF16):** f16/bf16 autodiff is supported on the cubecl
+> GPU backends (wgpu/cuda) but **not** on NdArray (CPU), and pays off only in
+> the same large-net regime that justifies a GPU at all. See
+> [`FP16_FEASIBILITY.md`](./FP16_FEASIBILITY.md) for the spike (issue #267).
+
 ## Why Burn instead of libtorch?
 
 The pre-v0.1.0 trainer stack used `tch` (Rust bindings to libtorch).
