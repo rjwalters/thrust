@@ -730,3 +730,104 @@ for c in beta01 beta05 beta09; do
     cargo run --release --example br_oracle --features "training,env-bucket-brigade"
 done
 ```
+
+---
+
+# Coalition improvability gate — k\* measurement (issue #268, 2026-07-04)
+
+## Why this run
+
+The #259 gate above proved **k\* > 1**: no *unilateral* scripted best-response for a single
+agent (with 3 frozen-uniform opponents) beats uniform on team return. This run asks the
+natural next question: **what is the minimum coalition size k\* whose *simultaneous*,
+coordinated scripted deviation from uniform produces a statistically positive team-return
+gap?** If a finite k\* ≥ 2 exists, the flat best-response landscape is a **coordination
+threshold** — no unilateral improvement path exists, which mechanistically explains why
+PPO, NFSP, and PSRO (all built on *unilateral* best responses) fail on these cells, while
+leaving open that *joint / coordinated* methods could succeed. If even k = 4 were flat, the
+cells would be near-degenerate and should be excluded from trainability claims rather than
+counted as "hard."
+
+This is the **go/no-go** for the `slepian-wolf-marl-2` paper's pivot from "conditional
+entropy H(A_i\*|A_{-i}\*) predicts trainability" (empirically dead: Spearman ρ = 0.007,
+p ≈ 0.97) to "coordination threshold k\* predicts trainability."
+
+## Method — coalition oracle (NN-free, PPO-free)
+
+Extends the #259 harness (`src/multi_agent/bucket_brigade_oracle.rs` +
+`examples/games/bucket_brigade/br_oracle.rs`, coalition mode via the `K` env var). For
+coalition size `k`, it freezes `N−k` uniform-random opponents and scripts the first `k`
+agents as **coordinated deviators**, reusing the #259 candidate battery applied jointly:
+homogeneous `all_specialist`, `all_firefighter[owned/any, work=1.0]`, an `all_always_rest`
+abstainer, the best homogeneous firefighter from a 64-sample `FirefighterParams` random
+search, plus (for k ≥ 2) heterogeneous **`hero[any]+specialists`** (one aggressive any-house
+firefighter + k−1 owned specialists) and **`rest+specialists`** profiles matching the
+heterogeneous double-oracle profile shapes.
+
+All candidates and the baseline share one **per-episode seed stream** (variance reduction →
+a *paired* per-episode gap). The decision statistic is the **episode-mean per-step team
+return gap** (each episode weighted equally regardless of length — raw per-episode totals
+are swamped by 10–1000-step length variance), with a **percentile bootstrap 95% CI**
+(1000 resamples over episodes). **k\* per cell = the smallest k whose gap-CI lower bound is
+strictly positive.** 400 eval episodes/cell/k; all three no-convergence cells. Scripted
+policies only — no NN, no Burn, no PPO.
+
+## Result — finite k\* = 4 on all three cells (coordination threshold exists)
+
+`gap_ep` = episode-mean per-step team gap (the CI is on this); `gap_agg` = step-weighted
+per-step team gap (diluted by long ruin episodes); CI = 95% bootstrap on `gap_ep`.
+
+| cell | k | ceiling policy | `gap_ep` | `gap_agg` | CI (95%) | k\*? |
+|------|---|----------------|---------:|----------:|:--------:|:---:|
+| beta01 / beta05 / beta09 | 1 | `all_always_rest` | −4.93 | +0.06 | (−13.61, +1.97) | no |
+| beta01 / beta05 / beta09 | 2 | `all_always_rest` | −4.76 | −0.11 | (−13.22, +2.11) | no |
+| beta01 / beta05 / beta09 | 3 | `all_search_best[owned, work=0.607]` | +3.61 | +0.91 | (−5.63, +13.75) | no |
+| beta01 / beta05 / beta09 | 4 | `all_search_best[any, work=0.485]` | **+33.24** | +2.02 | **(+18.99, +50.14)** | **yes** |
+
+**k\* = 4 for all three cells (β = 0.1 / 0.5 / 0.9).** The four-agent coalition of
+coordinated any-house firefighters (each WORKing a burning house with prob ≈ 0.485) is the
+first coalition size whose team-return gap CI clears zero: **+33.24 per-step team gap, 95%
+CI (+18.99, +50.14)**. Every strict sub-coalition (k = 1, 2, 3) has a CI spanning zero — k=3
+is suggestive (`gap_ep` = +3.61) but not significant. As in #259, the three cells produce
+**byte-identical** aggregate statistics under the shared seed stream (matching this repo's
+identical committed per-cell baselines and the "wasteland-collapse" dynamics: once a handful
+of fires ignite, Bernoulli burn-out ruins the ring regardless of β).
+
+Two mechanistic notes from the per-candidate breakdown:
+
+- **Fighting fires only pays as a full team.** At k = 1, 2 the ceiling is *doing nothing*
+  (`all_always_rest`): a minority of firefighters pays the `c = 0.5`/night work cost while
+  the uniform majority lets the village ruin, so any fire-fighting is *worse* than resting.
+  Only once all four houses' owners defend simultaneously (k = 4) does coordinated
+  firefighting flip to a net team gain.
+- **The signal is length-concentrated.** The step-weighted `gap_agg` at k = 4 is a modest
+  +2.02/step, but the episode-weighted `gap_ep` is +33.24: the coalition *saves the village*
+  in enough episodes that those short, near-zero-penalty episodes dominate a
+  length-normalized average. This is precisely the coordination benefit a joint method
+  could capture and a unilateral one cannot.
+
+## Implication — go for the k\* trainability reframe
+
+This is **outcome (a)** of the #268 gate: a **finite, measurable k\* = 4** exists on all
+three no-convergence cells (not a flat k = 4 near-degenerate landscape). The mechanistic
+reading is decisive for #134 / #230 and the `slepian-wolf-marl-2` pivot:
+
+- **No unilateral improvement path exists** (k\* > 1 from #259, confirmed here for k = 2, 3),
+  so PPO / NFSP / PSRO — which climb *unilateral* best-response gradients — correctly report
+  near-zero advantage and stall. The negative training result is not a bug; it is the
+  coordination threshold showing through.
+- **A coordinated / joint method has headroom** (k\* = 4 gap is large and significant),
+  so these cells are genuinely "hard-but-solvable-by-coordination," not near-degenerate.
+  They should be **kept** in trainability claims, reframed around k\* rather than excluded.
+- This is a **go** for the paper's "coordination threshold k\* predicts trainability" reframe.
+
+**Out of scope (follow-ups):** sweeping the full (β, κ, c) grid to see whether k\* varies
+across cells (gated on this finding a measurable k\*, which it did), and any training-side
+(PPO / NFSP / PSRO) coordination method that would actually *reach* the k\* = 4 ceiling.
+
+Reproduce:
+
+```bash
+K=4 EVAL_EPISODES=400 \
+  cargo run --release --example br_oracle --features "training,env-bucket-brigade"
+```
