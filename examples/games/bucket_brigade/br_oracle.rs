@@ -46,11 +46,38 @@
 //!         --features "training,env-bucket-brigade"
 //! ```
 //!
+//! # Phase-diagram grid mode (issue #269)
+//!
+//! Setting `PHASE=1` sweeps the coalition oracle (k = 1..=`K`, default 4)
+//! across an arbitrary (β, κ, c) grid — by default the FULL 5×5×3 = 75-cell
+//! paper grid from `compute_nash_phase_diagram.py` — writing one JSON record
+//! per cell to `OUT_DIR/<cell_tag>.json` (tag format `b{β:.2}_k{κ:.2}_c{c:.2}`,
+//! joinable with the Nash phase-diagram artifacts). Cells parallelize via
+//! rayon; existing per-cell outputs are skipped, so re-runs resume.
+//!
+//! ```bash
+//! # Full 75-cell grid, k = 1..4, per-cell JSONs under phase_out/:
+//! PHASE=1 K=4 EVAL_EPISODES=400 OUT_DIR=phase_out \
+//!     cargo run --release --example br_oracle \
+//!         --features "training,env-bucket-brigade"
+//!
+//! # Explicit cell subset (distributed-launch knob):
+//! PHASE=1 CELLS="0.1,0.1,0.5;0.3,0.5,2.0" ...
+//! ```
+//!
 //! # Env-var knobs
 //!
 //! - `CELL` — one of `beta01|beta05|beta09` (default `beta05`). Ignored in
 //!   coalition mode (all three cells are swept).
-//! - `K` — if set, run the coalition sweep for `k = 1..=K` (issue #268).
+//! - `K` — if set, run the coalition sweep for `k = 1..=K` (issue #268). In
+//!   `PHASE=1` mode `K` is the per-cell k_max (default 4).
+//! - `PHASE` — set to `1` for the phase-diagram grid mode (issue #269).
+//! - `BETA_VALUES` / `KAPPA_VALUES` / `C_VALUES` — comma-separated floats
+//!   overriding the FULL grid axes in `PHASE=1` mode.
+//! - `CELLS` — semicolon-separated explicit `beta,kappa,c` triples; overrides
+//!   the cartesian product in `PHASE=1` mode.
+//! - `OUT_DIR` — per-cell JSON output directory in `PHASE=1` mode (default
+//!   `phase_out`).
 //! - `EVAL_EPISODES` — episodes for the final reported numbers (default 400).
 //! - `SEARCH_EPISODES` — episodes used to score each searched firefighter
 //!   (default 40).
@@ -63,11 +90,15 @@
 //!   its own once all houses are safe or ruined after `min_nights`).
 
 use anyhow::Result;
+use rayon::prelude::*;
 use thrust_rl::{
     env::games::bucket_brigade::{BucketBrigadeMaEnv, NUM_HOUSES, registry},
     multi_agent::{
         bucket_brigade_baselines::BucketBrigadeCell,
-        bucket_brigade_oracle::{OracleReport, run_coalition_oracle, run_oracle},
+        bucket_brigade_oracle::{
+            OracleReport, PhaseCellRecord, phase_cell_tag, run_coalition_oracle, run_oracle,
+            run_phase_cell,
+        },
     },
 };
 
@@ -247,8 +278,197 @@ fn run_coalition_sweep(
     }
 }
 
+/// Parse a comma-separated float list from an env var, with a default.
+fn env_f32_list(key: &str, default: &[f32]) -> Vec<f32> {
+    match std::env::var(key) {
+        Ok(s) => s
+            .split(',')
+            .map(|t| {
+                t.trim()
+                    .parse::<f32>()
+                    .unwrap_or_else(|_| panic!("{key} entry '{t}' is not a float"))
+            })
+            .collect(),
+        Err(_) => default.to_vec(),
+    }
+}
+
+/// Full paper grid (5 × 5 × 3 = 75 cells) from
+/// `envs/bucket-brigade/experiments/scripts/compute_nash_phase_diagram.py`
+/// (`FULL_BETA_VALUES` / `FULL_KAPPA_VALUES` / `FULL_C_VALUES`).
+const FULL_BETA_VALUES: [f32; 5] = [0.1, 0.3, 0.5, 0.7, 0.9];
+const FULL_KAPPA_VALUES: [f32; 5] = [0.1, 0.3, 0.5, 0.7, 0.9];
+const FULL_C_VALUES: [f32; 3] = [0.5, 1.0, 2.0];
+
+/// Phase-diagram k* sweep (issue #269): run the `k = 1..=k_max` coalition
+/// oracle on every requested `(β, κ, c)` cell in parallel (rayon over cells)
+/// and write one JSON record per cell to `out_dir/<cell_tag>.json` so partial
+/// failures lose one cell, not the run. Cells whose output file already exists
+/// are skipped (resume support for distributed / re-run workflows).
+#[allow(clippy::too_many_arguments)]
+fn run_phase_sweep(
+    cells: &[(f32, f32, f32)],
+    out_dir: &str,
+    k_max: usize,
+    eval_episodes: usize,
+    search_episodes: usize,
+    num_search: usize,
+    seed: u64,
+    step_cap: usize,
+    n_boot: usize,
+    alpha: f64,
+) -> Result<()> {
+    std::fs::create_dir_all(out_dir)?;
+    tracing::info!("Phase-diagram k* sweep (issue #269)");
+    tracing::info!("  cells           = {}", cells.len());
+    tracing::info!("  k sweep         = 1..={k_max}");
+    tracing::info!("  num_agents      = {NUM_AGENTS}");
+    tracing::info!("  eval_episodes   = {eval_episodes}");
+    tracing::info!("  search_episodes = {search_episodes}");
+    tracing::info!("  num_search      = {num_search}");
+    tracing::info!("  n_boot          = {n_boot}  alpha = {alpha}");
+    tracing::info!("  seed            = {seed}  step_cap = {step_cap}");
+    tracing::info!("  out_dir         = {out_dir}");
+
+    let pending: Vec<(f32, f32, f32)> = cells
+        .iter()
+        .copied()
+        .filter(|&(beta, kappa, c)| {
+            let tag = phase_cell_tag(beta, kappa, c);
+            let path = format!("{out_dir}/{tag}.json");
+            if std::path::Path::new(&path).exists() {
+                tracing::info!("  skip {tag} (output exists)");
+                false
+            } else {
+                true
+            }
+        })
+        .collect();
+    tracing::info!("  pending cells   = {}", pending.len());
+
+    let results: Vec<Result<PhaseCellRecord>> = pending
+        .par_iter()
+        .map(|&(beta, kappa, c)| {
+            let record = run_phase_cell(
+                beta,
+                kappa,
+                c,
+                NUM_AGENTS,
+                NUM_HOUSES,
+                k_max,
+                eval_episodes,
+                search_episodes,
+                num_search,
+                seed,
+                step_cap,
+                n_boot,
+                alpha,
+            );
+            let path = format!("{out_dir}/{}.json", record.cell_tag);
+            std::fs::write(&path, serde_json::to_string_pretty(&record)?)?;
+            tracing::info!(
+                "  done {}: k* = {}",
+                record.cell_tag,
+                record.k_star.map_or("none".to_string(), |k| k.to_string()),
+            );
+            Ok(record)
+        })
+        .collect();
+
+    // Summary table.
+    tracing::info!("============================================================");
+    tracing::info!("{:<22} {:>6}  per-k gap_mean [CI]", "cell_tag", "k*");
+    let mut ok = 0usize;
+    for r in &results {
+        match r {
+            Ok(rec) => {
+                ok += 1;
+                let per_k: Vec<String> = rec
+                    .per_k
+                    .iter()
+                    .map(|p| {
+                        format!(
+                            "k{}={:+.2}[{:+.2},{:+.2}]",
+                            p.k, p.gap_mean, p.gap_ci_lo, p.gap_ci_hi
+                        )
+                    })
+                    .collect();
+                tracing::info!(
+                    "{:<22} {:>6}  {}",
+                    rec.cell_tag,
+                    rec.k_star.map_or("none".to_string(), |k| k.to_string()),
+                    per_k.join("  "),
+                );
+            }
+            Err(e) => tracing::warn!("cell failed: {e}"),
+        }
+    }
+    tracing::info!("phase sweep complete: {ok}/{} pending cells written", pending.len());
+    Ok(())
+}
+
+/// Resolve the phase-sweep cell list from env vars: an explicit `CELLS` list
+/// (semicolon-separated `beta,kappa,c` triples — the knob a distributed
+/// launcher uses to assign arbitrary cell subsets to nodes) or the cartesian
+/// product of `BETA_VALUES` × `KAPPA_VALUES` × `C_VALUES` (defaulting to the
+/// FULL 75-cell paper grid).
+fn phase_cells_from_env() -> Vec<(f32, f32, f32)> {
+    if let Ok(s) = std::env::var("CELLS") {
+        return s
+            .split(';')
+            .filter(|t| !t.trim().is_empty())
+            .map(|t| {
+                let v: Vec<f32> = t
+                    .split(',')
+                    .map(|x| {
+                        x.trim()
+                            .parse()
+                            .unwrap_or_else(|_| panic!("CELLS entry '{t}' is not b,k,c floats"))
+                    })
+                    .collect();
+                assert!(v.len() == 3, "CELLS entry '{t}' must have exactly 3 floats");
+                (v[0], v[1], v[2])
+            })
+            .collect();
+    }
+    let betas = env_f32_list("BETA_VALUES", &FULL_BETA_VALUES);
+    let kappas = env_f32_list("KAPPA_VALUES", &FULL_KAPPA_VALUES);
+    let cs = env_f32_list("C_VALUES", &FULL_C_VALUES);
+    let mut out = Vec::with_capacity(betas.len() * kappas.len() * cs.len());
+    for &b in &betas {
+        for &k in &kappas {
+            for &c in &cs {
+                out.push((b, k, c));
+            }
+        }
+    }
+    out
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
+
+    // Phase-diagram grid mode (issue #269): triggered by `PHASE=1`. Takes
+    // precedence over the single-grid coalition mode below (`K` is reused as
+    // the k_max knob in both modes).
+    if std::env::var("PHASE").map(|v| v == "1").unwrap_or(false) {
+        let cells = phase_cells_from_env();
+        let out_dir = std::env::var("OUT_DIR").unwrap_or_else(|_| "phase_out".to_string());
+        let k_max = env_usize("K", 4);
+        assert!((1..=NUM_AGENTS).contains(&k_max), "K={k_max} out of range 1..={NUM_AGENTS}");
+        return run_phase_sweep(
+            &cells,
+            &out_dir,
+            k_max,
+            env_usize("EVAL_EPISODES", 400),
+            env_usize("SEARCH_EPISODES", 40),
+            env_usize("NUM_SEARCH", 64),
+            env_usize("SEED", 42) as u64,
+            env_usize("STEP_CAP", 1000),
+            env_usize("N_BOOT", 1000),
+            std::env::var("ALPHA").ok().and_then(|s| s.parse().ok()).unwrap_or(0.05),
+        );
+    }
 
     // Coalition mode (issue #268): triggered by the `K` env var.
     if let Ok(k_str) = std::env::var("K") {
