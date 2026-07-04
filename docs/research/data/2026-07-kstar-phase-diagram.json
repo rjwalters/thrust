@@ -1,0 +1,3420 @@
+{
+  "schema_version": 1,
+  "generated": "2026-07-04",
+  "issue": 269,
+  "gate_result": {
+    "issue": 268,
+    "k_star_no_convergence_cells": 4
+  },
+  "protocol": {
+    "num_agents": 4,
+    "k_max": 4,
+    "eval_episodes": 400,
+    "search_episodes": 40,
+    "num_search": 64,
+    "n_boot": 1000,
+    "alpha": 0.05,
+    "seed": 42,
+    "step_cap": 1000,
+    "base_scenario": "minimal_specialization-v1",
+    "k_star_rule": "smallest k in 1..=4 with episode-level bootstrap CI lower bound on the per-episode per-step team-return gap strictly > 0"
+  },
+  "grid": {
+    "beta_values": [
+      0.1,
+      0.3,
+      0.5,
+      0.7,
+      0.9
+    ],
+    "kappa_values": [
+      0.1,
+      0.3,
+      0.5,
+      0.7,
+      0.9
+    ],
+    "c_values": [
+      0.5,
+      1.0,
+      2.0
+    ]
+  },
+  "cells": [
+    {
+      "cell_tag": "b0.10_k0.10_c0.50",
+      "beta": 0.1,
+      "kappa": 0.1,
+      "c": 0.5,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.926900746881204,
+          "gap_ci_lo": -13.609809831333028,
+          "gap_ci_hi": 1.9748816893542358,
+          "team_gap_per_step": 0.06402474306594286,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.75921405767817,
+          "gap_ci_lo": -13.223859514057825,
+          "gap_ci_hi": 2.108850113689652,
+          "team_gap_per_step": -0.10756851233043108,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 3.6117363268320526,
+          "gap_ci_lo": -5.628063096906378,
+          "gap_ci_hi": 13.745607086414013,
+          "team_gap_per_step": 0.9105313134783728,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 33.242607973688365,
+          "gap_ci_lo": 18.9915648234312,
+          "gap_ci_hi": 50.14218831869374,
+          "team_gap_per_step": 2.0191512883726546,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.10_c1.00",
+      "beta": 0.1,
+      "kappa": 0.1,
+      "c": 1.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.674179140545203,
+          "gap_ci_lo": -13.355271872003275,
+          "gap_ci_hi": 2.2282874199457026,
+          "team_gap_per_step": 0.3149376841229241,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.259349238813645,
+          "gap_ci_lo": -12.721111693067966,
+          "gap_ci_hi": 2.612288072690621,
+          "team_gap_per_step": 0.39276481294018595,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 4.345193714110715,
+          "gap_ci_lo": -4.8917053772920385,
+          "gap_ci_hi": 14.475203249983183,
+          "team_gap_per_step": 1.6446543569412597,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 34.16809683382402,
+          "gap_ci_lo": 19.92126928362049,
+          "gap_ci_hi": 51.069545945972294,
+          "team_gap_per_step": 2.9531389872755653,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.10_c2.00",
+      "beta": 0.1,
+      "kappa": 0.1,
+      "c": 2.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.168735927873216,
+          "gap_ci_lo": -12.846195953343868,
+          "gap_ci_hi": 2.73509888112861,
+          "team_gap_per_step": 0.8167635662364319,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -3.2596196010845957,
+          "gap_ci_lo": -11.71561605108825,
+          "gap_ci_hi": 3.6191639906925763,
+          "team_gap_per_step": 1.393431463481079,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 5.812108488668018,
+          "gap_ci_lo": -3.4189899380633504,
+          "gap_ci_hi": 15.934395577121528,
+          "team_gap_per_step": 3.112900443866806,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 36.01907455409539,
+          "gap_ci_lo": 21.780678203999088,
+          "gap_ci_hi": 52.92426120052904,
+          "team_gap_per_step": 4.8211143850811595,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.30_c0.50",
+      "beta": 0.1,
+      "kappa": 0.3,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 8.930311202389518,
+          "gap_ci_lo": -2.956750505999738,
+          "gap_ci_hi": 20.31722180932864,
+          "team_gap_per_step": 1.250406177355444,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.176808558357344,
+          "gap_ci_lo": 22.416327609293557,
+          "gap_ci_hi": 62.80614807588434,
+          "team_gap_per_step": -3.710885426794107,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 47.744327943326354,
+          "gap_ci_lo": 28.252792811795203,
+          "gap_ci_hi": 65.88629105016271,
+          "team_gap_per_step": 3.2609341731510995,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 74.56050001372093,
+          "gap_ci_lo": 51.764646575982454,
+          "gap_ci_hi": 97.83813394883263,
+          "team_gap_per_step": 5.692194440408571,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.30_c1.00",
+      "beta": 0.1,
+      "kappa": 0.3,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.173165395698136,
+          "gap_ci_lo": -2.7070229288241068,
+          "gap_ci_hi": 20.56648726913318,
+          "team_gap_per_step": 1.496959342172886,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.64928861478872,
+          "gap_ci_lo": 22.889866834336566,
+          "gap_ci_hi": 63.27190828953146,
+          "team_gap_per_step": -3.233987056725141,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 48.46019662140842,
+          "gap_ci_lo": 28.96733411665072,
+          "gap_ci_hi": 66.60294074399798,
+          "team_gap_per_step": 3.981510692824372,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 75.50297586277678,
+          "gap_ci_lo": 52.708194145049866,
+          "gap_ci_hi": 98.77691991217873,
+          "team_gap_per_step": 6.645032856672174,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.30_c2.00",
+      "beta": 0.1,
+      "kappa": 0.3,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.658873782315375,
+          "gap_ci_lo": -2.207567774472826,
+          "gap_ci_hi": 21.065018188742226,
+          "team_gap_per_step": 1.9900656718078835,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 43.594248727651454,
+          "gap_ci_lo": 23.835796743580435,
+          "gap_ci_hi": 64.20345840354928,
+          "team_gap_per_step": -2.2801903165870954,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 49.89193397757248,
+          "gap_ci_lo": 30.396416726361796,
+          "gap_ci_hi": 68.0362401316685,
+          "team_gap_per_step": 5.422663732171031,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 77.38792756088837,
+          "gap_ci_lo": 54.59528928318465,
+          "gap_ci_hi": 100.65449183887068,
+          "team_gap_per_step": 8.55070968919938,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.50_c0.50",
+      "beta": 0.1,
+      "kappa": 0.5,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.373747558796274,
+          "gap_ci_lo": -16.817929070622192,
+          "gap_ci_hi": 9.632890849264033,
+          "team_gap_per_step": -7.455822064160543,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 64.60818513830246,
+          "gap_ci_lo": 40.44018199975822,
+          "gap_ci_hi": 87.88359067262792,
+          "team_gap_per_step": -7.69680960531025,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.1221434537493,
+          "gap_ci_lo": 312.70982587491943,
+          "gap_ci_hi": 384.7810276353792,
+          "team_gap_per_step": -2.713448046494591,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 449.79755340254366,
+          "gap_ci_lo": 415.9760966333622,
+          "gap_ci_hi": 482.1521855363267,
+          "team_gap_per_step": 65.42692117725551,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.50_c1.00",
+      "beta": 0.1,
+      "kappa": 0.5,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.120082410047584,
+          "gap_ci_lo": -16.566367839983997,
+          "gap_ci_hi": 9.884612693994939,
+          "team_gap_per_step": -7.205414049046567,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 65.08137751184049,
+          "gap_ci_lo": 40.92152438892408,
+          "gap_ci_hi": 88.35507811084567,
+          "team_gap_per_step": -7.2175517927896635,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.6853877284018,
+          "gap_ci_lo": 313.2889105098023,
+          "gap_ci_hi": 385.327998881803,
+          "team_gap_per_step": -2.0646368755041067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 450.50761233299534,
+          "gap_ci_lo": 416.7022732744152,
+          "gap_ci_hi": 482.86284443554655,
+          "team_gap_per_step": 66.27110608155283,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.50_c2.00",
+      "beta": 0.1,
+      "kappa": 0.5,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -3.6127521125501976,
+          "gap_ci_lo": -16.0632453787076,
+          "gap_ci_hi": 10.388056383456824,
+          "team_gap_per_step": -6.704598018818615,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 66.02776225891665,
+          "gap_ci_lo": 41.884209167255925,
+          "gap_ci_hi": 89.29805298728134,
+          "team_gap_per_step": -6.259036167748263,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 350.8118762777072,
+          "gap_ci_lo": 314.447079779569,
+          "gap_ci_hi": 386.43178120836257,
+          "team_gap_per_step": -0.7670145335232519,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 451.9277301938991,
+          "gap_ci_lo": 418.1546265565193,
+          "gap_ci_hi": 484.2841622339854,
+          "team_gap_per_step": 67.95947589014759,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.70_c0.50",
+      "beta": 0.1,
+      "kappa": 0.7,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.262290947524271,
+          "gap_ci_lo": -21.863143442278535,
+          "gap_ci_hi": 8.838273109042042,
+          "team_gap_per_step": -3.345209476908394,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.16618523190334,
+          "gap_ci_lo": 369.1652382517277,
+          "gap_ci_hi": 436.92684591835564,
+          "team_gap_per_step": 30.90034006927067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 506.91226197178383,
+          "gap_ci_lo": 477.3098201077114,
+          "gap_ci_hi": 533.2700755611029,
+          "team_gap_per_step": 167.00931015191344,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 527.8793559570356,
+          "gap_ci_lo": 499.9284327882379,
+          "gap_ci_hi": 552.0751588175517,
+          "team_gap_per_step": 222.2896316038706,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.70_c1.00",
+      "beta": 0.1,
+      "kappa": 0.7,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.009051659102197,
+          "gap_ci_lo": -21.611233604122116,
+          "gap_ci_hi": 9.096817960579815,
+          "team_gap_per_step": -3.095234395446596,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.52124514884946,
+          "gap_ci_lo": 369.5335018780555,
+          "gap_ci_hi": 437.25860952086487,
+          "team_gap_per_step": 31.325894636794033,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 507.4186463131216,
+          "gap_ci_lo": 477.83009621936543,
+          "gap_ci_hi": 533.7704163031531,
+          "team_gap_per_step": 167.6162184944676,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 528.5483285545484,
+          "gap_ci_lo": 500.5970828967731,
+          "gap_ci_hi": 552.7465169137994,
+          "team_gap_per_step": 223.08026053506774,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.70_c2.00",
+      "beta": 0.1,
+      "kappa": 0.7,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -5.502573082258098,
+          "gap_ci_lo": -21.107413927809315,
+          "gap_ci_hi": 9.613505967050674,
+          "team_gap_per_step": -2.5952842325228858,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 404.23136498274323,
+          "gap_ci_lo": 370.2700291307106,
+          "gap_ci_hi": 437.92213672588156,
+          "team_gap_per_step": 32.17700377184053,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 508.4314149957979,
+          "gap_ci_lo": 478.8706484426725,
+          "gap_ci_hi": 534.7710977872516,
+          "team_gap_per_step": 168.83003517957587,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 529.8862737495745,
+          "gap_ci_lo": 501.93438311384256,
+          "gap_ci_hi": 554.089233106295,
+          "team_gap_per_step": 224.66151839746198,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.90_c0.50",
+      "beta": 0.1,
+      "kappa": 0.9,
+      "c": 0.5,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.5289148556569,
+          "gap_ci_lo": 366.34991300537513,
+          "gap_ci_hi": 434.58097345396794,
+          "team_gap_per_step": 41.393049425692425,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.615775850144,
+          "gap_ci_lo": 497.21785742612235,
+          "gap_ci_hi": 551.3567860934489,
+          "team_gap_per_step": 234.05673548963415,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 541.7173561049896,
+          "gap_ci_lo": 514.6198092842353,
+          "gap_ci_hi": 567.9306868994943,
+          "team_gap_per_step": 264.23488507909605,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 560.7027521225501,
+          "gap_ci_lo": 535.7460390997604,
+          "gap_ci_hi": 587.8698965917529,
+          "team_gap_per_step": 333.00227813586474,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.90_c1.00",
+      "beta": 0.1,
+      "kappa": 0.9,
+      "c": 1.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.70372641050926,
+          "gap_ci_lo": 366.53745690680967,
+          "gap_ci_hi": 434.7619134265549,
+          "team_gap_per_step": 41.60523489546267,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.9423548902088,
+          "gap_ci_lo": 497.5579119025343,
+          "gap_ci_hi": 551.6877687501051,
+          "team_gap_per_step": 234.4522422505783,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 542.2046843030367,
+          "gap_ci_lo": 515.1213790947903,
+          "gap_ci_hi": 568.4037532008923,
+          "team_gap_per_step": 264.81803614284115,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 561.547470994213,
+          "gap_ci_lo": 536.6073686942501,
+          "gap_ci_hi": 588.7092558729904,
+          "team_gap_per_step": 333.8877285419247,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.10_k0.90_c2.00",
+      "beta": 0.1,
+      "kappa": 0.9,
+      "c": 2.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 401.05334952021354,
+          "gap_ci_lo": 366.91254470967755,
+          "gap_ci_hi": 435.1237933717285,
+          "team_gap_per_step": 42.029605835003395,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 525.5955129703411,
+          "gap_ci_lo": 498.2380208553591,
+          "gap_ci_hi": 552.3497340634194,
+          "team_gap_per_step": 235.2432557724668,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 543.1793406991312,
+          "gap_ci_lo": 516.1245187158979,
+          "gap_ci_hi": 569.3498858036872,
+          "team_gap_per_step": 265.98433827033153,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 563.2369087375383,
+          "gap_ci_lo": 538.3322379514465,
+          "gap_ci_hi": 590.3879744354626,
+          "team_gap_per_step": 335.65862935404476,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.10_c0.50",
+      "beta": 0.3,
+      "kappa": 0.1,
+      "c": 0.5,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.926900746881204,
+          "gap_ci_lo": -13.609809831333028,
+          "gap_ci_hi": 1.9748816893542358,
+          "team_gap_per_step": 0.06402474306594286,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.75921405767817,
+          "gap_ci_lo": -13.223859514057825,
+          "gap_ci_hi": 2.108850113689652,
+          "team_gap_per_step": -0.10756851233043108,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 3.6117363268320526,
+          "gap_ci_lo": -5.628063096906378,
+          "gap_ci_hi": 13.745607086414013,
+          "team_gap_per_step": 0.9105313134783728,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 33.242607973688365,
+          "gap_ci_lo": 18.9915648234312,
+          "gap_ci_hi": 50.14218831869374,
+          "team_gap_per_step": 2.0191512883726546,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.10_c1.00",
+      "beta": 0.3,
+      "kappa": 0.1,
+      "c": 1.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.674179140545203,
+          "gap_ci_lo": -13.355271872003275,
+          "gap_ci_hi": 2.2282874199457026,
+          "team_gap_per_step": 0.3149376841229241,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.259349238813645,
+          "gap_ci_lo": -12.721111693067966,
+          "gap_ci_hi": 2.612288072690621,
+          "team_gap_per_step": 0.39276481294018595,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 4.345193714110715,
+          "gap_ci_lo": -4.8917053772920385,
+          "gap_ci_hi": 14.475203249983183,
+          "team_gap_per_step": 1.6446543569412597,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 34.16809683382402,
+          "gap_ci_lo": 19.92126928362049,
+          "gap_ci_hi": 51.069545945972294,
+          "team_gap_per_step": 2.9531389872755653,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.10_c2.00",
+      "beta": 0.3,
+      "kappa": 0.1,
+      "c": 2.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.168735927873216,
+          "gap_ci_lo": -12.846195953343868,
+          "gap_ci_hi": 2.73509888112861,
+          "team_gap_per_step": 0.8167635662364319,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -3.2596196010845957,
+          "gap_ci_lo": -11.71561605108825,
+          "gap_ci_hi": 3.6191639906925763,
+          "team_gap_per_step": 1.393431463481079,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 5.812108488668018,
+          "gap_ci_lo": -3.4189899380633504,
+          "gap_ci_hi": 15.934395577121528,
+          "team_gap_per_step": 3.112900443866806,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 36.01907455409539,
+          "gap_ci_lo": 21.780678203999088,
+          "gap_ci_hi": 52.92426120052904,
+          "team_gap_per_step": 4.8211143850811595,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.30_c0.50",
+      "beta": 0.3,
+      "kappa": 0.3,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 8.930311202389518,
+          "gap_ci_lo": -2.956750505999738,
+          "gap_ci_hi": 20.31722180932864,
+          "team_gap_per_step": 1.250406177355444,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.176808558357344,
+          "gap_ci_lo": 22.416327609293557,
+          "gap_ci_hi": 62.80614807588434,
+          "team_gap_per_step": -3.710885426794107,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 47.744327943326354,
+          "gap_ci_lo": 28.252792811795203,
+          "gap_ci_hi": 65.88629105016271,
+          "team_gap_per_step": 3.2609341731510995,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 74.56050001372093,
+          "gap_ci_lo": 51.764646575982454,
+          "gap_ci_hi": 97.83813394883263,
+          "team_gap_per_step": 5.692194440408571,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.30_c1.00",
+      "beta": 0.3,
+      "kappa": 0.3,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.173165395698136,
+          "gap_ci_lo": -2.7070229288241068,
+          "gap_ci_hi": 20.56648726913318,
+          "team_gap_per_step": 1.496959342172886,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.64928861478872,
+          "gap_ci_lo": 22.889866834336566,
+          "gap_ci_hi": 63.27190828953146,
+          "team_gap_per_step": -3.233987056725141,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 48.46019662140842,
+          "gap_ci_lo": 28.96733411665072,
+          "gap_ci_hi": 66.60294074399798,
+          "team_gap_per_step": 3.981510692824372,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 75.50297586277678,
+          "gap_ci_lo": 52.708194145049866,
+          "gap_ci_hi": 98.77691991217873,
+          "team_gap_per_step": 6.645032856672174,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.30_c2.00",
+      "beta": 0.3,
+      "kappa": 0.3,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.658873782315375,
+          "gap_ci_lo": -2.207567774472826,
+          "gap_ci_hi": 21.065018188742226,
+          "team_gap_per_step": 1.9900656718078835,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 43.594248727651454,
+          "gap_ci_lo": 23.835796743580435,
+          "gap_ci_hi": 64.20345840354928,
+          "team_gap_per_step": -2.2801903165870954,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 49.89193397757248,
+          "gap_ci_lo": 30.396416726361796,
+          "gap_ci_hi": 68.0362401316685,
+          "team_gap_per_step": 5.422663732171031,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 77.38792756088837,
+          "gap_ci_lo": 54.59528928318465,
+          "gap_ci_hi": 100.65449183887068,
+          "team_gap_per_step": 8.55070968919938,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.50_c0.50",
+      "beta": 0.3,
+      "kappa": 0.5,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.373747558796274,
+          "gap_ci_lo": -16.817929070622192,
+          "gap_ci_hi": 9.632890849264033,
+          "team_gap_per_step": -7.455822064160543,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 64.60818513830246,
+          "gap_ci_lo": 40.44018199975822,
+          "gap_ci_hi": 87.88359067262792,
+          "team_gap_per_step": -7.69680960531025,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.1221434537493,
+          "gap_ci_lo": 312.70982587491943,
+          "gap_ci_hi": 384.7810276353792,
+          "team_gap_per_step": -2.713448046494591,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 449.79755340254366,
+          "gap_ci_lo": 415.9760966333622,
+          "gap_ci_hi": 482.1521855363267,
+          "team_gap_per_step": 65.42692117725551,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.50_c1.00",
+      "beta": 0.3,
+      "kappa": 0.5,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.120082410047584,
+          "gap_ci_lo": -16.566367839983997,
+          "gap_ci_hi": 9.884612693994939,
+          "team_gap_per_step": -7.205414049046567,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 65.08137751184049,
+          "gap_ci_lo": 40.92152438892408,
+          "gap_ci_hi": 88.35507811084567,
+          "team_gap_per_step": -7.2175517927896635,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.6853877284018,
+          "gap_ci_lo": 313.2889105098023,
+          "gap_ci_hi": 385.327998881803,
+          "team_gap_per_step": -2.0646368755041067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 450.50761233299534,
+          "gap_ci_lo": 416.7022732744152,
+          "gap_ci_hi": 482.86284443554655,
+          "team_gap_per_step": 66.27110608155283,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.50_c2.00",
+      "beta": 0.3,
+      "kappa": 0.5,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -3.6127521125501976,
+          "gap_ci_lo": -16.0632453787076,
+          "gap_ci_hi": 10.388056383456824,
+          "team_gap_per_step": -6.704598018818615,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 66.02776225891665,
+          "gap_ci_lo": 41.884209167255925,
+          "gap_ci_hi": 89.29805298728134,
+          "team_gap_per_step": -6.259036167748263,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 350.8118762777072,
+          "gap_ci_lo": 314.447079779569,
+          "gap_ci_hi": 386.43178120836257,
+          "team_gap_per_step": -0.7670145335232519,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 451.9277301938991,
+          "gap_ci_lo": 418.1546265565193,
+          "gap_ci_hi": 484.2841622339854,
+          "team_gap_per_step": 67.95947589014759,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.70_c0.50",
+      "beta": 0.3,
+      "kappa": 0.7,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.262290947524271,
+          "gap_ci_lo": -21.863143442278535,
+          "gap_ci_hi": 8.838273109042042,
+          "team_gap_per_step": -3.345209476908394,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.16618523190334,
+          "gap_ci_lo": 369.1652382517277,
+          "gap_ci_hi": 436.92684591835564,
+          "team_gap_per_step": 30.90034006927067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 506.91226197178383,
+          "gap_ci_lo": 477.3098201077114,
+          "gap_ci_hi": 533.2700755611029,
+          "team_gap_per_step": 167.00931015191344,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 527.8793559570356,
+          "gap_ci_lo": 499.9284327882379,
+          "gap_ci_hi": 552.0751588175517,
+          "team_gap_per_step": 222.2896316038706,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.70_c1.00",
+      "beta": 0.3,
+      "kappa": 0.7,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.009051659102197,
+          "gap_ci_lo": -21.611233604122116,
+          "gap_ci_hi": 9.096817960579815,
+          "team_gap_per_step": -3.095234395446596,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.52124514884946,
+          "gap_ci_lo": 369.5335018780555,
+          "gap_ci_hi": 437.25860952086487,
+          "team_gap_per_step": 31.325894636794033,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 507.4186463131216,
+          "gap_ci_lo": 477.83009621936543,
+          "gap_ci_hi": 533.7704163031531,
+          "team_gap_per_step": 167.6162184944676,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 528.5483285545484,
+          "gap_ci_lo": 500.5970828967731,
+          "gap_ci_hi": 552.7465169137994,
+          "team_gap_per_step": 223.08026053506774,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.70_c2.00",
+      "beta": 0.3,
+      "kappa": 0.7,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -5.502573082258098,
+          "gap_ci_lo": -21.107413927809315,
+          "gap_ci_hi": 9.613505967050674,
+          "team_gap_per_step": -2.5952842325228858,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 404.23136498274323,
+          "gap_ci_lo": 370.2700291307106,
+          "gap_ci_hi": 437.92213672588156,
+          "team_gap_per_step": 32.17700377184053,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 508.4314149957979,
+          "gap_ci_lo": 478.8706484426725,
+          "gap_ci_hi": 534.7710977872516,
+          "team_gap_per_step": 168.83003517957587,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 529.8862737495745,
+          "gap_ci_lo": 501.93438311384256,
+          "gap_ci_hi": 554.089233106295,
+          "team_gap_per_step": 224.66151839746198,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.90_c0.50",
+      "beta": 0.3,
+      "kappa": 0.9,
+      "c": 0.5,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.5289148556569,
+          "gap_ci_lo": 366.34991300537513,
+          "gap_ci_hi": 434.58097345396794,
+          "team_gap_per_step": 41.393049425692425,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.615775850144,
+          "gap_ci_lo": 497.21785742612235,
+          "gap_ci_hi": 551.3567860934489,
+          "team_gap_per_step": 234.05673548963415,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 541.7173561049896,
+          "gap_ci_lo": 514.6198092842353,
+          "gap_ci_hi": 567.9306868994943,
+          "team_gap_per_step": 264.23488507909605,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 560.7027521225501,
+          "gap_ci_lo": 535.7460390997604,
+          "gap_ci_hi": 587.8698965917529,
+          "team_gap_per_step": 333.00227813586474,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.90_c1.00",
+      "beta": 0.3,
+      "kappa": 0.9,
+      "c": 1.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.70372641050926,
+          "gap_ci_lo": 366.53745690680967,
+          "gap_ci_hi": 434.7619134265549,
+          "team_gap_per_step": 41.60523489546267,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.9423548902088,
+          "gap_ci_lo": 497.5579119025343,
+          "gap_ci_hi": 551.6877687501051,
+          "team_gap_per_step": 234.4522422505783,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 542.2046843030367,
+          "gap_ci_lo": 515.1213790947903,
+          "gap_ci_hi": 568.4037532008923,
+          "team_gap_per_step": 264.81803614284115,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 561.547470994213,
+          "gap_ci_lo": 536.6073686942501,
+          "gap_ci_hi": 588.7092558729904,
+          "team_gap_per_step": 333.8877285419247,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.30_k0.90_c2.00",
+      "beta": 0.3,
+      "kappa": 0.9,
+      "c": 2.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 401.05334952021354,
+          "gap_ci_lo": 366.91254470967755,
+          "gap_ci_hi": 435.1237933717285,
+          "team_gap_per_step": 42.029605835003395,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 525.5955129703411,
+          "gap_ci_lo": 498.2380208553591,
+          "gap_ci_hi": 552.3497340634194,
+          "team_gap_per_step": 235.2432557724668,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 543.1793406991312,
+          "gap_ci_lo": 516.1245187158979,
+          "gap_ci_hi": 569.3498858036872,
+          "team_gap_per_step": 265.98433827033153,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 563.2369087375383,
+          "gap_ci_lo": 538.3322379514465,
+          "gap_ci_hi": 590.3879744354626,
+          "team_gap_per_step": 335.65862935404476,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.10_c0.50",
+      "beta": 0.5,
+      "kappa": 0.1,
+      "c": 0.5,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.926900746881204,
+          "gap_ci_lo": -13.609809831333028,
+          "gap_ci_hi": 1.9748816893542358,
+          "team_gap_per_step": 0.06402474306594286,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.75921405767817,
+          "gap_ci_lo": -13.223859514057825,
+          "gap_ci_hi": 2.108850113689652,
+          "team_gap_per_step": -0.10756851233043108,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 3.6117363268320526,
+          "gap_ci_lo": -5.628063096906378,
+          "gap_ci_hi": 13.745607086414013,
+          "team_gap_per_step": 0.9105313134783728,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 33.242607973688365,
+          "gap_ci_lo": 18.9915648234312,
+          "gap_ci_hi": 50.14218831869374,
+          "team_gap_per_step": 2.0191512883726546,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.10_c1.00",
+      "beta": 0.5,
+      "kappa": 0.1,
+      "c": 1.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.674179140545203,
+          "gap_ci_lo": -13.355271872003275,
+          "gap_ci_hi": 2.2282874199457026,
+          "team_gap_per_step": 0.3149376841229241,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.259349238813645,
+          "gap_ci_lo": -12.721111693067966,
+          "gap_ci_hi": 2.612288072690621,
+          "team_gap_per_step": 0.39276481294018595,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 4.345193714110715,
+          "gap_ci_lo": -4.8917053772920385,
+          "gap_ci_hi": 14.475203249983183,
+          "team_gap_per_step": 1.6446543569412597,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 34.16809683382402,
+          "gap_ci_lo": 19.92126928362049,
+          "gap_ci_hi": 51.069545945972294,
+          "team_gap_per_step": 2.9531389872755653,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.10_c2.00",
+      "beta": 0.5,
+      "kappa": 0.1,
+      "c": 2.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.168735927873216,
+          "gap_ci_lo": -12.846195953343868,
+          "gap_ci_hi": 2.73509888112861,
+          "team_gap_per_step": 0.8167635662364319,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -3.2596196010845957,
+          "gap_ci_lo": -11.71561605108825,
+          "gap_ci_hi": 3.6191639906925763,
+          "team_gap_per_step": 1.393431463481079,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 5.812108488668018,
+          "gap_ci_lo": -3.4189899380633504,
+          "gap_ci_hi": 15.934395577121528,
+          "team_gap_per_step": 3.112900443866806,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 36.01907455409539,
+          "gap_ci_lo": 21.780678203999088,
+          "gap_ci_hi": 52.92426120052904,
+          "team_gap_per_step": 4.8211143850811595,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.30_c0.50",
+      "beta": 0.5,
+      "kappa": 0.3,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 8.930311202389518,
+          "gap_ci_lo": -2.956750505999738,
+          "gap_ci_hi": 20.31722180932864,
+          "team_gap_per_step": 1.250406177355444,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.176808558357344,
+          "gap_ci_lo": 22.416327609293557,
+          "gap_ci_hi": 62.80614807588434,
+          "team_gap_per_step": -3.710885426794107,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 47.744327943326354,
+          "gap_ci_lo": 28.252792811795203,
+          "gap_ci_hi": 65.88629105016271,
+          "team_gap_per_step": 3.2609341731510995,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 74.56050001372093,
+          "gap_ci_lo": 51.764646575982454,
+          "gap_ci_hi": 97.83813394883263,
+          "team_gap_per_step": 5.692194440408571,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.30_c1.00",
+      "beta": 0.5,
+      "kappa": 0.3,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.173165395698136,
+          "gap_ci_lo": -2.7070229288241068,
+          "gap_ci_hi": 20.56648726913318,
+          "team_gap_per_step": 1.496959342172886,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.64928861478872,
+          "gap_ci_lo": 22.889866834336566,
+          "gap_ci_hi": 63.27190828953146,
+          "team_gap_per_step": -3.233987056725141,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 48.46019662140842,
+          "gap_ci_lo": 28.96733411665072,
+          "gap_ci_hi": 66.60294074399798,
+          "team_gap_per_step": 3.981510692824372,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 75.50297586277678,
+          "gap_ci_lo": 52.708194145049866,
+          "gap_ci_hi": 98.77691991217873,
+          "team_gap_per_step": 6.645032856672174,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.30_c2.00",
+      "beta": 0.5,
+      "kappa": 0.3,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.658873782315375,
+          "gap_ci_lo": -2.207567774472826,
+          "gap_ci_hi": 21.065018188742226,
+          "team_gap_per_step": 1.9900656718078835,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 43.594248727651454,
+          "gap_ci_lo": 23.835796743580435,
+          "gap_ci_hi": 64.20345840354928,
+          "team_gap_per_step": -2.2801903165870954,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 49.89193397757248,
+          "gap_ci_lo": 30.396416726361796,
+          "gap_ci_hi": 68.0362401316685,
+          "team_gap_per_step": 5.422663732171031,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 77.38792756088837,
+          "gap_ci_lo": 54.59528928318465,
+          "gap_ci_hi": 100.65449183887068,
+          "team_gap_per_step": 8.55070968919938,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.50_c0.50",
+      "beta": 0.5,
+      "kappa": 0.5,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.373747558796274,
+          "gap_ci_lo": -16.817929070622192,
+          "gap_ci_hi": 9.632890849264033,
+          "team_gap_per_step": -7.455822064160543,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 64.60818513830246,
+          "gap_ci_lo": 40.44018199975822,
+          "gap_ci_hi": 87.88359067262792,
+          "team_gap_per_step": -7.69680960531025,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.1221434537493,
+          "gap_ci_lo": 312.70982587491943,
+          "gap_ci_hi": 384.7810276353792,
+          "team_gap_per_step": -2.713448046494591,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 449.79755340254366,
+          "gap_ci_lo": 415.9760966333622,
+          "gap_ci_hi": 482.1521855363267,
+          "team_gap_per_step": 65.42692117725551,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.50_c1.00",
+      "beta": 0.5,
+      "kappa": 0.5,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.120082410047584,
+          "gap_ci_lo": -16.566367839983997,
+          "gap_ci_hi": 9.884612693994939,
+          "team_gap_per_step": -7.205414049046567,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 65.08137751184049,
+          "gap_ci_lo": 40.92152438892408,
+          "gap_ci_hi": 88.35507811084567,
+          "team_gap_per_step": -7.2175517927896635,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.6853877284018,
+          "gap_ci_lo": 313.2889105098023,
+          "gap_ci_hi": 385.327998881803,
+          "team_gap_per_step": -2.0646368755041067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 450.50761233299534,
+          "gap_ci_lo": 416.7022732744152,
+          "gap_ci_hi": 482.86284443554655,
+          "team_gap_per_step": 66.27110608155283,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.50_c2.00",
+      "beta": 0.5,
+      "kappa": 0.5,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -3.6127521125501976,
+          "gap_ci_lo": -16.0632453787076,
+          "gap_ci_hi": 10.388056383456824,
+          "team_gap_per_step": -6.704598018818615,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 66.02776225891665,
+          "gap_ci_lo": 41.884209167255925,
+          "gap_ci_hi": 89.29805298728134,
+          "team_gap_per_step": -6.259036167748263,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 350.8118762777072,
+          "gap_ci_lo": 314.447079779569,
+          "gap_ci_hi": 386.43178120836257,
+          "team_gap_per_step": -0.7670145335232519,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 451.9277301938991,
+          "gap_ci_lo": 418.1546265565193,
+          "gap_ci_hi": 484.2841622339854,
+          "team_gap_per_step": 67.95947589014759,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.70_c0.50",
+      "beta": 0.5,
+      "kappa": 0.7,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.262290947524271,
+          "gap_ci_lo": -21.863143442278535,
+          "gap_ci_hi": 8.838273109042042,
+          "team_gap_per_step": -3.345209476908394,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.16618523190334,
+          "gap_ci_lo": 369.1652382517277,
+          "gap_ci_hi": 436.92684591835564,
+          "team_gap_per_step": 30.90034006927067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 506.91226197178383,
+          "gap_ci_lo": 477.3098201077114,
+          "gap_ci_hi": 533.2700755611029,
+          "team_gap_per_step": 167.00931015191344,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 527.8793559570356,
+          "gap_ci_lo": 499.9284327882379,
+          "gap_ci_hi": 552.0751588175517,
+          "team_gap_per_step": 222.2896316038706,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.70_c1.00",
+      "beta": 0.5,
+      "kappa": 0.7,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.009051659102197,
+          "gap_ci_lo": -21.611233604122116,
+          "gap_ci_hi": 9.096817960579815,
+          "team_gap_per_step": -3.095234395446596,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.52124514884946,
+          "gap_ci_lo": 369.5335018780555,
+          "gap_ci_hi": 437.25860952086487,
+          "team_gap_per_step": 31.325894636794033,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 507.4186463131216,
+          "gap_ci_lo": 477.83009621936543,
+          "gap_ci_hi": 533.7704163031531,
+          "team_gap_per_step": 167.6162184944676,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 528.5483285545484,
+          "gap_ci_lo": 500.5970828967731,
+          "gap_ci_hi": 552.7465169137994,
+          "team_gap_per_step": 223.08026053506774,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.70_c2.00",
+      "beta": 0.5,
+      "kappa": 0.7,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -5.502573082258098,
+          "gap_ci_lo": -21.107413927809315,
+          "gap_ci_hi": 9.613505967050674,
+          "team_gap_per_step": -2.5952842325228858,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 404.23136498274323,
+          "gap_ci_lo": 370.2700291307106,
+          "gap_ci_hi": 437.92213672588156,
+          "team_gap_per_step": 32.17700377184053,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 508.4314149957979,
+          "gap_ci_lo": 478.8706484426725,
+          "gap_ci_hi": 534.7710977872516,
+          "team_gap_per_step": 168.83003517957587,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 529.8862737495745,
+          "gap_ci_lo": 501.93438311384256,
+          "gap_ci_hi": 554.089233106295,
+          "team_gap_per_step": 224.66151839746198,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.90_c0.50",
+      "beta": 0.5,
+      "kappa": 0.9,
+      "c": 0.5,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.5289148556569,
+          "gap_ci_lo": 366.34991300537513,
+          "gap_ci_hi": 434.58097345396794,
+          "team_gap_per_step": 41.393049425692425,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.615775850144,
+          "gap_ci_lo": 497.21785742612235,
+          "gap_ci_hi": 551.3567860934489,
+          "team_gap_per_step": 234.05673548963415,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 541.7173561049896,
+          "gap_ci_lo": 514.6198092842353,
+          "gap_ci_hi": 567.9306868994943,
+          "team_gap_per_step": 264.23488507909605,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 560.7027521225501,
+          "gap_ci_lo": 535.7460390997604,
+          "gap_ci_hi": 587.8698965917529,
+          "team_gap_per_step": 333.00227813586474,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.90_c1.00",
+      "beta": 0.5,
+      "kappa": 0.9,
+      "c": 1.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.70372641050926,
+          "gap_ci_lo": 366.53745690680967,
+          "gap_ci_hi": 434.7619134265549,
+          "team_gap_per_step": 41.60523489546267,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.9423548902088,
+          "gap_ci_lo": 497.5579119025343,
+          "gap_ci_hi": 551.6877687501051,
+          "team_gap_per_step": 234.4522422505783,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 542.2046843030367,
+          "gap_ci_lo": 515.1213790947903,
+          "gap_ci_hi": 568.4037532008923,
+          "team_gap_per_step": 264.81803614284115,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 561.547470994213,
+          "gap_ci_lo": 536.6073686942501,
+          "gap_ci_hi": 588.7092558729904,
+          "team_gap_per_step": 333.8877285419247,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.50_k0.90_c2.00",
+      "beta": 0.5,
+      "kappa": 0.9,
+      "c": 2.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 401.05334952021354,
+          "gap_ci_lo": 366.91254470967755,
+          "gap_ci_hi": 435.1237933717285,
+          "team_gap_per_step": 42.029605835003395,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 525.5955129703411,
+          "gap_ci_lo": 498.2380208553591,
+          "gap_ci_hi": 552.3497340634194,
+          "team_gap_per_step": 235.2432557724668,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 543.1793406991312,
+          "gap_ci_lo": 516.1245187158979,
+          "gap_ci_hi": 569.3498858036872,
+          "team_gap_per_step": 265.98433827033153,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 563.2369087375383,
+          "gap_ci_lo": 538.3322379514465,
+          "gap_ci_hi": 590.3879744354626,
+          "team_gap_per_step": 335.65862935404476,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.10_c0.50",
+      "beta": 0.7,
+      "kappa": 0.1,
+      "c": 0.5,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.926900746881204,
+          "gap_ci_lo": -13.609809831333028,
+          "gap_ci_hi": 1.9748816893542358,
+          "team_gap_per_step": 0.06402474306594286,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.75921405767817,
+          "gap_ci_lo": -13.223859514057825,
+          "gap_ci_hi": 2.108850113689652,
+          "team_gap_per_step": -0.10756851233043108,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 3.6117363268320526,
+          "gap_ci_lo": -5.628063096906378,
+          "gap_ci_hi": 13.745607086414013,
+          "team_gap_per_step": 0.9105313134783728,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 33.242607973688365,
+          "gap_ci_lo": 18.9915648234312,
+          "gap_ci_hi": 50.14218831869374,
+          "team_gap_per_step": 2.0191512883726546,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.10_c1.00",
+      "beta": 0.7,
+      "kappa": 0.1,
+      "c": 1.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.674179140545203,
+          "gap_ci_lo": -13.355271872003275,
+          "gap_ci_hi": 2.2282874199457026,
+          "team_gap_per_step": 0.3149376841229241,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.259349238813645,
+          "gap_ci_lo": -12.721111693067966,
+          "gap_ci_hi": 2.612288072690621,
+          "team_gap_per_step": 0.39276481294018595,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 4.345193714110715,
+          "gap_ci_lo": -4.8917053772920385,
+          "gap_ci_hi": 14.475203249983183,
+          "team_gap_per_step": 1.6446543569412597,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 34.16809683382402,
+          "gap_ci_lo": 19.92126928362049,
+          "gap_ci_hi": 51.069545945972294,
+          "team_gap_per_step": 2.9531389872755653,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.10_c2.00",
+      "beta": 0.7,
+      "kappa": 0.1,
+      "c": 2.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.168735927873216,
+          "gap_ci_lo": -12.846195953343868,
+          "gap_ci_hi": 2.73509888112861,
+          "team_gap_per_step": 0.8167635662364319,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -3.2596196010845957,
+          "gap_ci_lo": -11.71561605108825,
+          "gap_ci_hi": 3.6191639906925763,
+          "team_gap_per_step": 1.393431463481079,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 5.812108488668018,
+          "gap_ci_lo": -3.4189899380633504,
+          "gap_ci_hi": 15.934395577121528,
+          "team_gap_per_step": 3.112900443866806,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 36.01907455409539,
+          "gap_ci_lo": 21.780678203999088,
+          "gap_ci_hi": 52.92426120052904,
+          "team_gap_per_step": 4.8211143850811595,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.30_c0.50",
+      "beta": 0.7,
+      "kappa": 0.3,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 8.930311202389518,
+          "gap_ci_lo": -2.956750505999738,
+          "gap_ci_hi": 20.31722180932864,
+          "team_gap_per_step": 1.250406177355444,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.176808558357344,
+          "gap_ci_lo": 22.416327609293557,
+          "gap_ci_hi": 62.80614807588434,
+          "team_gap_per_step": -3.710885426794107,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 47.744327943326354,
+          "gap_ci_lo": 28.252792811795203,
+          "gap_ci_hi": 65.88629105016271,
+          "team_gap_per_step": 3.2609341731510995,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 74.56050001372093,
+          "gap_ci_lo": 51.764646575982454,
+          "gap_ci_hi": 97.83813394883263,
+          "team_gap_per_step": 5.692194440408571,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.30_c1.00",
+      "beta": 0.7,
+      "kappa": 0.3,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.173165395698136,
+          "gap_ci_lo": -2.7070229288241068,
+          "gap_ci_hi": 20.56648726913318,
+          "team_gap_per_step": 1.496959342172886,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.64928861478872,
+          "gap_ci_lo": 22.889866834336566,
+          "gap_ci_hi": 63.27190828953146,
+          "team_gap_per_step": -3.233987056725141,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 48.46019662140842,
+          "gap_ci_lo": 28.96733411665072,
+          "gap_ci_hi": 66.60294074399798,
+          "team_gap_per_step": 3.981510692824372,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 75.50297586277678,
+          "gap_ci_lo": 52.708194145049866,
+          "gap_ci_hi": 98.77691991217873,
+          "team_gap_per_step": 6.645032856672174,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.30_c2.00",
+      "beta": 0.7,
+      "kappa": 0.3,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.658873782315375,
+          "gap_ci_lo": -2.207567774472826,
+          "gap_ci_hi": 21.065018188742226,
+          "team_gap_per_step": 1.9900656718078835,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 43.594248727651454,
+          "gap_ci_lo": 23.835796743580435,
+          "gap_ci_hi": 64.20345840354928,
+          "team_gap_per_step": -2.2801903165870954,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 49.89193397757248,
+          "gap_ci_lo": 30.396416726361796,
+          "gap_ci_hi": 68.0362401316685,
+          "team_gap_per_step": 5.422663732171031,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 77.38792756088837,
+          "gap_ci_lo": 54.59528928318465,
+          "gap_ci_hi": 100.65449183887068,
+          "team_gap_per_step": 8.55070968919938,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.50_c0.50",
+      "beta": 0.7,
+      "kappa": 0.5,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.373747558796274,
+          "gap_ci_lo": -16.817929070622192,
+          "gap_ci_hi": 9.632890849264033,
+          "team_gap_per_step": -7.455822064160543,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 64.60818513830246,
+          "gap_ci_lo": 40.44018199975822,
+          "gap_ci_hi": 87.88359067262792,
+          "team_gap_per_step": -7.69680960531025,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.1221434537493,
+          "gap_ci_lo": 312.70982587491943,
+          "gap_ci_hi": 384.7810276353792,
+          "team_gap_per_step": -2.713448046494591,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 449.79755340254366,
+          "gap_ci_lo": 415.9760966333622,
+          "gap_ci_hi": 482.1521855363267,
+          "team_gap_per_step": 65.42692117725551,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.50_c1.00",
+      "beta": 0.7,
+      "kappa": 0.5,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.120082410047584,
+          "gap_ci_lo": -16.566367839983997,
+          "gap_ci_hi": 9.884612693994939,
+          "team_gap_per_step": -7.205414049046567,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 65.08137751184049,
+          "gap_ci_lo": 40.92152438892408,
+          "gap_ci_hi": 88.35507811084567,
+          "team_gap_per_step": -7.2175517927896635,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.6853877284018,
+          "gap_ci_lo": 313.2889105098023,
+          "gap_ci_hi": 385.327998881803,
+          "team_gap_per_step": -2.0646368755041067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 450.50761233299534,
+          "gap_ci_lo": 416.7022732744152,
+          "gap_ci_hi": 482.86284443554655,
+          "team_gap_per_step": 66.27110608155283,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.50_c2.00",
+      "beta": 0.7,
+      "kappa": 0.5,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -3.6127521125501976,
+          "gap_ci_lo": -16.0632453787076,
+          "gap_ci_hi": 10.388056383456824,
+          "team_gap_per_step": -6.704598018818615,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 66.02776225891665,
+          "gap_ci_lo": 41.884209167255925,
+          "gap_ci_hi": 89.29805298728134,
+          "team_gap_per_step": -6.259036167748263,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 350.8118762777072,
+          "gap_ci_lo": 314.447079779569,
+          "gap_ci_hi": 386.43178120836257,
+          "team_gap_per_step": -0.7670145335232519,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 451.9277301938991,
+          "gap_ci_lo": 418.1546265565193,
+          "gap_ci_hi": 484.2841622339854,
+          "team_gap_per_step": 67.95947589014759,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.70_c0.50",
+      "beta": 0.7,
+      "kappa": 0.7,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.262290947524271,
+          "gap_ci_lo": -21.863143442278535,
+          "gap_ci_hi": 8.838273109042042,
+          "team_gap_per_step": -3.345209476908394,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.16618523190334,
+          "gap_ci_lo": 369.1652382517277,
+          "gap_ci_hi": 436.92684591835564,
+          "team_gap_per_step": 30.90034006927067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 506.91226197178383,
+          "gap_ci_lo": 477.3098201077114,
+          "gap_ci_hi": 533.2700755611029,
+          "team_gap_per_step": 167.00931015191344,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 527.8793559570356,
+          "gap_ci_lo": 499.9284327882379,
+          "gap_ci_hi": 552.0751588175517,
+          "team_gap_per_step": 222.2896316038706,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.70_c1.00",
+      "beta": 0.7,
+      "kappa": 0.7,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.009051659102197,
+          "gap_ci_lo": -21.611233604122116,
+          "gap_ci_hi": 9.096817960579815,
+          "team_gap_per_step": -3.095234395446596,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.52124514884946,
+          "gap_ci_lo": 369.5335018780555,
+          "gap_ci_hi": 437.25860952086487,
+          "team_gap_per_step": 31.325894636794033,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 507.4186463131216,
+          "gap_ci_lo": 477.83009621936543,
+          "gap_ci_hi": 533.7704163031531,
+          "team_gap_per_step": 167.6162184944676,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 528.5483285545484,
+          "gap_ci_lo": 500.5970828967731,
+          "gap_ci_hi": 552.7465169137994,
+          "team_gap_per_step": 223.08026053506774,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.70_c2.00",
+      "beta": 0.7,
+      "kappa": 0.7,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -5.502573082258098,
+          "gap_ci_lo": -21.107413927809315,
+          "gap_ci_hi": 9.613505967050674,
+          "team_gap_per_step": -2.5952842325228858,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 404.23136498274323,
+          "gap_ci_lo": 370.2700291307106,
+          "gap_ci_hi": 437.92213672588156,
+          "team_gap_per_step": 32.17700377184053,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 508.4314149957979,
+          "gap_ci_lo": 478.8706484426725,
+          "gap_ci_hi": 534.7710977872516,
+          "team_gap_per_step": 168.83003517957587,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 529.8862737495745,
+          "gap_ci_lo": 501.93438311384256,
+          "gap_ci_hi": 554.089233106295,
+          "team_gap_per_step": 224.66151839746198,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.90_c0.50",
+      "beta": 0.7,
+      "kappa": 0.9,
+      "c": 0.5,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.5289148556569,
+          "gap_ci_lo": 366.34991300537513,
+          "gap_ci_hi": 434.58097345396794,
+          "team_gap_per_step": 41.393049425692425,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.615775850144,
+          "gap_ci_lo": 497.21785742612235,
+          "gap_ci_hi": 551.3567860934489,
+          "team_gap_per_step": 234.05673548963415,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 541.7173561049896,
+          "gap_ci_lo": 514.6198092842353,
+          "gap_ci_hi": 567.9306868994943,
+          "team_gap_per_step": 264.23488507909605,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 560.7027521225501,
+          "gap_ci_lo": 535.7460390997604,
+          "gap_ci_hi": 587.8698965917529,
+          "team_gap_per_step": 333.00227813586474,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.90_c1.00",
+      "beta": 0.7,
+      "kappa": 0.9,
+      "c": 1.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.70372641050926,
+          "gap_ci_lo": 366.53745690680967,
+          "gap_ci_hi": 434.7619134265549,
+          "team_gap_per_step": 41.60523489546267,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.9423548902088,
+          "gap_ci_lo": 497.5579119025343,
+          "gap_ci_hi": 551.6877687501051,
+          "team_gap_per_step": 234.4522422505783,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 542.2046843030367,
+          "gap_ci_lo": 515.1213790947903,
+          "gap_ci_hi": 568.4037532008923,
+          "team_gap_per_step": 264.81803614284115,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 561.547470994213,
+          "gap_ci_lo": 536.6073686942501,
+          "gap_ci_hi": 588.7092558729904,
+          "team_gap_per_step": 333.8877285419247,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.70_k0.90_c2.00",
+      "beta": 0.7,
+      "kappa": 0.9,
+      "c": 2.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 401.05334952021354,
+          "gap_ci_lo": 366.91254470967755,
+          "gap_ci_hi": 435.1237933717285,
+          "team_gap_per_step": 42.029605835003395,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 525.5955129703411,
+          "gap_ci_lo": 498.2380208553591,
+          "gap_ci_hi": 552.3497340634194,
+          "team_gap_per_step": 235.2432557724668,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 543.1793406991312,
+          "gap_ci_lo": 516.1245187158979,
+          "gap_ci_hi": 569.3498858036872,
+          "team_gap_per_step": 265.98433827033153,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 563.2369087375383,
+          "gap_ci_lo": 538.3322379514465,
+          "gap_ci_hi": 590.3879744354626,
+          "team_gap_per_step": 335.65862935404476,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.10_c0.50",
+      "beta": 0.9,
+      "kappa": 0.1,
+      "c": 0.5,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.926900746881204,
+          "gap_ci_lo": -13.609809831333028,
+          "gap_ci_hi": 1.9748816893542358,
+          "team_gap_per_step": 0.06402474306594286,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.75921405767817,
+          "gap_ci_lo": -13.223859514057825,
+          "gap_ci_hi": 2.108850113689652,
+          "team_gap_per_step": -0.10756851233043108,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 3.6117363268320526,
+          "gap_ci_lo": -5.628063096906378,
+          "gap_ci_hi": 13.745607086414013,
+          "team_gap_per_step": 0.9105313134783728,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 33.242607973688365,
+          "gap_ci_lo": 18.9915648234312,
+          "gap_ci_hi": 50.14218831869374,
+          "team_gap_per_step": 2.0191512883726546,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.10_c1.00",
+      "beta": 0.9,
+      "kappa": 0.1,
+      "c": 1.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.674179140545203,
+          "gap_ci_lo": -13.355271872003275,
+          "gap_ci_hi": 2.2282874199457026,
+          "team_gap_per_step": 0.3149376841229241,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -4.259349238813645,
+          "gap_ci_lo": -12.721111693067966,
+          "gap_ci_hi": 2.612288072690621,
+          "team_gap_per_step": 0.39276481294018595,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 4.345193714110715,
+          "gap_ci_lo": -4.8917053772920385,
+          "gap_ci_hi": 14.475203249983183,
+          "team_gap_per_step": 1.6446543569412597,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 34.16809683382402,
+          "gap_ci_lo": 19.92126928362049,
+          "gap_ci_hi": 51.069545945972294,
+          "team_gap_per_step": 2.9531389872755653,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.10_c2.00",
+      "beta": 0.9,
+      "kappa": 0.1,
+      "c": 2.0,
+      "k_star": 4,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.168735927873216,
+          "gap_ci_lo": -12.846195953343868,
+          "gap_ci_hi": 2.73509888112861,
+          "team_gap_per_step": 0.8167635662364319,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": -3.2596196010845957,
+          "gap_ci_lo": -11.71561605108825,
+          "gap_ci_hi": 3.6191639906925763,
+          "team_gap_per_step": 1.393431463481079,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 3,
+          "gap_mean": 5.812108488668018,
+          "gap_ci_lo": -3.4189899380633504,
+          "gap_ci_hi": 15.934395577121528,
+          "team_gap_per_step": 3.112900443866806,
+          "best_coalition_policy": "all_search_best[owned,work=0.607]",
+          "is_k_star": false
+        },
+        {
+          "k": 4,
+          "gap_mean": 36.01907455409539,
+          "gap_ci_lo": 21.780678203999088,
+          "gap_ci_hi": 52.92426120052904,
+          "team_gap_per_step": 4.8211143850811595,
+          "best_coalition_policy": "all_search_best[any,work=0.485]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.30_c0.50",
+      "beta": 0.9,
+      "kappa": 0.3,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 8.930311202389518,
+          "gap_ci_lo": -2.956750505999738,
+          "gap_ci_hi": 20.31722180932864,
+          "team_gap_per_step": 1.250406177355444,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.176808558357344,
+          "gap_ci_lo": 22.416327609293557,
+          "gap_ci_hi": 62.80614807588434,
+          "team_gap_per_step": -3.710885426794107,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 47.744327943326354,
+          "gap_ci_lo": 28.252792811795203,
+          "gap_ci_hi": 65.88629105016271,
+          "team_gap_per_step": 3.2609341731510995,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 74.56050001372093,
+          "gap_ci_lo": 51.764646575982454,
+          "gap_ci_hi": 97.83813394883263,
+          "team_gap_per_step": 5.692194440408571,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.30_c1.00",
+      "beta": 0.9,
+      "kappa": 0.3,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.173165395698136,
+          "gap_ci_lo": -2.7070229288241068,
+          "gap_ci_hi": 20.56648726913318,
+          "team_gap_per_step": 1.496959342172886,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 42.64928861478872,
+          "gap_ci_lo": 22.889866834336566,
+          "gap_ci_hi": 63.27190828953146,
+          "team_gap_per_step": -3.233987056725141,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 48.46019662140842,
+          "gap_ci_lo": 28.96733411665072,
+          "gap_ci_hi": 66.60294074399798,
+          "team_gap_per_step": 3.981510692824372,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 75.50297586277678,
+          "gap_ci_lo": 52.708194145049866,
+          "gap_ci_hi": 98.77691991217873,
+          "team_gap_per_step": 6.645032856672174,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.30_c2.00",
+      "beta": 0.9,
+      "kappa": 0.3,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 9.658873782315375,
+          "gap_ci_lo": -2.207567774472826,
+          "gap_ci_hi": 21.065018188742226,
+          "team_gap_per_step": 1.9900656718078835,
+          "best_coalition_policy": "all_search_best[owned,work=0.340]",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 43.594248727651454,
+          "gap_ci_lo": 23.835796743580435,
+          "gap_ci_hi": 64.20345840354928,
+          "team_gap_per_step": -2.2801903165870954,
+          "best_coalition_policy": "all_firefighter[owned,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 49.89193397757248,
+          "gap_ci_lo": 30.396416726361796,
+          "gap_ci_hi": 68.0362401316685,
+          "team_gap_per_step": 5.422663732171031,
+          "best_coalition_policy": "all_specialist",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 77.38792756088837,
+          "gap_ci_lo": 54.59528928318465,
+          "gap_ci_hi": 100.65449183887068,
+          "team_gap_per_step": 8.55070968919938,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.50_c0.50",
+      "beta": 0.9,
+      "kappa": 0.5,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.373747558796274,
+          "gap_ci_lo": -16.817929070622192,
+          "gap_ci_hi": 9.632890849264033,
+          "team_gap_per_step": -7.455822064160543,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 64.60818513830246,
+          "gap_ci_lo": 40.44018199975822,
+          "gap_ci_hi": 87.88359067262792,
+          "team_gap_per_step": -7.69680960531025,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.1221434537493,
+          "gap_ci_lo": 312.70982587491943,
+          "gap_ci_hi": 384.7810276353792,
+          "team_gap_per_step": -2.713448046494591,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 449.79755340254366,
+          "gap_ci_lo": 415.9760966333622,
+          "gap_ci_hi": 482.1521855363267,
+          "team_gap_per_step": 65.42692117725551,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.50_c1.00",
+      "beta": 0.9,
+      "kappa": 0.5,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -4.120082410047584,
+          "gap_ci_lo": -16.566367839983997,
+          "gap_ci_hi": 9.884612693994939,
+          "team_gap_per_step": -7.205414049046567,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 65.08137751184049,
+          "gap_ci_lo": 40.92152438892408,
+          "gap_ci_hi": 88.35507811084567,
+          "team_gap_per_step": -7.2175517927896635,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 349.6853877284018,
+          "gap_ci_lo": 313.2889105098023,
+          "gap_ci_hi": 385.327998881803,
+          "team_gap_per_step": -2.0646368755041067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 450.50761233299534,
+          "gap_ci_lo": 416.7022732744152,
+          "gap_ci_hi": 482.86284443554655,
+          "team_gap_per_step": 66.27110608155283,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.50_c2.00",
+      "beta": 0.9,
+      "kappa": 0.5,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -3.6127521125501976,
+          "gap_ci_lo": -16.0632453787076,
+          "gap_ci_hi": 10.388056383456824,
+          "team_gap_per_step": -6.704598018818615,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 66.02776225891665,
+          "gap_ci_lo": 41.884209167255925,
+          "gap_ci_hi": 89.29805298728134,
+          "team_gap_per_step": -6.259036167748263,
+          "best_coalition_policy": "all_search_best[any,work=0.345]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 350.8118762777072,
+          "gap_ci_lo": 314.447079779569,
+          "gap_ci_hi": 386.43178120836257,
+          "team_gap_per_step": -0.7670145335232519,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 451.9277301938991,
+          "gap_ci_lo": 418.1546265565193,
+          "gap_ci_hi": 484.2841622339854,
+          "team_gap_per_step": 67.95947589014759,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.70_c0.50",
+      "beta": 0.9,
+      "kappa": 0.7,
+      "c": 0.5,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.262290947524271,
+          "gap_ci_lo": -21.863143442278535,
+          "gap_ci_hi": 8.838273109042042,
+          "team_gap_per_step": -3.345209476908394,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.16618523190334,
+          "gap_ci_lo": 369.1652382517277,
+          "gap_ci_hi": 436.92684591835564,
+          "team_gap_per_step": 30.90034006927067,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 506.91226197178383,
+          "gap_ci_lo": 477.3098201077114,
+          "gap_ci_hi": 533.2700755611029,
+          "team_gap_per_step": 167.00931015191344,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 527.8793559570356,
+          "gap_ci_lo": 499.9284327882379,
+          "gap_ci_hi": 552.0751588175517,
+          "team_gap_per_step": 222.2896316038706,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.70_c1.00",
+      "beta": 0.9,
+      "kappa": 0.7,
+      "c": 1.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -6.009051659102197,
+          "gap_ci_lo": -21.611233604122116,
+          "gap_ci_hi": 9.096817960579815,
+          "team_gap_per_step": -3.095234395446596,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 403.52124514884946,
+          "gap_ci_lo": 369.5335018780555,
+          "gap_ci_hi": 437.25860952086487,
+          "team_gap_per_step": 31.325894636794033,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 507.4186463131216,
+          "gap_ci_lo": 477.83009621936543,
+          "gap_ci_hi": 533.7704163031531,
+          "team_gap_per_step": 167.6162184944676,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 528.5483285545484,
+          "gap_ci_lo": 500.5970828967731,
+          "gap_ci_hi": 552.7465169137994,
+          "team_gap_per_step": 223.08026053506774,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.70_c2.00",
+      "beta": 0.9,
+      "kappa": 0.7,
+      "c": 2.0,
+      "k_star": 2,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": -5.502573082258098,
+          "gap_ci_lo": -21.107413927809315,
+          "gap_ci_hi": 9.613505967050674,
+          "team_gap_per_step": -2.5952842325228858,
+          "best_coalition_policy": "all_always_rest",
+          "is_k_star": false
+        },
+        {
+          "k": 2,
+          "gap_mean": 404.23136498274323,
+          "gap_ci_lo": 370.2700291307106,
+          "gap_ci_hi": 437.92213672588156,
+          "team_gap_per_step": 32.17700377184053,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 508.4314149957979,
+          "gap_ci_lo": 478.8706484426725,
+          "gap_ci_hi": 534.7710977872516,
+          "team_gap_per_step": 168.83003517957587,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 529.8862737495745,
+          "gap_ci_lo": 501.93438311384256,
+          "gap_ci_hi": 554.089233106295,
+          "team_gap_per_step": 224.66151839746198,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.90_c0.50",
+      "beta": 0.9,
+      "kappa": 0.9,
+      "c": 0.5,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.5289148556569,
+          "gap_ci_lo": 366.34991300537513,
+          "gap_ci_hi": 434.58097345396794,
+          "team_gap_per_step": 41.393049425692425,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.615775850144,
+          "gap_ci_lo": 497.21785742612235,
+          "gap_ci_hi": 551.3567860934489,
+          "team_gap_per_step": 234.05673548963415,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 541.7173561049896,
+          "gap_ci_lo": 514.6198092842353,
+          "gap_ci_hi": 567.9306868994943,
+          "team_gap_per_step": 264.23488507909605,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 560.7027521225501,
+          "gap_ci_lo": 535.7460390997604,
+          "gap_ci_hi": 587.8698965917529,
+          "team_gap_per_step": 333.00227813586474,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.90_c1.00",
+      "beta": 0.9,
+      "kappa": 0.9,
+      "c": 1.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 400.70372641050926,
+          "gap_ci_lo": 366.53745690680967,
+          "gap_ci_hi": 434.7619134265549,
+          "team_gap_per_step": 41.60523489546267,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 524.9423548902088,
+          "gap_ci_lo": 497.5579119025343,
+          "gap_ci_hi": 551.6877687501051,
+          "team_gap_per_step": 234.4522422505783,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 542.2046843030367,
+          "gap_ci_lo": 515.1213790947903,
+          "gap_ci_hi": 568.4037532008923,
+          "team_gap_per_step": 264.81803614284115,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 561.547470994213,
+          "gap_ci_lo": 536.6073686942501,
+          "gap_ci_hi": 588.7092558729904,
+          "team_gap_per_step": 333.8877285419247,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    },
+    {
+      "cell_tag": "b0.90_k0.90_c2.00",
+      "beta": 0.9,
+      "kappa": 0.9,
+      "c": 2.0,
+      "k_star": 1,
+      "per_k": [
+        {
+          "k": 1,
+          "gap_mean": 401.05334952021354,
+          "gap_ci_lo": 366.91254470967755,
+          "gap_ci_hi": 435.1237933717285,
+          "team_gap_per_step": 42.029605835003395,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 2,
+          "gap_mean": 525.5955129703411,
+          "gap_ci_lo": 498.2380208553591,
+          "gap_ci_hi": 552.3497340634194,
+          "team_gap_per_step": 235.2432557724668,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 3,
+          "gap_mean": 543.1793406991312,
+          "gap_ci_lo": 516.1245187158979,
+          "gap_ci_hi": 569.3498858036872,
+          "team_gap_per_step": 265.98433827033153,
+          "best_coalition_policy": "all_firefighter[any,work=1.0]",
+          "is_k_star": true
+        },
+        {
+          "k": 4,
+          "gap_mean": 563.2369087375383,
+          "gap_ci_lo": 538.3322379514465,
+          "gap_ci_hi": 590.3879744354626,
+          "team_gap_per_step": 335.65862935404476,
+          "best_coalition_policy": "hero[any]+specialists",
+          "is_k_star": true
+        }
+      ]
+    }
+  ]
+}
