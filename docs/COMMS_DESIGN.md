@@ -288,11 +288,11 @@ boundary explicitly so Phase 1/2 do not prematurely pull in channel machinery.
 
 ## 5. Phase Breakdown
 
-| Phase | Scope | Est. | Prereq |
-|-------|-------|------|--------|
-| **1** | `CommunicatingEnvironment` supertrait + `AgentMessage`/`Delivery` types + action/obs slicing helper + a minimal reference comms env + tests | 2–3 days | none |
-| **2** | Joint-trainer integration: probe `CommunicatingEnvironment`, route messages through the rollout, and expose an optional comms-regularization term via the existing `JointStats::aux_loss` hook | 1–2 days | Phase 1 |
-| **3** | Differentiable comms: Gumbel-softmax message head + gradient flow sender→receiver; optional async delivery over `crossbeam-channel` | deferred | continuous/relaxed policy support (not yet in thrust) |
+| Phase | Issue | Scope | Est. | Prereq |
+|-------|-------|-------|------|--------|
+| **1** | #274 | `CommunicatingEnvironment` supertrait + `AgentMessage`/`Delivery` types + action/obs slicing helper + a minimal reference comms env + tests | 2–3 days | none |
+| **2** | #275 | Joint-trainer integration: probe `CommunicatingEnvironment`, route messages through the rollout, and expose an optional comms-regularization term via the existing `JointStats::aux_loss` hook | 1–2 days | Phase 1 |
+| **3** | #276 | Differentiable comms: Gumbel-softmax message head + gradient flow sender→receiver; optional async delivery over `crossbeam-channel` | deferred | continuous/relaxed policy support (not yet in thrust) |
 
 ### Phase 1 — Trait + reference env
 
