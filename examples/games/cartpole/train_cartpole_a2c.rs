@@ -53,6 +53,21 @@
 //! CURVE_CSV=/tmp/a2c.csv cargo run --example train_cartpole_a2c \
 //!     --features training --release
 //! ```
+//!
+//! # V-trace off-policy correction (opt-in)
+//!
+//! Set `USE_VTRACE=1` to replace GAE with V-trace targets (Espeholt et al.
+//! 2018, issue #263) for advantage/return computation. Clipping thresholds
+//! default to `1.0` and are overridable via `VTRACE_RHO_BAR` /
+//! `VTRACE_C_BAR`. On this on-policy CartPole rollout the behavior policy
+//! equals the target policy, so with `rho_bar = c_bar = 1.0` V-trace
+//! reduces to n-step returns and tracks the GAE path — a regression check
+//! for the V-trace wiring.
+//!
+//! ```bash
+//! USE_VTRACE=1 cargo run --example train_cartpole_a2c \
+//!     --features training --release
+//! ```
 
 use std::io::Write;
 
@@ -63,6 +78,7 @@ use burn::{
     tensor::{Int, Tensor, TensorData},
 };
 use thrust_rl::{
+    buffer::rollout::RolloutBuffer,
     env::{Environment, cartpole::CartPole, pool::EnvPool},
     policy::mlp::{BurnActivation, MlpBurnConfig, MlpBurnPolicy},
     train::{
@@ -105,7 +121,25 @@ fn main() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_TIMESTEPS);
 
+    // Opt-in V-trace off-policy correction (issue #263). On-policy CartPole
+    // data with rho_bar = c_bar = 1.0 reduces V-trace to n-step returns, so
+    // `USE_VTRACE=1` should converge like the default GAE path — a
+    // regression check for the V-trace wiring.
+    let use_vtrace = std::env::var("USE_VTRACE").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let vtrace_rho_bar: f32 =
+        std::env::var("VTRACE_RHO_BAR").ok().and_then(|s| s.parse().ok()).unwrap_or(1.0);
+    let vtrace_c_bar: f32 =
+        std::env::var("VTRACE_C_BAR").ok().and_then(|s| s.parse().ok()).unwrap_or(1.0);
+
     tracing::info!("Starting CartPole A2C Training (Burn backend: {})", BACKEND_LABEL);
+    tracing::info!(
+        "  advantage estimator: {}",
+        if use_vtrace {
+            format!("V-trace (rho_bar={vtrace_rho_bar}, c_bar={vtrace_c_bar})")
+        } else {
+            "GAE".to_string()
+        }
+    );
 
     let training_start = std::time::Instant::now();
 
@@ -158,6 +192,9 @@ fn main() -> Result<()> {
         .num_envs(NUM_ENVS)
         .max_grad_norm(0.5)
         .normalize_advantages(true)
+        .use_vtrace(use_vtrace)
+        .vtrace_rho_bar(vtrace_rho_bar)
+        .vtrace_c_bar(vtrace_c_bar)
         .seed(SEED);
 
     let mut trainer = A2cTrainer::new(a2c_config, policy, burn_opt)?;
@@ -173,6 +210,14 @@ fn main() -> Result<()> {
     let mut buf_values: Vec<f32> = Vec::with_capacity(cap);
     let mut buf_rewards: Vec<f32> = Vec::with_capacity(cap);
     let mut buf_dones: Vec<f32> = Vec::with_capacity(cap);
+    // Behavior-policy log-probs at collection time. Needed as the V-trace
+    // importance-sampling denominator (unused by the GAE path).
+    let mut buf_log_probs: Vec<f32> = Vec::with_capacity(cap);
+
+    // Reusable rollout buffer for advantage/return computation. Populated
+    // fresh each update from the flat rollout vecs, then handed to GAE or
+    // V-trace depending on `A2cConfig::use_vtrace`.
+    let mut rollout = RolloutBuffer::new(NUM_STEPS, NUM_ENVS, obs_dim);
 
     let mut observations = env_pool.reset();
 
@@ -189,6 +234,7 @@ fn main() -> Result<()> {
         buf_values.clear();
         buf_rewards.clear();
         buf_dones.clear();
+        buf_log_probs.clear();
 
         // --- Collect rollout ---------------------------------------
         for _step in 0..NUM_STEPS {
@@ -196,7 +242,7 @@ fn main() -> Result<()> {
             let obs_t: Tensor<Backend, 2> =
                 Tensor::from_data(TensorData::new(obs_flat, [NUM_ENVS, obs_dim]), &device);
 
-            let (actions, _log_probs, values) = trainer.policy().get_action_host(obs_t);
+            let (actions, log_probs, values) = trainer.policy().get_action_host(obs_t);
 
             let results = env_pool.step(&actions);
 
@@ -205,6 +251,7 @@ fn main() -> Result<()> {
                 buf_actions.push(actions[env_id]);
                 buf_values.push(values[env_id]);
                 buf_rewards.push(results[env_id].reward);
+                buf_log_probs.push(log_probs[env_id]);
 
                 let done = results[env_id].terminated || results[env_id].truncated;
                 buf_dones.push(if done { 1.0 } else { 0.0 });
@@ -222,34 +269,72 @@ fn main() -> Result<()> {
             total_env_steps += NUM_ENVS;
         }
 
-        // --- Compute GAE ------------------------------------------
+        // --- Compute advantages (GAE or V-trace) -------------------
         // Bootstrap value for the last observation.
         let last_obs_flat: Vec<f32> = observations.iter().flatten().copied().collect();
         let last_obs_t: Tensor<Backend, 2> =
             Tensor::from_data(TensorData::new(last_obs_flat, [NUM_ENVS, obs_dim]), &device);
         let (_, _, last_values_host) = trainer.policy().get_action_host(last_obs_t);
 
-        let (advantages_host, returns_host) = compute_gae(
-            &buf_rewards,
-            &buf_values,
-            &buf_dones,
-            &last_values_host,
-            GAMMA,
-            GAE_LAMBDA,
-            NUM_STEPS,
-            NUM_ENVS,
-        );
+        // Repopulate the rollout buffer from the flat rollout vecs. The
+        // flat layout is step-major (`idx = step * NUM_ENVS + env`), which
+        // matches the buffer's `[step][env]` indexing and its `get_batch`
+        // flatten order. `done = terminated || truncated` is mapped onto
+        // the buffer's `terminated` flag so GAE and V-trace both treat an
+        // env reset as an episode boundary.
+        for step in 0..NUM_STEPS {
+            for env in 0..NUM_ENVS {
+                let idx = step * NUM_ENVS + env;
+                let obs = &buf_obs[idx * obs_dim..(idx + 1) * obs_dim];
+                let done = buf_dones[idx] != 0.0;
+                rollout.add(
+                    step,
+                    env,
+                    obs,
+                    buf_actions[idx],
+                    buf_rewards[idx],
+                    buf_values[idx],
+                    buf_log_probs[idx],
+                    done,
+                    false,
+                );
+            }
+        }
+
+        if trainer.config().use_vtrace {
+            // On-policy rollout: the collection policy *is* the current
+            // target policy (params are only updated after this step), so
+            // the target log-probs equal the stored behavior log-probs.
+            // With rho_bar = c_bar = 1.0 this recovers n-step returns.
+            let target_log_probs: Vec<Vec<f32>> = (0..NUM_STEPS)
+                .map(|step| (0..NUM_ENVS).map(|env| buf_log_probs[step * NUM_ENVS + env]).collect())
+                .collect();
+            let rho_bar = trainer.config().vtrace_rho_bar;
+            let c_bar = trainer.config().vtrace_c_bar;
+            rollout.compute_vtrace_advantages(
+                &target_log_probs,
+                &last_values_host,
+                GAMMA,
+                rho_bar,
+                c_bar,
+            );
+        } else {
+            rollout.compute_advantages(&last_values_host, GAMMA, GAE_LAMBDA);
+        }
 
         // --- Build training tensors -------------------------------
+        let training_batch = rollout.get_batch();
         let batch = NUM_STEPS * NUM_ENVS;
-        let obs_b: Tensor<Backend, 2> =
-            Tensor::from_data(TensorData::new(buf_obs.clone(), [batch, obs_dim]), &device);
+        let obs_b: Tensor<Backend, 2> = Tensor::from_data(
+            TensorData::new(training_batch.observations.clone(), [batch, obs_dim]),
+            &device,
+        );
         let actions_b: Tensor<Backend, 1, Int> =
-            Tensor::from_data(TensorData::new(buf_actions.clone(), [batch]), &device);
+            Tensor::from_data(TensorData::new(training_batch.actions.clone(), [batch]), &device);
         let advantages_b: Tensor<Backend, 1> =
-            Tensor::from_data(TensorData::new(advantages_host, [batch]), &device);
+            Tensor::from_data(TensorData::new(training_batch.advantages.clone(), [batch]), &device);
         let returns_b: Tensor<Backend, 1> =
-            Tensor::from_data(TensorData::new(returns_host, [batch]), &device);
+            Tensor::from_data(TensorData::new(training_batch.returns.clone(), [batch]), &device);
 
         // --- Train step (single A2C update) ------------------------
         // A2C drops old_log_probs / old_values: on-policy, one update per
@@ -325,45 +410,4 @@ fn open_curve_csv() -> Result<Option<std::io::BufWriter<std::fs::File>>> {
         }
         _ => Ok(None),
     }
-}
-
-/// Per-env GAE computation (host-side).
-///
-/// `rewards`, `values`, `dones` are flat `[T * N]` row-major (step-major).
-/// `last_values[n]` is the value bootstrap for env `n` at step `T`.
-#[allow(clippy::too_many_arguments)]
-fn compute_gae(
-    rewards: &[f32],
-    values: &[f32],
-    dones: &[f32],
-    last_values: &[f32],
-    gamma: f32,
-    gae_lambda: f32,
-    num_steps: usize,
-    num_envs: usize,
-) -> (Vec<f32>, Vec<f32>) {
-    let cap = num_steps * num_envs;
-    let mut advantages = vec![0.0_f32; cap];
-    let mut returns = vec![0.0_f32; cap];
-
-    // Walk the rollout in reverse per env. Layout: index = step * num_envs +
-    // env_id.
-    let mut last_gae = vec![0.0_f32; num_envs];
-    for t in (0..num_steps).rev() {
-        for n in 0..num_envs {
-            let idx = t * num_envs + n;
-            let next_value = if t == num_steps - 1 {
-                last_values[n]
-            } else {
-                values[(t + 1) * num_envs + n]
-            };
-            let next_nonterminal = 1.0 - dones[idx];
-            let delta = rewards[idx] + gamma * next_value * next_nonterminal - values[idx];
-            last_gae[n] = delta + gamma * gae_lambda * next_nonterminal * last_gae[n];
-            advantages[idx] = last_gae[n];
-            returns[idx] = advantages[idx] + values[idx];
-        }
-    }
-
-    (advantages, returns)
 }
