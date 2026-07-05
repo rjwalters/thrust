@@ -183,6 +183,10 @@ pub use games::{
     SnakeEnv, cartpole, continuous_lqr, grid_world, mountain_car_continuous, pendulum, pong,
     simple_bandit, snake,
 };
+// `signaling` depends on `crate::multi_agent`, which is gated behind the
+// `training` feature, so its re-export must be gated the same way.
+#[cfg(feature = "training")]
+pub use games::{SignalingGame, signaling};
 
 // Training utilities. Gated on the `training` feature because the env
 // pool only ships when the trainers are built.

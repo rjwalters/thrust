@@ -38,6 +38,8 @@ pub mod mountain_car_continuous;
 pub mod n_player_matching_pennies;
 pub mod pendulum;
 pub mod pong;
+#[cfg(feature = "training")]
+pub mod signaling;
 pub mod simple_bandit;
 pub mod snake;
 
@@ -57,5 +59,7 @@ pub use mountain_car_continuous::MountainCarContinuous;
 pub use n_player_matching_pennies::NPlayerMatchingPennies;
 pub use pendulum::PendulumSwingUp;
 pub use pong::Pong;
+#[cfg(feature = "training")]
+pub use signaling::SignalingGame;
 pub use simple_bandit::SimpleBandit;
 pub use snake::SnakeEnv;
