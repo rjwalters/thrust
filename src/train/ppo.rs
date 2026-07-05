@@ -24,6 +24,7 @@
 pub mod actor_learner;
 pub mod config;
 pub mod loss;
+pub mod recurrent_trainer;
 pub mod stats;
 pub mod trainer;
 
@@ -36,5 +37,6 @@ pub use loss::{
     compute_entropy_loss, compute_policy_loss, compute_value_loss, generate_minibatch_indices,
     scalar_f64,
 };
+pub use recurrent_trainer::RecurrentPPOTrainer;
 pub use stats::{AggregatedStats, TrainingStats};
 pub use trainer::PPOTrainerBurn;

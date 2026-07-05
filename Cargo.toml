@@ -220,6 +220,15 @@ name = "train_cartpole_dqn"
 path = "examples/games/cartpole/train_cartpole_dqn.rs"
 required-features = ["training"]
 
+# Recurrent PPO on velocity-masked CartPole (Phase 3 of the recurrent-policy
+# epic #262): trains an LstmBurnPolicy with RecurrentPPOTrainer on the
+# MaskedCartPole POMDP and contrasts it against a feedforward MLP baseline on
+# the same masked observation — the memory advantage is the learning signal.
+[[example]]
+name = "recurrent_ppo_masked_cartpole"
+path = "examples/games/cartpole/recurrent_ppo_masked_cartpole.rs"
+required-features = ["training"]
+
 # Asynchronous actor-learner CartPole PPO (Phase 2 of the distributed
 # training epic #265): N inference-only actor threads stream experiences
 # over crossbeam-channel to one PPO learner, which broadcasts policy

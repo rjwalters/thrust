@@ -31,6 +31,7 @@
 pub mod cartpole;
 pub mod continuous_lqr;
 pub mod grid_world;
+pub mod masked_cartpole;
 #[cfg(feature = "training")]
 pub mod matching_pennies;
 pub mod mountain_car_continuous;
@@ -52,6 +53,7 @@ pub use bucket_brigade::BucketBrigadeMaEnv;
 pub use cartpole::CartPole;
 pub use continuous_lqr::ContinuousLqr;
 pub use grid_world::GridWorld;
+pub use masked_cartpole::MaskedCartPole;
 #[cfg(feature = "training")]
 pub use matching_pennies::MatchingPennies;
 pub use mountain_car_continuous::MountainCarContinuous;
