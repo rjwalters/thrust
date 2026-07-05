@@ -1,4 +1,5 @@
-//! Referential signaling game — reference `CommunicatingEnvironment` (issue #274).
+//! Referential signaling game — reference `CommunicatingEnvironment` (issue
+//! #274).
 //!
 //! The smallest environment that exercises the fixed-vocab comms surface from
 //! [`crate::multi_agent::comms`] end-to-end. It is the Phase 1 reference impl
@@ -16,8 +17,8 @@
 //!   it received, and its *task action* is a guess `g ∈ 0..V`.
 //!
 //! Both agents earn `+1` when the listener's guess matches the hidden token and
-//! `0` otherwise, so the speaker is incentivized to transmit `t` faithfully. This
-//! is the canonical Lewis signaling game.
+//! `0` otherwise, so the speaker is incentivized to transmit `t` faithfully.
+//! This is the canonical Lewis signaling game.
 //!
 //! # Comms wiring (the point of this env)
 //!
@@ -37,12 +38,16 @@
 //!
 //! The env consumes no internal RNG: the hidden token is fixed at construction
 //! (or by [`SignalingGame::set_hidden`]) and unchanged by stepping, so
-//! [`Environment::clone_state`] / [`Environment::restore_state`] reproduce every
-//! subsequent step exactly.
+//! [`Environment::clone_state`] / [`Environment::restore_state`] reproduce
+//! every subsequent step exactly.
 
-use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
-use crate::multi_agent::comms::{place_message, split_action, CommunicatingEnvironment, Delivery};
-use crate::multi_agent::environment::{MultiAgentEnvironment, MultiAgentResult};
+use crate::{
+    env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult},
+    multi_agent::{
+        comms::{CommunicatingEnvironment, Delivery, place_message, split_action},
+        environment::{MultiAgentEnvironment, MultiAgentResult},
+    },
+};
 
 /// Agent id of the speaker (observes the hidden token, emits a message).
 pub const SPEAKER: usize = 0;
@@ -166,8 +171,8 @@ impl Environment for SignalingGame {
         self.speaker_obs()
     }
 
-    /// Degenerate single-agent step: interpret `action` as the speaker's emitted
-    /// message and broadcast it. Multi-agent consumers should use
+    /// Degenerate single-agent step: interpret `action` as the speaker's
+    /// emitted message and broadcast it. Multi-agent consumers should use
     /// [`MultiAgentEnvironment::step_multi`].
     fn step(&mut self, action: i64) -> StepResult {
         let r = self.step_multi(&[vec![action], vec![action]]);

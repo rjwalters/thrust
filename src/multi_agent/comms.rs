@@ -2,17 +2,18 @@
 //!
 //! This module introduces discrete, fixed-vocabulary comms as a *non-breaking,
 //! reusable* capability layered on top of the existing
-//! [`crate::multi_agent::environment::MultiAgentEnvironment`] surface. It follows
-//! the design note [`docs/COMMS_DESIGN.md`](../../../docs/COMMS_DESIGN.md),
-//! section 5 (the authoritative phase breakdown).
+//! [`crate::multi_agent::environment::MultiAgentEnvironment`] surface. It
+//! follows the design note
+//! [`docs/COMMS_DESIGN.md`](../../../docs/COMMS_DESIGN.md), section 5 (the
+//! authoritative phase breakdown).
 //!
 //! # The action-space-extension model
 //!
-//! A message is just **extra action dims on the sender** and **extra observation
-//! dims on the receiver** — exactly the pattern the Bucket Brigade env proves
-//! end-to-end with its 1-bit `signal` channel
-//! (`src/env/games/bucket_brigade/env.rs`, read-only reference here). Concretely,
-//! an agent's action vector is laid out as
+//! A message is just **extra action dims on the sender** and **extra
+//! observation dims on the receiver** — exactly the pattern the Bucket Brigade
+//! env proves end-to-end with its 1-bit `signal` channel
+//! (`src/env/games/bucket_brigade/env.rs`, read-only reference here).
+//! Concretely, an agent's action vector is laid out as
 //!
 //! ```text
 //! [ ...task action dims (agent_action_space)... , ...message dims (message_vocab)... ]
@@ -23,16 +24,16 @@
 //! [`Delivery`], and writes the received tokens into the observation layout it
 //! already controls
 //! ([`place_message`](crate::multi_agent::comms::place_message)). No change to
-//! [`crate::multi_agent::environment::MultiAgentResult`] is required for Phase 1;
-//! a first-class `messages` field is deliberately deferred to Phase 3.
+//! [`crate::multi_agent::environment::MultiAgentResult`] is required for Phase
+//! 1; a first-class `messages` field is deliberately deferred to Phase 3.
 //!
 //! # Non-breaking by construction
 //!
 //! [`CommunicatingEnvironment`] is a **supertrait** of `MultiAgentEnvironment`
 //! whose methods are all defaulted to describe a zero-width channel
 //! (`message_vocab -> []`, `message_obs_size -> 0`, `delivery -> Broadcast`).
-//! Existing implementors (snake, matching pennies, bucket brigade, the joint env)
-//! satisfy it for free without any code change.
+//! Existing implementors (snake, matching pennies, bucket brigade, the joint
+//! env) satisfy it for free without any code change.
 //!
 //! # Host-payload discipline
 //!
@@ -40,16 +41,15 @@
 //! `Vec<f32>` / `Vec<i64>` host data — no tensor types cross this surface, so
 //! producer and consumer stay free to pick different Burn backends.
 
-use crate::multi_agent::environment::MultiAgentEnvironment;
-use crate::multi_agent::messages::AgentId;
+use crate::multi_agent::{environment::MultiAgentEnvironment, messages::AgentId};
 
 /// A message emitted by one agent for delivery to others within a rollout.
 ///
 /// Host-side payload only (no tensor types), consistent with the rest of the
-/// multi-agent message surface. Discrete tokens live in [`AgentMessage::tokens`];
-/// an optional continuous payload ([`AgentMessage::embedding`]) reserves space
-/// for the differentiable/learned path (Phase 3) and is empty for fixed-vocab
-/// discrete comms.
+/// multi-agent message surface. Discrete tokens live in
+/// [`AgentMessage::tokens`]; an optional continuous payload
+/// ([`AgentMessage::embedding`]) reserves space for the differentiable/learned
+/// path (Phase 3) and is empty for fixed-vocab discrete comms.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AgentMessage {
     /// Sending agent.
@@ -60,8 +60,8 @@ pub struct AgentMessage {
     /// [`CommunicatingEnvironment::message_vocab`].
     pub tokens: Vec<i64>,
 
-    /// Optional continuous payload (relaxed / learned comms, Phase 3). Empty for
-    /// fixed-vocab discrete comms.
+    /// Optional continuous payload (relaxed / learned comms, Phase 3). Empty
+    /// for fixed-vocab discrete comms.
     pub embedding: Vec<f32>,
 }
 
@@ -85,8 +85,8 @@ pub enum Delivery {
 }
 
 impl Delivery {
-    /// Whether a message routed under this policy reaches `recipient`, given the
-    /// `sender`. A sender never receives its own broadcast.
+    /// Whether a message routed under this policy reaches `recipient`, given
+    /// the `sender`. A sender never receives its own broadcast.
     pub fn reaches(&self, sender: AgentId, recipient: AgentId) -> bool {
         match self {
             Delivery::Broadcast => sender != recipient,
@@ -99,9 +99,9 @@ impl Delivery {
 /// first-class agent-to-agent message channel.
 ///
 /// Every method is defaulted to describe a *non-communicating* environment, so
-/// this is a **non-breaking** supertrait: existing implementors get a zero-width
-/// channel for free and keep compiling unchanged. Comms-aware envs override the
-/// methods to publish their message layout.
+/// this is a **non-breaking** supertrait: existing implementors get a
+/// zero-width channel for free and keep compiling unchanged. Comms-aware envs
+/// override the methods to publish their message layout.
 pub trait CommunicatingEnvironment: MultiAgentEnvironment {
     /// Per-agent message action-space layout (one bin count per message dim),
     /// analogous to
@@ -112,10 +112,10 @@ pub trait CommunicatingEnvironment: MultiAgentEnvironment {
         Vec::new()
     }
 
-    /// Number of observation dims that carry *received* messages for this agent.
-    /// Zero means the agent receives nothing. The env is responsible for placing
-    /// received messages into the observation vector returned by
-    /// `get_agent_observation` / `step_multi` (see [`place_message`]).
+    /// Number of observation dims that carry *received* messages for this
+    /// agent. Zero means the agent receives nothing. The env is responsible
+    /// for placing received messages into the observation vector returned
+    /// by `get_agent_observation` / `step_multi` (see [`place_message`]).
     fn message_obs_size(&self, _agent_id: AgentId) -> usize {
         0
     }
@@ -129,9 +129,9 @@ pub trait CommunicatingEnvironment: MultiAgentEnvironment {
 
 /// Split a flat action vector into its `(task, message)` halves at `task_len`.
 ///
-/// The action layout is `[ ...task dims... , ...message dims... ]`, so the first
-/// `task_len` entries are the task action and the remainder are the message
-/// tokens. This factors the Bucket-Brigade-style slicing so every
+/// The action layout is `[ ...task dims... , ...message dims... ]`, so the
+/// first `task_len` entries are the task action and the remainder are the
+/// message tokens. This factors the Bucket-Brigade-style slicing so every
 /// [`CommunicatingEnvironment`] shares one implementation.
 ///
 /// Boundary behavior:
@@ -171,7 +171,8 @@ pub fn split_action(action: &[i64], task_len: usize) -> (&[i64], &[i64]) {
 /// sender's message off its action, the env lays those tokens into the
 /// receiver's observation vector (the region the env reserves via
 /// [`CommunicatingEnvironment::message_obs_size`]). Tokens are written verbatim
-/// as `f32`, matching the flat host-vector discipline of the observation surface.
+/// as `f32`, matching the flat host-vector discipline of the observation
+/// surface.
 ///
 /// # Panics
 ///
@@ -203,8 +204,10 @@ pub fn place_message(obs: &mut [f32], offset: usize, tokens: &[i64]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult};
-    use crate::multi_agent::environment::MultiAgentResult;
+    use crate::{
+        env::{Environment, SpaceInfo, SpaceType, StepInfo, StepResult},
+        multi_agent::environment::MultiAgentResult,
+    };
 
     /// Minimal `MultiAgentEnvironment` that does **not** override any comms
     /// method — used to prove the zero-width default channel.
@@ -251,12 +254,7 @@ mod tests {
             vec![2]
         }
         fn step_multi(&mut self, _actions: &[Vec<i64>]) -> MultiAgentResult {
-            MultiAgentResult::new(
-                vec![vec![0.0]; 2],
-                vec![0.0; 2],
-                vec![false; 2],
-                vec![false; 2],
-            )
+            MultiAgentResult::new(vec![vec![0.0]; 2], vec![0.0; 2], vec![false; 2], vec![false; 2])
         }
         fn active_agents(&self) -> Vec<bool> {
             vec![true; 2]

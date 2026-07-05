@@ -179,10 +179,14 @@ pub mod games;
 
 // Re-export game environments for backwards compatibility
 pub use games::{
-    CartPole, ContinuousLqr, GridWorld, MountainCarContinuous, PendulumSwingUp, Pong, SignalingGame,
-    SimpleBandit, SnakeEnv, cartpole, continuous_lqr, grid_world, mountain_car_continuous, pendulum,
-    pong, signaling, simple_bandit, snake,
+    CartPole, ContinuousLqr, GridWorld, MountainCarContinuous, PendulumSwingUp, Pong, SimpleBandit,
+    SnakeEnv, cartpole, continuous_lqr, grid_world, mountain_car_continuous, pendulum, pong,
+    simple_bandit, snake,
 };
+// `signaling` depends on `crate::multi_agent`, which is gated behind the
+// `training` feature, so its re-export must be gated the same way.
+#[cfg(feature = "training")]
+pub use games::{SignalingGame, signaling};
 
 // Training utilities. Gated on the `training` feature because the env
 // pool only ships when the trainers are built.
