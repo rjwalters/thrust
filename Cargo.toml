@@ -220,6 +220,16 @@ name = "train_cartpole_dqn"
 path = "examples/games/cartpole/train_cartpole_dqn.rs"
 required-features = ["training"]
 
+# Asynchronous actor-learner CartPole PPO (Phase 2 of the distributed
+# training epic #265): N inference-only actor threads stream experiences
+# over crossbeam-channel to one PPO learner, which broadcasts policy
+# bytes back. Async counterpart of train_cartpole_modern; runnable
+# counterpart of tests/test_cartpole_async.rs.
+[[example]]
+name = "train_cartpole_async"
+path = "examples/games/cartpole/train_cartpole_async.rs"
+required-features = ["training"]
+
 # DQN on GridWorld (issue #185, PR B of the more-environments epic #180).
 # Seeded Double-DQN on the 4x4 FrozenLake-style GridWorld env (16-dim one-hot
 # obs, 4 discrete actions). Emits an opt-in learning-curve CSV via CURVE_CSV,
