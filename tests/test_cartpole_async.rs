@@ -152,6 +152,9 @@ fn cartpole_async_wiring_smoke() {
         max_lead_steps: 0,
         gamma: 0.99,
         gae_lambda: 0.95,
+        use_vtrace: false,
+        vtrace_rho_bar: 1.0,
+        vtrace_c_bar: 1.0,
         seed: SEED,
     };
 
@@ -196,6 +199,9 @@ fn cartpole_async_reaches_learning_bar() {
         max_lead_steps: 0,
         gamma: 0.99,
         gae_lambda: 0.95,
+        use_vtrace: false,
+        vtrace_rho_bar: 1.0,
+        vtrace_c_bar: 1.0,
         seed: SEED,
     };
 
