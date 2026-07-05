@@ -889,7 +889,10 @@ where
 
         Ok(JointRollout {
             observations_per_agent: obs_buf_per_agent,
-            obs_dim,
+            // NFSP's envs (bucket-brigade) expose a uniform per-agent
+            // observation, so every agent shares `obs_dim` here (issue #275
+            // generalized the field to per-agent dims).
+            obs_dims: vec![obs_dim; num_agents],
             actions: act_buf,
             num_action_dims,
             log_probs: lp_buf,

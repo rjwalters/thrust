@@ -46,6 +46,7 @@ use crate::{
     multi_agent::{
         comms::{CommunicatingEnvironment, Delivery, place_message, split_action},
         environment::{MultiAgentEnvironment, MultiAgentResult},
+        joint::{JointEnv, JointStepResult},
     },
 };
 
@@ -263,6 +264,30 @@ impl MultiAgentEnvironment for SignalingGame {
 
     fn active_agents(&self) -> Vec<bool> {
         vec![true; Self::NUM_AGENTS]
+    }
+}
+
+/// Thin adapter so the joint PPO trainer can drive the signaling game
+/// directly (issue #275, Phase 2). `reset_joint` / `step_joint` delegate to
+/// the existing [`MultiAgentEnvironment`] surface — all message routing is
+/// already handled inside [`SignalingGame::step_multi`], so no extra plumbing
+/// lives here.
+impl JointEnv for SignalingGame {
+    fn reset_joint(&mut self, _seed: Option<u64>) -> Vec<Vec<f32>> {
+        // The env consumes no RNG (the hidden token is fixed at construction),
+        // so the seed is intentionally ignored.
+        self.reset();
+        (0..self.num_agents()).map(|i| self.get_agent_observation(i)).collect()
+    }
+
+    fn step_joint(&mut self, actions: &[Vec<i64>]) -> JointStepResult {
+        let result = self.step_multi(actions);
+        JointStepResult {
+            rewards: result.rewards,
+            // Single-shot game: every step terminates the round.
+            done: result.terminated.iter().all(|&t| t),
+            observations: result.observations,
+        }
     }
 }
 
