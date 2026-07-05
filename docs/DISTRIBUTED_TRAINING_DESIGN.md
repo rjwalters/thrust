@@ -214,3 +214,114 @@ particular). They mirror — deliberately — the FP16 epic's approach of filing
 implementation phases behind a workload trigger (cf. [#267](https://github.com/rjwalters/thrust/issues/267)
 children [#270](https://github.com/rjwalters/thrust/issues/270) /
 [#272](https://github.com/rjwalters/thrust/issues/272)).
+
+---
+
+## Phase 1 Spike Results
+
+Empirical results for [#278](https://github.com/rjwalters/thrust/issues/278)
+(Phase 1). This section is the **merged deliverable** of the spike; the example
+that produced the numbers (`examples/collective_spike.rs`) is a throwaway —
+**not** committed and **not** registered as a `[[example]]`, mirroring the
+`fp16_spike.rs` convention (see [`FP16_FEASIBILITY.md`](./FP16_FEASIBILITY.md)).
+A `collective = ["burn?/collective"]` opt-in feature was added to `Cargo.toml`
+(off by default, not in the CI matrix) to gate future DDP work.
+
+- **Spike host:** Apple M3 (8-core: 4P + 4E), macOS 26.5.1.
+- **Toolchain:** Rust nightly 1.94.0 (`21cf7fb3f`, 2025-12-28).
+- **Versions:** `burn` 0.21.0, `burn-collective` 0.21.0.
+- **Backends tested at runtime:** NdArray (CPU) and wgpu (Metal). CUDA not
+  reachable on this host (see gaps).
+- **Method:** a throwaway `examples/collective_spike.rs` registers N in-process
+  peers — each a separate OS thread coordinated by burn-collective's `local`
+  tokio server — and calls `all_reduce(Mean)` on a gradient-shaped `[64, 4]`
+  tensor for 100 timed iterations (+10 warmup), `AllReduceStrategy::Tree(2)`.
+  The control arm is a manual host-round-trip average mirroring the
+  `select_rows_2d` read-to-host / re-upload pattern in
+  `src/train/ppo/trainer.rs:299-311` (`.into_data().to_vec()` → average on host
+  → `Tensor::from_data`). Each collective result was verified element-wise
+  against the host mean (`|Δ| < 1e-4`).
+
+### Verdict: mechanism works — **adopt for the GPU regime, defer until then**
+
+`burn-collective`'s `local` `all_reduce` is the **right DDP mechanism** for
+Thrust's eventual GPU-bound workloads: on wgpu/Metal it beats the naive
+host-round-trip **~2×** by keeping gradients on-device (no per-tensor
+device↔host copy), and it composes with the existing `training`-feature tokio
+runtime with no conflict. **But do not adopt yet.** At today's tiny-net sizes
+the default NdArray (CPU) backend is ~200–500× faster in absolute terms than the
+GPU arm, and on CPU the collective barrier costs about the same as the plain
+host-round-trip average (no benefit). This is the same crossover
+[`BURN_BACKENDS.md`](./BURN_BACKENDS.md) and the FP16 spike already document:
+allreduce only pays off once per-device compute is large enough to favour a GPU
+in the first place. Gate adoption behind the Phase 4 GPU-workload trigger.
+
+### Empirical answers to the open questions
+
+1. **Does local allreduce work?** **Yes**, on both backends available here.
+   `all_reduce(Mean)` across N = 2 and N = 4 peers completed with no panic and
+   the result matched the host-computed mean within `1e-4` on every run.
+2. **Does burn-collective accept duplicate `NdArrayDevice::Cpu` handles?**
+   **Yes.** All N peers registered with the *same* `NdArrayDevice::Cpu` variant
+   (the only one NdArray has) and reduced correctly. The `local` server
+   coordinates by `PeerId` (unique per peer), not by device identity — the
+   `MultipleRegister` guard keys on `PeerId`, so identical device handles are
+   fine. The NdArray "N peers, one CPU" arm is therefore a valid multi-peer
+   test; a distinct-device path is only *needed* for genuine multi-GPU.
+3. **Overhead vs the host-round-trip baseline?** Backend-dependent — see table.
+   On CPU the collective ≈ host-round-trip (no win); on GPU the collective is
+   ~2× faster (avoids 2·N host transfers).
+
+### Timings (per-op, µs; 100 iters, warm)
+
+| Backend | N | allreduce μ±σ (µs) | host-round-trip μ±σ (µs) | speedup (hrt/ar) | correct |
+| --- | --- | --- | --- | --- | --- |
+| NdArray (CPU) | 1 | 4.88 ± 0.60 | 2.99 ± 0.11 | 0.61× | ✅ |
+| NdArray (CPU) | 2 | 5.45 ± 0.36 | 5.56 ± 0.16 | 1.02× | ✅ |
+| NdArray (CPU) | 4 | 9.99 ± 1.20 | 10.67 ± 0.20 | 1.07× | ✅ |
+| wgpu (Metal) | 1 | 1703.7 ± 71.6 | 3377.4 ± 87.0 | 1.98× | ✅ |
+| wgpu (Metal) | 2 | 2559.1 ± 834.5 | 5067.2 ± 102.0 | 1.98× | ✅ |
+| wgpu (Metal) | 4 | 4858.4 ± 1610 | 8386.8 ± 164.4 | 1.73× | ✅ |
+
+`speedup > 1` means the collective all_reduce beats the host-round-trip control.
+Reading these:
+
+- **CPU:** at `[64, 4]` the collective's thread barrier costs roughly what a
+  host copy + element-wise average costs, so the host-round-trip fallback is a
+  perfectly good CPU control arm (0.6–1.1×). The N = 1 degenerate case does not
+  panic; it just pays barrier setup for a no-op reduction. First-run (cold
+  thread-pool) numbers were noisier — e.g. N = 4 measured ~21 µs cold vs ~10 µs
+  warm — so treat the CPU figures as order-of-magnitude, not precise.
+- **GPU (Metal):** the collective wins ~2× because the host-round-trip pays for
+  2·N device↔host transfers per average while all_reduce stays on-device. But
+  absolute latency is ~1.7–4.9 ms — ~200–500× the CPU arm — because at 256
+  elements GPU kernel-launch + sync dominates. The 2× ratio, not the absolute
+  ms, is the durable signal: it will grow in the collective's favour as
+  per-device tensors grow.
+
+### Known gaps / out of scope
+
+- **Multi-CUDA-GPU not validated.** No CUDA/NVIDIA host was reachable from the
+  spike machine, so cross-*GPU* allreduce (the true DDP path) was exercised only
+  as "N peers on one Metal device", not N distinct GPUs. Real multi-GPU
+  validation — and the `global` websocket transport for multi-host DDP — is the
+  **Phase 4** follow-on, gated behind the same GPU-workload trigger as GPU/FP16
+  adoption.
+- **Strategy sweep.** Only `Tree(2)` (the library default) was timed;
+  `Ring`/`Centralized` were not benchmarked. At `[64, 4]` the choice is unlikely
+  to matter (barrier-dominated); revisit alongside real tensor sizes in Phase 4.
+
+### Reproducing
+
+The throwaway example is not merged. To reproduce, recreate an
+`examples/collective_spike.rs` that registers N peers via
+`burn::collective::{register, all_reduce}` and times it against a host-round-trip
+average, then run:
+
+```bash
+cargo run --release --example collective_spike --features "training,collective"          # NdArray (CPU)
+cargo run --release --example collective_spike --features "training,collective,wgpu"     # + wgpu/Metal
+```
+
+The one committed wiring change is the opt-in `collective` feature in
+`Cargo.toml`; no source changes are required to enable the collective API.

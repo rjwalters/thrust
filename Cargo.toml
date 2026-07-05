@@ -165,6 +165,13 @@ blas-threaded = ["dep:burn-ndarray", "burn-ndarray/multi-threads"]
 wgpu = ["burn?/wgpu"]
 # Burn CUDA backend — Linux/NVIDIA only. Compose with `training`.
 cuda = ["burn?/cuda"]
+# Burn collective ops (burn-collective) — in-process/cross-node all_reduce,
+# broadcast, reduce for data-parallel gradient sync. OFF by default and NOT in
+# the CI matrix: opt-in only, gated so the default/`training` builds stay lean.
+# Compose with `training`, e.g. `--features "training,collective"`. This is the
+# feature the distributed-training epic (see docs/DISTRIBUTED_TRAINING_DESIGN.md)
+# gates future DDP work on; Phase 1 spike results are recorded in that doc.
+collective = ["burn?/collective"]
 wasm = ["wasm-bindgen", "web-sys", "js-sys", "console_error_panic_hook"]  # Pure Rust for WASM
 # Bucket Brigade env adapter for the Slepian-Wolf MARL experiments. Pulls
 # in the bucket-brigade-core crate as a pure-Rust dep --- does *not*
