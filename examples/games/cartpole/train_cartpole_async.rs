@@ -15,11 +15,15 @@
 //! of the baseline's `[256, 16]` (16 pooled envs), so the async run does
 //! ~4x more (smaller) PPO updates for the same step budget.
 //!
-//! **Staleness note**: actor trajectories are slightly stale relative to
-//! the learner (no V-trace correction — that is issue #280). With
+//! **Staleness note**: actor trajectories are stale relative to the
+//! learner. By default they are passed to PPO uncorrected; with
 //! `broadcast_every = 1` and 4 actors this is empirically fine on
-//! CartPole; expect mean episode reward ≥ 400 within the 200k budget,
-//! comparable to the synchronous baseline.
+//! CartPole (expect mean episode reward ≥ 400 within the 200k budget,
+//! comparable to the synchronous baseline). Set `USE_VTRACE=1` to enable
+//! V-trace off-policy correction (issue #280), which re-weights the
+//! advantages by the importance ratio between the current learner policy
+//! and each actor's (possibly stale) behavior policy — the correction
+//! that keeps convergence stable when staleness is elevated.
 //!
 //! # Usage
 //!
@@ -27,12 +31,23 @@
 //! cargo run --example train_cartpole_async --features training --release
 //! ```
 //!
-//! Override the step budget / actor count via env vars:
+//! Override the step budget / actor count / staleness via env vars:
 //!
 //! ```bash
 //! TOTAL_TIMESTEPS=50000 NUM_ACTORS=2 cargo run --example train_cartpole_async \
 //!     --features training --release
+//!
+//! # Staleness experiment: elevate the actor lead budget and compare the
+//! # GAE and V-trace arms on final reward.
+//! MAX_LEAD_STEPS=25600 USE_VTRACE=0 cargo run --example train_cartpole_async \
+//!     --features training --release   # GAE arm
+//! MAX_LEAD_STEPS=25600 USE_VTRACE=1 cargo run --example train_cartpole_async \
+//!     --features training --release   # V-trace arm
 //! ```
+//!
+//! Recognized env vars: `TOTAL_TIMESTEPS`, `NUM_ACTORS`, `BROADCAST_EVERY`,
+//! `MAX_LEAD_STEPS`, `USE_VTRACE` (`1`/`true` to enable), `GAE_LAMBDA`,
+//! `SEED`.
 
 use anyhow::Result;
 use burn::{
@@ -81,6 +96,19 @@ fn main() -> Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_NUM_ACTORS);
+    let broadcast_every: usize =
+        std::env::var("BROADCAST_EVERY").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let max_lead_steps: usize =
+        std::env::var("MAX_LEAD_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let use_vtrace: bool = std::env::var("USE_VTRACE")
+        .ok()
+        .map(|s| matches!(s.as_str(), "1" | "true" | "TRUE" | "yes"))
+        .unwrap_or(false);
+    let seed: u64 = std::env::var("SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(SEED);
+    let gae_lambda: f32 = std::env::var("GAE_LAMBDA")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(GAE_LAMBDA);
 
     tracing::info!("Starting Async Actor-Learner CartPole PPO (NdArray<f32> CPU)");
 
@@ -98,11 +126,14 @@ fn main() -> Result<()> {
         num_actors,
         num_steps: NUM_STEPS,
         total_env_steps: total_timesteps,
-        broadcast_every: 1,
-        max_lead_steps: 0, // auto: 2 * broadcast_every * num_steps of actor lead
+        broadcast_every,
+        max_lead_steps, // 0 = auto: 2 * broadcast_every * num_steps of actor lead
         gamma: GAMMA,
-        gae_lambda: GAE_LAMBDA,
-        seed: SEED,
+        gae_lambda,
+        use_vtrace,
+        vtrace_rho_bar: 1.0,
+        vtrace_c_bar: 1.0,
+        seed,
     };
     config.validate()?;
 
@@ -112,6 +143,13 @@ fn main() -> Result<()> {
     tracing::info!("  num_actors  = {}", config.num_actors);
     tracing::info!("  num_steps   = {}", config.num_steps);
     tracing::info!("  total_timesteps = {}", config.total_env_steps);
+    tracing::info!("  broadcast_every = {}", config.broadcast_every);
+    tracing::info!(
+        "  max_lead_steps  = {} (effective {})",
+        config.max_lead_steps,
+        config.effective_max_lead_steps()
+    );
+    tracing::info!("  advantage       = {}", if config.use_vtrace { "V-trace" } else { "GAE" });
     tracing::info!("  planned PPO updates = {}", config.num_updates());
     tracing::info!("------------------------------------------------------------");
 
@@ -123,7 +161,7 @@ fn main() -> Result<()> {
         hidden_dim: HIDDEN_DIM,
         use_orthogonal_init: true,
         activation: BurnActivation::ReLU,
-        seed: Some(SEED),
+        seed: Some(seed),
     };
     let policy = MlpBurnPolicy::<Backend>::with_config(obs_dim, action_dim, policy_config, &device);
 
@@ -136,7 +174,7 @@ fn main() -> Result<()> {
         .n_epochs(10)
         .batch_size(128)
         .gamma(GAMMA as f64)
-        .gae_lambda(GAE_LAMBDA as f64)
+        .gae_lambda(gae_lambda as f64)
         .clip_range(0.2)
         .clip_range_vf(0.2)
         .vf_coef(0.5)
@@ -157,7 +195,7 @@ fn main() -> Result<()> {
                 trainer.policy().valid(),
                 experience_tx.clone(),
                 act_device,
-                SEED + 1 + actor_id as u64,
+                seed + 1 + actor_id as u64,
                 config.actor_throttle(),
                 move |policy: &MlpBurnPolicy<InnerBackend>, obs: &[f32], rng: &mut StdRng| {
                     let obs_t = Tensor::<InnerBackend, 2>::from_data(

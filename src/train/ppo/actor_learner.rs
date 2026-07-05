@@ -18,7 +18,7 @@
 //!                          [learner thread]
 //!                          RolloutBuffer.add(experience)      (column = actor)
 //!                          when every actor column has num_steps rows:
-//!                              compute_advantages (GAE) → PPOTrainerBurn::train_step
+//!                              advantages (GAE or V-trace) → PPOTrainerBurn::train_step
 //!                              serialize policy → PolicyBroadcast to every actor
 //! ```
 //!
@@ -29,15 +29,22 @@
 //! each actor's sender). Actors poll their broadcast receiver with a
 //! non-blocking `try_recv` on every env step; there is no `select!`.
 //!
-//! # Staleness caveat (read before extending)
+//! # Staleness correction (V-trace) and the staleness valve
 //!
-//! Trajectories collected under a stale policy are passed to PPO
-//! **without importance-weighting correction**. For low staleness
-//! (`broadcast_every = 1`, `num_actors <= 4`) this is empirically
-//! acceptable on simple envs such as CartPole; correctness under higher
-//! staleness requires V-trace, which is Phase 3 of the epic (issue
-//! #280) and is intentionally **not** implemented here. As a soft
-//! staleness valve, each actor pauses collection once it has produced
+//! By default (`use_vtrace = false`) trajectories collected under a
+//! stale policy are passed to PPO **without importance-weighting
+//! correction**. For low staleness (`broadcast_every = 1`,
+//! `num_actors <= 4`) this is empirically acceptable on simple envs such
+//! as CartPole. Correctness under higher staleness is provided by
+//! V-trace (Espeholt et al. 2018 — Phase 3 of the epic, issue #280):
+//! set [`AsyncActorLearnerConfig::use_vtrace`] to `true` and the learner
+//! re-evaluates each stored `(obs, action)` under its *current* policy,
+//! using the importance ratio against the actor's stored behavior
+//! log-probs to correct the advantages before the PPO update. On fresh
+//! on-policy data this reduces to GAE(λ=1); under staleness it clips the
+//! ratio at `vtrace_rho_bar` / `vtrace_c_bar`. As a soft
+//! staleness valve (orthogonal to V-trace, and useful with or without
+//! it), each actor pauses collection once it has produced
 //! more than `max_lead_steps` env steps beyond what the learner has
 //! provably consumed (inferred from the newest received policy
 //! version), and waits for the next broadcast (see
@@ -144,8 +151,28 @@ pub struct AsyncActorLearnerConfig {
     /// Discount factor for GAE.
     pub gamma: f32,
 
-    /// GAE lambda.
+    /// GAE lambda. Ignored when [`Self::use_vtrace`] is `true` (V-trace
+    /// has no lambda parameter), but still validated to lie in `(0, 1]`.
     pub gae_lambda: f32,
+
+    /// If true, replace GAE with V-trace (Espeholt et al. 2018) for
+    /// off-policy correction of stale actor trajectories. The learner
+    /// re-evaluates each stored `(obs, action)` under the *current*
+    /// policy to obtain target log-probs `log π(a_t|s_t)`, and the
+    /// importance ratio against the actor's stored behavior log-probs
+    /// `log μ(a_t|s_t)` corrects for policy lag before PPO sees the
+    /// advantages. Defaults to `false`, preserving the GAE path and all
+    /// existing behavior.
+    pub use_vtrace: bool,
+
+    /// V-trace rho clipping threshold (Espeholt 2018, eq. 1). Ignored
+    /// when [`Self::use_vtrace`] is `false`. Typical value: `1.0` (the
+    /// IMPALA paper default).
+    pub vtrace_rho_bar: f32,
+
+    /// V-trace c clipping threshold (Espeholt 2018, eq. 2). Ignored when
+    /// [`Self::use_vtrace`] is `false`. Typical value: `1.0`.
+    pub vtrace_c_bar: f32,
 
     /// Base seed. Actor `i` samples actions with
     /// `StdRng::seed_from_u64(seed + 1 + i)` when wired through
@@ -163,6 +190,9 @@ impl Default for AsyncActorLearnerConfig {
             max_lead_steps: 0,
             gamma: 0.99,
             gae_lambda: 0.95,
+            use_vtrace: false,
+            vtrace_rho_bar: 1.0,
+            vtrace_c_bar: 1.0,
             seed: 0,
         }
     }
@@ -200,6 +230,15 @@ impl AsyncActorLearnerConfig {
         if !(0.0..=1.0).contains(&self.gae_lambda) || self.gae_lambda == 0.0 {
             return Err(anyhow!("gae_lambda must be in (0, 1]"));
         }
+        // V-trace clip thresholds are only consumed on the V-trace path,
+        // but validated unconditionally so a misconfigured value can never
+        // reach `compute_vtrace_advantages`.
+        if self.vtrace_rho_bar <= 0.0 {
+            return Err(anyhow!("vtrace_rho_bar must be positive, got {}", self.vtrace_rho_bar));
+        }
+        if self.vtrace_c_bar <= 0.0 {
+            return Err(anyhow!("vtrace_c_bar must be positive, got {}", self.vtrace_c_bar));
+        }
         // The learner consumes broadcast_every * num_steps transitions
         // per actor between broadcasts; a lead budget tighter than that
         // starves the learner and deadlocks the run.
@@ -235,6 +274,24 @@ impl AsyncActorLearnerConfig {
             steps_per_broadcast: self.broadcast_every * self.num_steps,
             max_lead_steps: self.effective_max_lead_steps(),
         }
+    }
+
+    /// Enable or disable V-trace off-policy correction (builder style).
+    pub fn use_vtrace(mut self, enabled: bool) -> Self {
+        self.use_vtrace = enabled;
+        self
+    }
+
+    /// Set the V-trace rho clip threshold (builder style).
+    pub fn vtrace_rho_bar(mut self, rho_bar: f32) -> Self {
+        self.vtrace_rho_bar = rho_bar;
+        self
+    }
+
+    /// Set the V-trace c clip threshold (builder style).
+    pub fn vtrace_c_bar(mut self, c_bar: f32) -> Self {
+        self.vtrace_c_bar = c_bar;
+        self
     }
 }
 
@@ -582,8 +639,10 @@ impl LearnerReport {
 /// Blocks on `experience_rx`, filling a `[num_steps, num_actors]`
 /// [`crate::buffer::rollout::RolloutBuffer`] (buffer column =
 /// `experience.agent_id`). When every actor column holds `num_steps`
-/// transitions, it computes GAE
-/// ([`crate::buffer::rollout::compute_advantages`]), runs one
+/// transitions, it computes advantages — GAE
+/// ([`crate::buffer::rollout::compute_advantages`]) by default, or
+/// V-trace ([`crate::buffer::rollout::compute_vtrace_advantages`]) when
+/// [`AsyncActorLearnerConfig::use_vtrace`] is set — runs one
 /// [`crate::train::ppo::trainer::PPOTrainerBurn::train_step`], and — every
 /// [`AsyncActorLearnerConfig::broadcast_every`] updates — serializes the
 /// refreshed policy and sends a
@@ -689,13 +748,51 @@ where
         }
         report.env_steps_consumed += num_steps * num_actors;
 
-        // --- GAE (bootstrap from V(s_T) under the current policy) ---
+        // --- Advantage estimation (bootstrap from V(s_T) under the
+        //     current policy). GAE by default; V-trace when enabled, which
+        //     corrects for the actors' policy lag off-policy. ---
         let last_obs_t = Tensor::<B, 2>::from_data(
             TensorData::new(last_next_obs, [num_actors, obs_dim]),
             device,
         );
         let last_values = value_fn(trainer.policy(), last_obs_t);
-        compute_advantages(&mut buffer, &last_values, config.gamma, config.gae_lambda);
+        if config.use_vtrace {
+            // Re-evaluate the stored (obs, action) pairs under the CURRENT
+            // (fresh) learner policy to obtain target log-probs
+            // `log π(a_t|s_t)`. The buffer's stored `log_probs()` are the
+            // actor's behavior log-probs `log μ(a_t|s_t)`, possibly from a
+            // stale policy version; the importance ratio between them is
+            // what V-trace uses to correct the advantages.
+            let batch = RolloutBatch::from_buffer(&buffer);
+            let flat_len = num_steps * num_actors;
+            let obs_t = Tensor::<B, 2>::from_data(
+                TensorData::new(batch.observations.clone(), [flat_len, obs_dim]),
+                device,
+            );
+            let actions_t = Tensor::<B, 1, Int>::from_data(
+                TensorData::new(batch.actions.clone(), [flat_len]),
+                device,
+            );
+            let (flat_lps, _, _) = evaluate_fn(trainer.policy(), obs_t, actions_t);
+            let flat_target: Vec<f32> = flat_lps.into_data().to_vec().map_err(|e| {
+                anyhow!("failed to read V-trace target log-probs off the device: {e:?}")
+            })?;
+            // RolloutBatch flattens the buffer step-major (index =
+            // step * num_actors + actor); reshape back to
+            // [num_steps][num_actors] for compute_vtrace_advantages.
+            let target_log_probs: Vec<Vec<f32>> = (0..num_steps)
+                .map(|step| flat_target[step * num_actors..(step + 1) * num_actors].to_vec())
+                .collect();
+            buffer.compute_vtrace_advantages(
+                &target_log_probs,
+                &last_values,
+                config.gamma,
+                config.vtrace_rho_bar,
+                config.vtrace_c_bar,
+            );
+        } else {
+            compute_advantages(&mut buffer, &last_values, config.gamma, config.gae_lambda);
+        }
 
         // --- PPO update (trainer unchanged; actors wrap around it) ---
         let tensors = RolloutBatch::from_buffer(&buffer).to_burn_tensors::<B>(device);
@@ -851,6 +948,11 @@ mod tests {
         assert_eq!(config.broadcast_every, 1);
         assert_eq!(config.num_updates(), 200_000 / (256 * 4));
         assert_eq!(config.effective_max_lead_steps(), 2 * 256);
+        // V-trace is off by default; clip thresholds default to the
+        // IMPALA values so the GAE path is entirely unchanged.
+        assert!(!config.use_vtrace);
+        assert_eq!(config.vtrace_rho_bar, 1.0);
+        assert_eq!(config.vtrace_c_bar, 1.0);
 
         let throttle = config.actor_throttle();
         assert_eq!(throttle.steps_per_broadcast, 256);
@@ -882,6 +984,40 @@ mod tests {
         assert!(AsyncActorLearnerConfig { gae_lambda: 1.5, ..base.clone() }.validate().is_err());
         // Throttle tighter than one broadcast cycle would deadlock.
         assert!(AsyncActorLearnerConfig { max_lead_steps: 255, ..base }.validate().is_err());
+    }
+
+    #[test]
+    fn config_vtrace_fields_validate() {
+        let base = AsyncActorLearnerConfig::default();
+        // Enabling V-trace with the default (1.0) clips validates.
+        assert!(AsyncActorLearnerConfig { use_vtrace: true, ..base.clone() }.validate().is_ok());
+        // Non-positive clip thresholds are rejected regardless of use_vtrace.
+        assert!(
+            AsyncActorLearnerConfig { vtrace_rho_bar: 0.0, ..base.clone() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            AsyncActorLearnerConfig { vtrace_rho_bar: -1.0, ..base.clone() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            AsyncActorLearnerConfig { vtrace_c_bar: 0.0, ..base.clone() }
+                .validate()
+                .is_err()
+        );
+        assert!(
+            AsyncActorLearnerConfig { vtrace_c_bar: -1.0, ..base.clone() }
+                .validate()
+                .is_err()
+        );
+        // Builder-style setters compose and produce a valid config.
+        let cfg = base.use_vtrace(true).vtrace_rho_bar(0.9).vtrace_c_bar(1.1);
+        assert!(cfg.use_vtrace);
+        assert_eq!(cfg.vtrace_rho_bar, 0.9);
+        assert_eq!(cfg.vtrace_c_bar, 1.1);
+        cfg.validate().unwrap();
     }
 
     /// Serialize on the autodiff backend, load on the inner backend, and
@@ -997,6 +1133,9 @@ mod tests {
             max_lead_steps: 2 * num_steps,
             gamma: 0.99,
             gae_lambda: 0.95,
+            use_vtrace: false,
+            vtrace_rho_bar: 1.0,
+            vtrace_c_bar: 1.0,
             seed: 0,
         };
 
@@ -1057,5 +1196,222 @@ mod tests {
             );
             assert!(stats.last_policy_version >= 1);
         }
+    }
+
+    /// Run exactly one PPO update through [`learner_loop`] and return the
+    /// resulting [`TrainingStats`]. The single actor is never stale
+    /// (`broadcast_every = 1`), the initial policy and RNG seeds are
+    /// fixed, and the stub env is deterministic, so the first
+    /// `num_steps` experiences — the only ones consumed — are identical
+    /// across calls that differ solely in `use_vtrace`.
+    fn run_one_update(use_vtrace: bool) -> TrainingStats {
+        let device = Default::default();
+        let num_actors = 1;
+        let num_steps = 8;
+
+        let config = AsyncActorLearnerConfig {
+            num_actors,
+            num_steps,
+            total_env_steps: num_steps * num_actors, // exactly one update
+            broadcast_every: 1,
+            max_lead_steps: 2 * num_steps,
+            gamma: 0.99,
+            gae_lambda: 1.0, // V-trace on-policy reduces to GAE(λ = 1)
+            use_vtrace,
+            vtrace_rho_bar: 1.0,
+            vtrace_c_bar: 1.0,
+            seed: 0,
+        };
+
+        let policy = seeded_autodiff_policy(0);
+        let inner_opt = AdamConfig::new().init();
+        let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner_opt, 1e-3);
+        // Full-batch, single-epoch update: no minibatch shuffling, so the
+        // only thing that can differ between the two runs is the advantage
+        // estimator.
+        let ppo_config = PPOConfig::default()
+            .batch_size(num_steps * num_actors)
+            .n_epochs(1)
+            .target_kl(1.0);
+        let trainer = PPOTrainerBurn::new(ppo_config, policy, burn_opt).unwrap();
+
+        let (experience_tx, experience_rx) = unbounded();
+        let actors: Vec<ActorHandle> = (0..num_actors)
+            .map(|i| {
+                spawn_actor::<Inner, _, _, _>(
+                    i,
+                    StubEnv { t: 0 },
+                    trainer.policy().valid(),
+                    experience_tx.clone(),
+                    device,
+                    100 + i as u64,
+                    config.actor_throttle(),
+                    act_fn,
+                )
+            })
+            .collect();
+        drop(experience_tx);
+
+        let (_trainer, report) = learner_loop(
+            &config,
+            trainer,
+            OBS_DIM,
+            &device,
+            &experience_rx,
+            &actors,
+            |p: &MlpBurnPolicy<B>, o, a| p.evaluate_actions(o, a),
+            |p: &MlpBurnPolicy<B>, o| p.forward(o).1.into_data().to_vec().unwrap(),
+        )
+        .unwrap();
+        for handle in actors {
+            let _ = handle.join();
+        }
+        report.final_stats.expect("one update ran")
+    }
+
+    /// On-policy identity: with a single never-stale actor the V-trace
+    /// path re-evaluates the very policy that produced the actions, so
+    /// every importance ratio is 1 and V-trace collapses to GAE(λ = 1).
+    /// One update under each path from identical initial conditions must
+    /// therefore produce matching PPO losses. This lifts the buffer-level
+    /// `vtrace::tests::buffer_on_policy_matches_gae_lambda_one` property
+    /// up through the learner-loop wiring (mirrors PR #283).
+    #[test]
+    fn learner_loop_vtrace_on_policy_matches_gae() {
+        let gae = run_one_update(false);
+        let vtrace = run_one_update(true);
+
+        eprintln!(
+            "on-policy: gae(policy={:.9}, value={:.9}) vtrace(policy={:.9}, value={:.9})",
+            gae.policy_loss, gae.value_loss, vtrace.policy_loss, vtrace.value_loss
+        );
+
+        // `value_loss = MSE(V(s), returns)` is the strong discriminator:
+        // the returns come straight from the advantage estimator with no
+        // normalization, so a wiring bug (wrong target log-probs) would
+        // move it well beyond the on-policy match. Compare it relatively.
+        let rel = |a: f64, b: f64| (a - b).abs() / a.abs().max(b.abs()).max(1e-6);
+        assert!(
+            rel(gae.value_loss, vtrace.value_loss) < 1e-2,
+            "value_loss should match on-policy: gae={} vtrace={}",
+            gae.value_loss,
+            vtrace.value_loss
+        );
+        // `policy_loss` is ~0 by construction on a single full-batch epoch
+        // (unit importance ratio × zero-mean normalized advantages), so it
+        // is only a sanity floor; compare it absolutely.
+        assert!(
+            (gae.policy_loss - vtrace.policy_loss).abs() < 1e-3,
+            "policy_loss should match on-policy: gae={} vtrace={}",
+            gae.policy_loss,
+            vtrace.policy_loss
+        );
+    }
+
+    /// V-trace under real staleness: with 2 actors and a broadcast only
+    /// every 3 updates, actors collect several rollouts under a policy the
+    /// learner has already moved past. The re-evaluated target log-probs
+    /// then differ from the stored behavior log-probs, exercising
+    /// non-trivial importance ratios. The loop must complete without
+    /// panicking and every reported statistic must be finite.
+    #[test]
+    fn learner_loop_vtrace_stale_completes() {
+        let device = Default::default();
+        let num_actors = 2;
+        let num_steps = 8;
+
+        let config = AsyncActorLearnerConfig {
+            num_actors,
+            num_steps,
+            total_env_steps: num_steps * num_actors * 5, // 5 updates
+            broadcast_every: 3,                          // actors run stale between broadcasts
+            max_lead_steps: 6 * num_steps,               // room to run ahead under a stale policy
+            gamma: 0.99,
+            gae_lambda: 0.95,
+            use_vtrace: true,
+            vtrace_rho_bar: 1.0,
+            vtrace_c_bar: 1.0,
+            seed: 0,
+        };
+
+        let policy = seeded_autodiff_policy(0);
+        let inner_opt = AdamConfig::new().init();
+        let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> = BurnOptimizer::new(inner_opt, 1e-3);
+        let ppo_config = PPOConfig::default().batch_size(8).n_epochs(1).target_kl(1.0);
+        let trainer = PPOTrainerBurn::new(ppo_config, policy, burn_opt).unwrap();
+
+        let (experience_tx, experience_rx) = unbounded();
+        let actors: Vec<ActorHandle> = (0..num_actors)
+            .map(|i| {
+                spawn_actor::<Inner, _, _, _>(
+                    i,
+                    StubEnv { t: 0 },
+                    trainer.policy().valid(),
+                    experience_tx.clone(),
+                    device,
+                    200 + i as u64,
+                    config.actor_throttle(),
+                    act_fn,
+                )
+            })
+            .collect();
+        drop(experience_tx);
+
+        let (_trainer, report) = learner_loop(
+            &config,
+            trainer,
+            OBS_DIM,
+            &device,
+            &experience_rx,
+            &actors,
+            |p: &MlpBurnPolicy<B>, o, a| p.evaluate_actions(o, a),
+            |p: &MlpBurnPolicy<B>, o| p.forward(o).1.into_data().to_vec().unwrap(),
+        )
+        .unwrap();
+        for handle in actors {
+            let _ = handle.join();
+        }
+
+        assert_eq!(report.updates_completed, 5);
+        let stats = report.final_stats.expect("5 updates ran");
+        assert!(stats.policy_loss.is_finite(), "policy_loss must be finite under staleness");
+        assert!(stats.value_loss.is_finite(), "value_loss must be finite under staleness");
+        assert!(stats.entropy.is_finite(), "entropy must be finite under staleness");
+        for r in &report.episode_rewards {
+            assert!(r.is_finite(), "episode reward must be finite");
+        }
+    }
+
+    /// Provenance / non-triviality of the IS correction: the log-probs
+    /// the learner re-evaluates under an *updated* policy differ from the
+    /// behavior log-probs an actor stored under the policy that generated
+    /// the actions. If they were equal the V-trace ratio would collapse
+    /// to 1 and the correction would be a no-op; this guards against a
+    /// wiring bug that feeds the stored behavior log-probs back in as the
+    /// target (which is exactly what `buffer.log_probs()` holds).
+    #[test]
+    fn vtrace_target_log_probs_differ_from_behavior_when_policy_updated() {
+        let device = Default::default();
+        // Behavior policy (what an actor used) vs. a different "updated"
+        // policy the learner has since moved to.
+        let behavior = seeded_autodiff_policy(0);
+        let updated = seeded_autodiff_policy(7);
+
+        // Two [t, t] observations and the actions an actor sampled.
+        let obs = vec![0.0_f32, 0.0, 1.0, 1.0];
+        let obs_t = Tensor::<B, 2>::from_data(TensorData::new(obs, [2, OBS_DIM]), &device);
+        let actions_t =
+            Tensor::<B, 1, Int>::from_data(TensorData::new(vec![0_i64, 1], [2]), &device);
+
+        let (behavior_lp, _, _) = behavior.evaluate_actions(obs_t.clone(), actions_t.clone());
+        let (updated_lp, _, _) = updated.evaluate_actions(obs_t, actions_t);
+        let b: Vec<f32> = behavior_lp.into_data().to_vec().unwrap();
+        let u: Vec<f32> = updated_lp.into_data().to_vec().unwrap();
+
+        assert!(
+            b.iter().zip(&u).any(|(x, y)| (x - y).abs() > 1e-3),
+            "target log-probs under an updated policy must differ from behavior log-probs: \
+             {b:?} vs {u:?}"
+        );
     }
 }
