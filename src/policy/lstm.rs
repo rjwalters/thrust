@@ -1,11 +1,12 @@
 //! Burn-backend LSTM (recurrent) actor-critic policy.
 //!
 //! Phase 1 of the recurrent-policy epic (#262). Implements
-//! [`LstmBurnPolicy`], a concrete `#[derive(Module)]` struct that mirrors
+//! [`LstmBurnPolicy`](crate::policy::lstm::LstmBurnPolicy), a concrete
+//! `#[derive(Module)]` struct that mirrors
 //! [`crate::policy::mlp::MlpBurnPolicy`] but replaces the feedforward
-//! trunk with a Burn 0.21 [`Lstm`] so the policy can carry memory across
-//! timesteps. As with the MLP policy there is **no** formal `Policy`
-//! trait — each policy is a standalone Burn module.
+//! trunk with a Burn 0.21 [`Lstm`](burn::nn::Lstm) so the policy can carry
+//! memory across timesteps. As with the MLP policy there is **no** formal
+//! `Policy` trait — each policy is a standalone Burn module.
 //!
 //! # Architecture
 //!
@@ -16,23 +17,23 @@
 //!
 //! # Entry points
 //!
-//! - [`LstmBurnPolicy::forward_step`] — single-step inference for rollout
+//! - [`LstmBurnPolicy::forward_step`](crate::policy::lstm::LstmBurnPolicy::forward_step) — single-step inference for rollout
 //!   collection. Threads the recurrent state `(h, c)` in and out so the caller
 //!   can carry it across environment steps.
-//! - [`LstmBurnPolicy::evaluate_sequences`] — the rank-3 training forward. Runs
+//! - [`LstmBurnPolicy::evaluate_sequences`](crate::policy::lstm::LstmBurnPolicy::evaluate_sequences) — the rank-3 training forward. Runs
 //!   the LSTM over an entire `[n_env, T, obs_dim]` batch of trajectories,
 //!   resetting the hidden/cell state to zero at **episode boundaries**
 //!   (`episode_starts = terminated || truncated`).
 //!
 //! # Seeded initialization
 //!
-//! Burn's [`LstmConfig`] initializer takes no seed, so two constructions
-//! draw different weights. To honor the reproducibility contract shared
-//! with [`crate::policy::mlp::MlpBurnConfig::seed`], the seeded path
-//! overrides all **eight** gate `Linear` layers (four
+//! Burn's [`LstmConfig`](burn::nn::LstmConfig) initializer takes no seed, so
+//! two constructions draw different weights. To honor the reproducibility
+//! contract shared with [`crate::policy::mlp::MlpBurnConfig::seed`], the seeded
+//! path overrides all **eight** gate `Linear` layers (four
 //! [`burn::nn::GateController`]s × `{input_transform, hidden_transform}`)
 //! plus the two heads from deterministic, `StdRng`-driven weight buffers
-//! via the existing [`seeded_layer_weights`] / [`derive_layer_seed`]
+//! via the existing `seeded_layer_weights` / `derive_layer_seed`
 //! helpers. `GateController`'s fields are `pub`, so the swap is plain
 //! post-`init` field assignment — no `unsafe`, no new seeded-init
 //! primitive (see `docs/RECURRENT_POLICY_DESIGN.md`, Q4).
