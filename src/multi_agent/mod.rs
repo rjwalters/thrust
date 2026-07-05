@@ -74,7 +74,9 @@ pub use joint::{
     JointEnv, JointMultiAgentTrainer, JointPolicy, JointRollout, JointStats, JointStepResult,
     JointTrainerConfig,
 };
-pub use messages::{AgentId, ControlMessage, Experience, PolicyUpdate, TrainingStats};
+pub use messages::{
+    AgentId, ControlMessage, Experience, PolicyBroadcast, PolicyUpdate, TrainingStats,
+};
 pub use nfsp::{NfspConfig, NfspIterationStats, NfspStats, NfspTrainer, ReservoirBuffer};
 pub use psro::{
     AlphaRankMetaSolver, FictitiousPlayMetaSolver, MetaSolver, PayoffCache, PsroConfig,

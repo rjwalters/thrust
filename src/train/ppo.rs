@@ -9,6 +9,9 @@
 //!
 //! # Contents
 //!
+//! - [`actor_learner`] — single-host asynchronous actor-learner runner (N
+//!   inference-only actor threads feeding one learner over `crossbeam-channel`;
+//!   Phase 2 of the distributed-training epic #265).
 //! - [`config`] — `PPOConfig` hyperparameters / builder API.
 //! - [`stats`] — `TrainingStats` / `AggregatedStats` per-update metrics.
 //! - [`loss`] — backend-generic PPO loss math (policy/value/entropy) and the
@@ -18,11 +21,16 @@
 //!   `train_step` that runs the surrogate-loss / gradient-step / KL early stop
 //!   logic.
 
+pub mod actor_learner;
 pub mod config;
 pub mod loss;
 pub mod stats;
 pub mod trainer;
 
+pub use actor_learner::{
+    ActorChannels, ActorHandle, ActorStats, AsyncActorLearnerConfig, LearnerReport, actor_thread,
+    learner_loop, load_policy_from_broadcast, serialize_policy, spawn_actor,
+};
 pub use config::PPOConfig;
 pub use loss::{
     compute_entropy_loss, compute_policy_loss, compute_value_loss, generate_minibatch_indices,

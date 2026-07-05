@@ -15,6 +15,8 @@
 //! one layer up (and are intentionally minimal in this first Burn-native
 //! port — see [`crate::multi_agent`] for the module-level scope).
 
+use std::sync::Arc;
+
 /// Unique identifier for an agent across a multi-agent training run.
 pub type AgentId = usize;
 
@@ -112,6 +114,45 @@ pub struct PolicyUpdate {
 
     /// Training statistics for logging.
     pub stats: TrainingStats,
+}
+
+/// In-process policy broadcast from a learner to its actors.
+///
+/// Cross-thread, in-process counterpart to [`PolicyUpdate`] (which
+/// publishes a saved-model *file path*). This enum is what the
+/// single-host asynchronous actor-learner runner
+/// ([`crate::train::ppo::actor_learner`]) sends over each per-actor
+/// `crossbeam_channel` broadcast channel after a learner update. The
+/// payload representation is chosen by the learner implementation; the
+/// actor side stays agnostic by matching on the variant.
+#[derive(Debug, Clone)]
+pub enum PolicyBroadcast {
+    /// Serialized Burn module record bytes, produced by
+    /// [`burn::record::BinBytesRecorder`] with
+    /// [`burn::record::FullPrecisionSettings`].
+    ///
+    /// Bytes are always `Send` regardless of the tensor backend (unlike
+    /// raw module clones, whose `Send`-ness depends on the backend's
+    /// tensor primitives), and the [`Arc`] keeps the N-actor fan-out
+    /// allocation-free — each actor channel receives a cheap pointer
+    /// clone of the same serialized blob.
+    Bytes {
+        /// Monotonically increasing policy version. Incremented by the
+        /// learner once per broadcast so actors (and tests) can observe
+        /// how fresh their local policy copy is.
+        version: u64,
+        /// Shared serialized module record.
+        bytes: Arc<Vec<u8>>,
+    },
+}
+
+impl PolicyBroadcast {
+    /// The policy version carried by this broadcast.
+    pub fn version(&self) -> u64 {
+        match self {
+            Self::Bytes { version, .. } => *version,
+        }
+    }
 }
 
 /// Training statistics from a policy update.
@@ -236,6 +277,19 @@ mod tests {
         assert_eq!(stats.step, 0);
         assert_eq!(stats.total_loss, 0.0);
         assert!(stats.avg_reward.is_none());
+    }
+
+    #[test]
+    fn test_policy_broadcast_version_and_shared_bytes() {
+        let bytes = Arc::new(vec![1u8, 2, 3]);
+        let broadcast = PolicyBroadcast::Bytes { version: 7, bytes: Arc::clone(&bytes) };
+
+        assert_eq!(broadcast.version(), 7);
+
+        // Cloning the broadcast shares the underlying blob (no deep copy).
+        let cloned = broadcast.clone();
+        let PolicyBroadcast::Bytes { bytes: cloned_bytes, .. } = cloned;
+        assert!(Arc::ptr_eq(&bytes, &cloned_bytes));
     }
 
     #[test]
