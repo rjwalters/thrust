@@ -25,14 +25,30 @@
 //!
 //! # The GAE / state-reset asymmetry (do not homogenize)
 //!
-//! GAE bootstraps on `terminated` **only** — a truncation is a time-limit
-//! cut, not an MDP terminal, so the value target should still bootstrap from
-//! the next state. The hidden-state reset mask
-//! ([`RecurrentRolloutBatch::episode_starts`]) uses `terminated || truncated`
-//! — a truncated step still ends the episode, so its recurrent state must
-//! reset. Both consumers read the same stored `terminated`/`truncated`
-//! grids but combine them differently; do not "fix" one to match the other
-//! (design note Q2).
+//! GAE bootstraps on `terminated` **only**, at the *same* step — a
+//! truncation is a time-limit cut, not an MDP terminal, so the value target
+//! should still bootstrap from the next state. The hidden-state reset mask
+//! ([`RecurrentRolloutBatch::episode_starts`]) differs on **two** axes:
+//!
+//! 1. It combines `terminated || truncated` — a truncated step still ends the
+//!    episode, so its recurrent state must reset.
+//! 2. It is **shifted one step later** than the done stream.
+//!    `episode_starts[t]` means "`obs[t]` is the *first* step of a new
+//!    episode," which the merged
+//!    [`LstmBurnPolicy::evaluate_sequences`](crate::policy::lstm::LstmBurnPolicy::evaluate_sequences)
+//!    consumes by zeroing the incoming `(h, c)` **before** step `t`. Given the
+//!    collector layout (`obs[t]` is the pre-action observation, `done[t]`
+//!    results from step `t`'s action, and the env resets so the fresh
+//!    observation lands in the *next* slot `obs[t+1]`), the reset following a
+//!    done at step `t-1` must land on `obs[t]`. So `episode_starts[t] =
+//!    terminated[t-1] || truncated[t-1]` for `t >= 1`, and `episode_starts[0]`
+//!    is the cross-iteration carry-in flag (whether this env's episode ended at
+//!    the *end* of the previous rollout iteration; `1.0` for a fresh buffer's
+//!    first-ever iteration).
+//!
+//! GAE keeps consuming the same-step `terminated`; the two masks stay
+//! distinct (mirroring SB3's separate `episode_starts` / terminal arrays).
+//! Do not "fix" one to match the other (design note Q2).
 //!
 //! # Warm-start (Strategy A), not Strategy B
 //!
@@ -72,6 +88,16 @@ pub struct RecurrentRolloutBuffer {
     /// `[num_steps, num_envs, hidden_dim]`.
     cell: Vec<Vec<Vec<f32>>>,
 
+    /// Per-env cross-iteration carry-in flag, `[num_envs]`, supplying
+    /// `episode_starts[0]` for the next materialized batch: `1.0` if this
+    /// env's episode ended at the *end* of the previous rollout iteration
+    /// (so step 0 begins a fresh episode and its `(h, c)` must reset),
+    /// `0.0` if the episode continued across the iteration boundary.
+    /// Initialized to `1.0` for every env — a fresh buffer's first-ever
+    /// iteration starts an episode — and updated by
+    /// [`Self::seed_warm_start`] in lockstep with the `(h, c)` carry.
+    episode_start_carry: Vec<f32>,
+
     /// Width of the recurrent `(h, c)` state.
     hidden_dim: usize,
 }
@@ -88,7 +114,11 @@ impl RecurrentRolloutBuffer {
         let inner = RolloutBuffer::new(num_steps, num_envs, obs_dim);
         let hidden = vec![vec![vec![0.0; hidden_dim]; num_envs]; num_steps];
         let cell = vec![vec![vec![0.0; hidden_dim]; num_envs]; num_steps];
-        Self { inner, hidden, cell, hidden_dim }
+        // A fresh buffer's first-ever rollout iteration starts an episode for
+        // every env, so `episode_starts[0]` is `1.0` until `seed_warm_start`
+        // overwrites it from the previous iteration's terminal state.
+        let episode_start_carry = vec![1.0; num_envs];
+        Self { inner, hidden, cell, episode_start_carry, hidden_dim }
     }
 
     /// Add a transition to the buffer.
@@ -164,6 +194,24 @@ impl RecurrentRolloutBuffer {
     /// `final_hidden` / `final_cell` are indexed `[env][hidden_dim]` and
     /// must have `num_envs` rows.
     ///
+    /// This method also records the per-env cross-iteration carry-in flag
+    /// that becomes `episode_starts[0]` of the next materialized batch: an
+    /// env that ended its episode gets flag `1.0` (its step-0 state resets),
+    /// a live env gets `0.0` (its state continues). The flag is set in
+    /// lockstep with the `(h, c)` carry so the reset mask and the seeded
+    /// state always agree.
+    ///
+    /// # Strategy A note (the `(h, c)` carry is a Strategy-B hook)
+    /// The `(h, c)` seeded into `hidden[0]` / `cell[0]` here is **not**
+    /// consumed by Strategy A's [`Self::to_sequence_batch`], which always
+    /// passes `initial_state: None` (zeros) to the forward — an intentional
+    /// BPTT truncation at the iteration boundary. Cross-iteration continuity
+    /// is instead approximated only through the carry-in flag above (which
+    /// controls the *reset*, not the *value*, of step 0's state). The seeded
+    /// `(h, c)` storage is a forward-looking hook a future Strategy B trainer
+    /// (fixed-length subsequences with stored boundary states) would feed in;
+    /// under Strategy A it is deliberately left unread.
+    ///
     /// # Panics
     /// Panics if `last_step >= num_steps`, if `final_hidden` / `final_cell`
     /// do not have `num_envs` rows, or (debug builds) if any row is not
@@ -188,6 +236,10 @@ impl RecurrentRolloutBuffer {
         let truncated = self.inner.truncated();
         for env in 0..num_envs {
             let ended = terminated[last_step][env] || truncated[last_step][env];
+            // Record the carry-in flag that becomes `episode_starts[0]` next
+            // iteration: `1.0` when the episode ended (step 0 begins fresh),
+            // `0.0` when it continues across the boundary.
+            self.episode_start_carry[env] = if ended { 1.0 } else { 0.0 };
             if ended {
                 // Episode ended on the last step — start the next iteration
                 // from a zeroed state.
@@ -206,9 +258,12 @@ impl RecurrentRolloutBuffer {
     ///
     /// Delegates to
     /// [`RolloutBuffer::reset`](super::storage::RolloutBuffer::reset).
-    /// The recurrent `(h, c)` arrays are intentionally left in place — they
-    /// are overwritten by [`Self::add_recurrent_state`] during the next
-    /// collection and [`Self::seed_warm_start`] seeds step 0 explicitly.
+    /// The recurrent `(h, c)` arrays and the `episode_start_carry` flag are
+    /// intentionally left in place — `(h, c)` is overwritten by
+    /// [`Self::add_recurrent_state`] during the next collection, and both the
+    /// step-0 state and the carry flag are seeded by
+    /// [`Self::seed_warm_start`] so they must survive the reset to bridge the
+    /// iteration boundary.
     pub fn reset(&mut self) {
         self.inner.reset();
     }
@@ -292,6 +347,14 @@ impl RecurrentRolloutBuffer {
     /// then by hidden dimension.
     pub fn cell(&self) -> &[Vec<Vec<f32>>] {
         &self.cell
+    }
+
+    /// Per-env cross-iteration carry-in flag (`episode_starts[0]` source),
+    /// indexed `[env]`. `1.0` marks that the env's episode ended at the end
+    /// of the previous rollout iteration (step 0 resets); `0.0` marks a
+    /// carried-over episode.
+    pub fn episode_start_carry(&self) -> &[f32] {
+        &self.episode_start_carry
     }
 
     /// Materialize the full buffer as a rank-3 sequence batch (`T =
@@ -388,10 +451,25 @@ impl RecurrentRolloutBuffer {
             for step in 0..t {
                 obs_flat.extend_from_slice(&observations[step][env]);
                 actions_flat.push(actions_grid[step][env]);
-                // Hidden-state reset mask: `terminated || truncated`
-                // (NOT the terminated-only GAE flag).
-                let ended = terminated_grid[step][env] || truncated_grid[step][env];
-                starts_flat.push(if ended { 1.0_f32 } else { 0.0_f32 });
+                // Episode-start (hidden-state reset) mask, shifted one step
+                // later than the done stream: `episode_starts[t]` marks that
+                // `obs[t]` is the FIRST step of a new episode, which
+                // `evaluate_sequences` consumes by zeroing `(h, c)` *before*
+                // step `t`. Because the collector stores `obs[t]` pre-action,
+                // `done[t]` as the result of step `t`, and the post-reset
+                // observation in the next slot `obs[t+1]`, the reset after a
+                // done at step `t-1` must land on `obs[t]`. So for `t >= 1`
+                // the flag is the *previous* step's `terminated || truncated`;
+                // at `t == 0` it is the cross-iteration carry-in flag. GAE
+                // still reads the same-step, terminated-only flag — the two
+                // masks stay distinct.
+                let start = if step == 0 {
+                    self.episode_start_carry[env]
+                } else {
+                    let prev_done = terminated_grid[step - 1][env] || truncated_grid[step - 1][env];
+                    if prev_done { 1.0_f32 } else { 0.0_f32 }
+                };
+                starts_flat.push(start);
                 log_probs_flat.push(log_probs_grid[step][env]);
                 values_flat.push(values_grid[step][env]);
                 advantages_flat.push(advantages_grid[step][env]);
@@ -441,9 +519,13 @@ pub struct RecurrentRolloutBatch<B: Backend> {
     pub obs_seq: Tensor<B, 3>,
     /// Discrete actions, `[N_env, T]` — feeds `actions`.
     pub actions: Tensor<B, 2, Int>,
-    /// Episode-boundary (state-reset) mask, `[N_env, T]`: `1.0` where
-    /// `terminated || truncated`, else `0.0`. Feeds `episode_starts` — the
-    /// hidden-state reset mask, **not** the terminated-only GAE flag.
+    /// Episode-start (state-reset) mask, `[N_env, T]`: `1.0` where `obs[t]`
+    /// is the **first** step of a new episode, else `0.0`. This is the
+    /// done-flag stream shifted one step later —
+    /// `terminated[t-1] || truncated[t-1]` for `t >= 1`, and the
+    /// cross-iteration carry-in flag at `t == 0`. Feeds `episode_starts`,
+    /// the hidden-state reset mask consumed by `evaluate_sequences`; it is
+    /// distinct from (and one step ahead of) the terminated-only GAE flag.
     pub episode_starts: Tensor<B, 2>,
     /// Behavior-policy log-probs `[N_env, T]` for the PPO ratio.
     pub old_log_probs: Tensor<B, 2>,
@@ -612,15 +694,18 @@ mod tests {
         }
     }
 
-    /// `episode_starts[step][env] == 1.0` iff `terminated || truncated`,
-    /// across truncated-only, terminated-only, both, and neither.
+    /// `episode_starts[t]` is the done stream (`terminated || truncated`)
+    /// shifted one step later: `episode_starts[t] = done[t-1]` for `t >= 1`,
+    /// and `episode_starts[0]` is the fresh-buffer carry-in flag (`1.0`).
+    /// Exercises truncated-only, terminated-only, both, and neither in the
+    /// donor positions.
     #[test]
     fn test_episode_starts_flag_correctness() {
         let (num_steps, num_envs, obs_dim) = (4, 1, 2);
         let hidden_dim = 2;
         let mut buf = RecurrentRolloutBuffer::new(num_steps, num_envs, obs_dim, hidden_dim);
-        // step 0: neither, step 1: terminated only, step 2: truncated only,
-        // step 3: both.
+        // done at step 0: neither, step 1: terminated only, step 2: truncated
+        // only, step 3: both.
         let flags = [(false, false), (true, false), (false, true), (true, true)];
         for (step, &(term, trunc)) in flags.iter().enumerate() {
             buf.add(step, 0, &[0.0, 0.0], 0, 0.0, 0.0, 0.0, term, trunc);
@@ -629,8 +714,12 @@ mod tests {
         let dev = device();
         let batch = buf.to_sequence_batch::<B>(&dev);
         let starts: Vec<f32> = batch.episode_starts.into_data().to_vec().unwrap();
-        // Single env, so flat order is just step order.
-        assert_eq!(starts, vec![0.0, 1.0, 1.0, 1.0]);
+        // Single env, so flat order is just step order. Step 0 is the
+        // fresh-buffer carry-in (1.0); each later step mirrors the PREVIOUS
+        // step's done. The `done` at the final step (both) has no successor
+        // in this window, so it does not appear here (it would seed the next
+        // iteration's `episode_starts[0]` via `seed_warm_start`).
+        assert_eq!(starts, vec![1.0, 0.0, 1.0, 1.0]);
     }
 
     /// GAE delegation is byte-identical to the feedforward buffer: build a
@@ -734,6 +823,92 @@ mod tests {
         // Live env -> carries the final state.
         assert_eq!(buf.hidden()[0][2], vec![1.0, 2.0, 3.0]);
         assert_eq!(buf.cell()[0][2], vec![-1.0, -2.0, -3.0]);
+        // Carry-in flag tracks the `(h, c)` seeding in lockstep: ended envs
+        // (0, 1) reset at step 0, the live env (2) carries over.
+        assert_eq!(buf.episode_start_carry(), &[1.0, 1.0, 0.0]);
+    }
+
+    /// Semantic alignment against realistic done placement: an episode that
+    /// ends at step `k` must set `episode_starts[k+1] == 1` (the reset lands
+    /// on the *first* step of the new episode) and `episode_starts[k] == 0`
+    /// (the ending episode's final step keeps its history). We prove no
+    /// stale state leaks across the boundary by feeding the materialized
+    /// batch through
+    /// [`LstmBurnPolicy::evaluate_sequences`](crate::policy::lstm::LstmBurnPolicy::evaluate_sequences)
+    /// and checking the value at `k+1` equals a fresh zero-state forward on
+    /// `obs[k+1]` — mirroring the policy's own boundary-reset test — while
+    /// the value at `k` differs from a fresh forward, confirming the final
+    /// pre-boundary step still carries the ending episode's context.
+    #[test]
+    fn test_episode_starts_semantic_alignment_no_state_leak() {
+        use crate::policy::lstm::{LstmBurnConfig, LstmBurnPolicy};
+        type AB = burn::backend::Autodiff<NdArray<f32>>;
+
+        let (num_steps, num_envs, obs_dim, action_dim) = (5, 1, 4, 2);
+        let dev = crate::utils::cuda::default_burn_device::<AB>();
+        let hidden_dim = 8;
+
+        // Episode boundary at step k = 2 (terminated). obs[k] = obs[2] is the
+        // ending episode's last acted-from state; obs[k+1] = obs[3] is the
+        // first state of the fresh episode.
+        let k = 2usize;
+        let mut buf = RecurrentRolloutBuffer::new(num_steps, num_envs, obs_dim, hidden_dim);
+        // Distinct nonzero observations so recurrent state actually evolves.
+        let obs_by_step: Vec<Vec<f32>> = (0..num_steps)
+            .map(|s| (0..obs_dim).map(|d| 0.2 * (s as f32 + 1.0) - 0.05 * d as f32).collect())
+            .collect();
+        for (step, obs) in obs_by_step.iter().enumerate() {
+            let terminated = step == k;
+            buf.add(step, 0, obs, 0, 0.0, 0.0, 0.0, terminated, false);
+        }
+
+        let batch = buf.to_sequence_batch::<AB>(&dev);
+        let starts: Vec<f32> = batch.episode_starts.clone().into_data().to_vec().unwrap();
+        // Fresh buffer carry-in at step 0, then the done stream shifted one
+        // step: only step k+1 = 3 is flagged (done at k = 2), step k = 2 is 0.
+        assert_eq!(starts, vec![1.0, 0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(starts[k], 0.0, "ending episode's last step must NOT reset");
+        assert_eq!(starts[k + 1], 1.0, "new episode's first step must reset");
+
+        let cfg = LstmBurnConfig { hidden_dim, ..Default::default() }.with_seed(23);
+        let policy = LstmBurnPolicy::<AB>::with_config(obs_dim, action_dim, cfg, &dev);
+        let (_, _, values) = policy.evaluate_sequences(
+            batch.obs_seq.clone(),
+            batch.actions.clone(),
+            None,
+            batch.episode_starts.clone(),
+        );
+        let v: Vec<f32> = values.into_data().to_vec().unwrap();
+
+        // obs[k+1] under the batch must equal a fresh zero-state forward: the
+        // reset at k+1 zeroed the incoming state, so the ending episode's
+        // memory did NOT leak into the new episode's first step.
+        let obs_kp1 = Tensor::<AB, 2>::from_data(
+            TensorData::new(obs_by_step[k + 1].clone(), [1, obs_dim]),
+            &dev,
+        );
+        let (_, value_fresh_kp1, _) = policy.forward_step(obs_kp1, None);
+        let vf_kp1: Vec<f32> = value_fresh_kp1.into_data().to_vec().unwrap();
+        assert!(
+            (v[k + 1] - vf_kp1[0]).abs() < 1e-5,
+            "step k+1 value {} must match fresh zero-state value {} (no leak)",
+            v[k + 1],
+            vf_kp1[0]
+        );
+
+        // obs[k], by contrast, is NOT a reset step: it must carry the state
+        // accumulated over steps 0..k, so its value differs from a fresh
+        // zero-state forward — the ending episode keeps its own history.
+        let obs_k =
+            Tensor::<AB, 2>::from_data(TensorData::new(obs_by_step[k].clone(), [1, obs_dim]), &dev);
+        let (_, value_fresh_k, _) = policy.forward_step(obs_k, None);
+        let vf_k: Vec<f32> = value_fresh_k.into_data().to_vec().unwrap();
+        assert!(
+            (v[k] - vf_k[0]).abs() > 1e-6,
+            "step k value {} should differ from fresh value {} (history retained)",
+            v[k],
+            vf_k[0]
+        );
     }
 
     /// Env-major sampler: over one epoch every env index appears exactly
