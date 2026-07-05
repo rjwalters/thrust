@@ -18,6 +18,13 @@ pub mod mlp;
 #[cfg(feature = "training")]
 pub mod multi_discrete_mlp;
 
+/// LSTM (recurrent) actor-critic policy — Phase 1 of the recurrent-policy
+/// epic (#262). Carries memory across timesteps via a Burn 0.21 `Lstm`
+/// trunk, with `forward_step` for rollout collection and
+/// `evaluate_sequences` for the rank-3 training forward.
+#[cfg(feature = "training")]
+pub mod lstm;
+
 /// Seeded, host-side weight-initialization helpers that make policy
 /// construction bit-exact under `PsroConfig::seed` / `NfspConfig::seed`
 /// (issue #135). Burn 0.21's `Initializer` has no seed parameter, so we
