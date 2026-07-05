@@ -436,6 +436,26 @@ pub struct JointTrainerConfig {
     /// (`iterate_all_minibatches == false`) the per-epoch set already has one
     /// entry, so any `cap >= 1` is a no-op there.
     pub max_minibatches_per_epoch: Option<usize>,
+    /// Weight on the optional **comms-regularization** term (issue #275,
+    /// Phase 2 of [`docs/COMMS_DESIGN.md`](../../../docs/COMMS_DESIGN.md)).
+    ///
+    /// When nonzero, each minibatch update folds a message-entropy penalty —
+    /// the Shannon entropy (nats) of every agent's sampled action-token
+    /// distribution over the minibatch, summed across agents and scaled by
+    /// `comms_coef` — into [`JointStats::aux_loss`] and the joint backward.
+    /// This reuses the existing aux-loss plumbing (the design's "reuse the
+    /// aux-loss slot, don't add a new one") rather than changing the
+    /// `aux_fn` signature that PSRO/NFSP depend on.
+    ///
+    /// The term is computed from the discrete sampled tokens, so under the
+    /// Phase 2 (non-differentiable) comms surface it contributes no gradient
+    /// and acts as a monitored regularizer; differentiable message gradients
+    /// are Phase 3 (issue #276, Gumbel-softmax).
+    ///
+    /// Defaults to `0.0` (**disabled** — no comms term added), so existing
+    /// NFSP/PSRO runs and determinism tests are bit-identical unless a caller
+    /// opts in.
+    pub comms_coef: f64,
 }
 
 impl Default for JointTrainerConfig {
@@ -456,6 +476,7 @@ impl Default for JointTrainerConfig {
             iterate_all_minibatches: false,
             critic_lr: None,
             max_minibatches_per_epoch: None,
+            comms_coef: 0.0,
         }
     }
 }
@@ -472,11 +493,15 @@ impl Default for JointTrainerConfig {
 /// inside [`JointMultiAgentTrainer::update`].
 #[derive(Debug, Clone)]
 pub struct JointRollout {
-    /// Per-agent observations: `Vec<N>[T * obs_dim]`. Each inner buffer
-    /// holds the observation stream for one agent across the rollout.
+    /// Per-agent observations: `observations_per_agent[i]` is a flat
+    /// `[T * obs_dims[i]]` buffer holding the observation stream for one
+    /// agent across the rollout.
     pub observations_per_agent: Vec<Vec<f32>>,
-    /// Observation dimensionality (uniform across agents).
-    pub obs_dim: usize,
+    /// Per-agent observation dimensionality (`obs_dims[i]` = length of agent
+    /// `i`'s observation vector). Heterogeneous across agents is supported —
+    /// e.g. a `SignalingGame` speaker observes a length-`V` one-hot while the
+    /// listener observes a single received-token slot (issue #275).
+    pub obs_dims: Vec<usize>,
     /// Per-agent actions: `Vec<N>[T * num_action_dims]`. `num_action_dims`
     /// is 1 for scalar discrete, `num_dims` for multi-discrete.
     pub actions: Vec<Vec<i64>>,
@@ -731,7 +756,11 @@ where
             last_obs.len(),
             num_agents,
         );
-        let obs_dim = last_obs[0].len();
+        // Per-agent observation dimensionality. Agents may observe vectors of
+        // different lengths (e.g. a SignalingGame speaker sees a length-`V`
+        // one-hot while the listener sees a single received-token slot), so
+        // each agent's buffer is sized independently (issue #275).
+        let obs_dims: Vec<usize> = last_obs.iter().map(|o| o.len()).collect();
         let device = self.device.clone();
 
         // Probe per-dim action layout from agent 0's policy (shape-only — no
@@ -745,7 +774,7 @@ where
             .len();
 
         let mut obs_buf_per_agent: Vec<Vec<f32>> =
-            (0..num_agents).map(|_| vec![0.0_f32; num_steps * obs_dim]).collect();
+            (0..num_agents).map(|i| vec![0.0_f32; num_steps * obs_dims[i]]).collect();
         let mut act_buf: Vec<Vec<i64>> =
             (0..num_agents).map(|_| vec![0_i64; num_steps * num_action_dims]).collect();
         let mut lp_buf: Vec<Vec<f32>> = (0..num_agents).map(|_| vec![0.0_f32; num_steps]).collect();
@@ -756,18 +785,20 @@ where
         let mut done_buf = vec![0.0_f32; num_steps];
 
         for t in 0..num_steps {
-            let start = t * obs_dim;
-
             let mut joint_action: Vec<Vec<i64>> = Vec::with_capacity(num_agents);
             for (i, slot) in self.policies.iter().enumerate() {
                 let policy = slot.as_ref().expect("policy present at rollout time");
 
                 // Per-agent observation: record into the agent-i buffer and
-                // build a single-row obs tensor for the agent-i policy.
+                // build a single-row obs tensor for the agent-i policy. The
+                // stride is agent-specific because observation lengths may
+                // differ across agents (issue #275).
+                let obs_dim_i = obs_dims[i];
+                let start = t * obs_dim_i;
                 let agent_obs = &last_obs[i];
-                obs_buf_per_agent[i][start..start + obs_dim].copy_from_slice(agent_obs);
+                obs_buf_per_agent[i][start..start + obs_dim_i].copy_from_slice(agent_obs);
                 let obs_t = Tensor::<B, 2>::from_data(
-                    burn::tensor::TensorData::new(agent_obs.clone(), [1, obs_dim]),
+                    burn::tensor::TensorData::new(agent_obs.clone(), [1, obs_dim_i]),
                     &device,
                 );
 
@@ -800,7 +831,7 @@ where
 
         JointRollout {
             observations_per_agent: obs_buf_per_agent,
-            obs_dim,
+            obs_dims,
             actions: act_buf,
             num_action_dims,
             log_probs: lp_buf,
@@ -964,7 +995,7 @@ where
                     .map(|i| {
                         select_obs(
                             &rollout.observations_per_agent[i],
-                            rollout.obs_dim,
+                            rollout.obs_dims[i],
                             &indices,
                             &device,
                         )
@@ -1071,6 +1102,33 @@ where
                     joint_loss = Some(match joint_loss.take() {
                         Some(acc) => acc + aux,
                         None => aux,
+                    });
+                }
+
+                // Optional comms-regularization term (issue #275). Off by
+                // default (`comms_coef == 0.0`), in which case this is exactly
+                // 0.0 and neither `aux_loss` nor `joint_loss` is perturbed, so
+                // existing PSRO/NFSP determinism is preserved. When enabled it
+                // reuses the `aux_loss` slot — no `aux_fn` signature change.
+                let comms_scalar = comms_penalty(
+                    self.config.comms_coef,
+                    &rollout.actions,
+                    rollout.num_action_dims,
+                    &indices,
+                );
+                if comms_scalar != 0.0 {
+                    stats.aux_loss += comms_scalar;
+                    // Fold into the joint backward as a constant term. Phase 2
+                    // messages are discrete/non-differentiable, so this carries
+                    // no gradient (Phase 3 / issue #276 makes it differentiable
+                    // via a Gumbel-softmax head).
+                    let comms_t = Tensor::<B, 1>::from_data(
+                        burn::tensor::TensorData::new(vec![comms_scalar as f32], [1]),
+                        &device,
+                    );
+                    joint_loss = Some(match joint_loss.take() {
+                        Some(acc) => acc + comms_t,
+                        None => comms_t,
                     });
                 }
                 let joint_loss = joint_loss.ok_or_else(|| anyhow!("no losses to backprop"))?;
@@ -1327,6 +1385,58 @@ fn normalize_advantages(adv: &[f32]) -> Vec<f32> {
     let var: f64 = adv.iter().map(|&x| (x as f64 - mean).powi(2)).sum::<f64>() / n;
     let std = var.sqrt().max(1e-8);
     adv.iter().map(|&x| ((x as f64 - mean) / std) as f32).collect()
+}
+
+/// Comms-regularization penalty for one minibatch (issue #275).
+///
+/// Returns `comms_coef * Σ_i H_i`, where `H_i` is the Shannon entropy (in
+/// nats) of agent `i`'s sampled action-token distribution over the minibatch
+/// `indices`. This is the "message-entropy penalty" option from
+/// [`docs/COMMS_DESIGN.md`](../../../docs/COMMS_DESIGN.md) §5, Phase 2: a
+/// scalar computed from the discrete tokens already stored in the rollout's
+/// action buffers, folded into the shared [`JointStats::aux_loss`] slot.
+///
+/// Returns `0.0` when `comms_coef == 0.0` (the default, disabled path), so the
+/// caller adds nothing to `aux_loss` / `joint_loss` and existing determinism
+/// is preserved.
+fn comms_penalty(
+    comms_coef: f64,
+    actions: &[Vec<i64>],
+    num_action_dims: usize,
+    indices: &[usize],
+) -> f64 {
+    if comms_coef == 0.0 {
+        return 0.0;
+    }
+    let total: f64 = actions.iter().map(|a| token_entropy(a, num_action_dims, indices)).sum();
+    comms_coef * total
+}
+
+/// Shannon entropy (nats) of the sampled action tokens for one agent over the
+/// minibatch `indices`. Every action dim contributes its token value as a
+/// symbol; a degenerate (single-token) distribution yields `0.0`.
+fn token_entropy(actions_flat: &[i64], num_action_dims: usize, indices: &[usize]) -> f64 {
+    use std::collections::HashMap;
+    let mut counts: HashMap<i64, usize> = HashMap::new();
+    let mut n: usize = 0;
+    for &t in indices {
+        let off = t * num_action_dims;
+        for tok in &actions_flat[off..off + num_action_dims] {
+            *counts.entry(*tok).or_insert(0) += 1;
+            n += 1;
+        }
+    }
+    if n == 0 {
+        return 0.0;
+    }
+    let n_f = n as f64;
+    counts
+        .values()
+        .map(|&c| {
+            let p = c as f64 / n_f;
+            -p * p.ln()
+        })
+        .sum()
 }
 
 /// Build a `[mb, obs_dim]` tensor from the host observation buffer.
@@ -1722,7 +1832,7 @@ mod tests {
 
         assert_eq!(rollout.num_steps(), t);
         assert_eq!(rollout.num_agents(), num_agents);
-        assert_eq!(rollout.obs_dim, obs_dim);
+        assert_eq!(rollout.obs_dims, vec![obs_dim; num_agents]);
         assert_eq!(rollout.num_action_dims, 1);
         assert_eq!(rollout.observations_per_agent.len(), num_agents);
         for buf in &rollout.observations_per_agent {
@@ -2021,6 +2131,128 @@ mod tests {
             assert!(stats.entropy[i].is_finite(), "entropy[{i}] finite");
         }
         assert!(stats.total_loss.is_finite());
+    }
+
+    /// Issue #275, Phase 2 smoke test: the joint trainer drives a
+    /// `SignalingGame` (via its `JointEnv` adapter) through one
+    /// `collect_rollout` + `update` cycle with the comms term enabled.
+    ///
+    /// Exercises all three Phase 2 pieces at once:
+    /// * **Challenge A** — `SignalingGame: JointEnv` (the trainer accepts it).
+    /// * **Challenge B** — heterogeneous per-agent obs dims: the speaker
+    ///   observes a length-`V` one-hot, the listener a single received-token
+    ///   slot. Before #275 `collect_rollout` sized every agent's buffer to
+    ///   agent 0's obs length and panicked here.
+    /// * **Challenge C** — `comms_coef > 0` populates `stats.aux_loss` through
+    ///   the existing aux-loss slot without touching `aux_fn`.
+    ///
+    /// This is a plumbing smoke test, not a convergence run: the game
+    /// terminates every step, so the rollout is a sequence of single-step
+    /// episodes.
+    #[test]
+    fn comms_smoke_joint_trainer() {
+        use crate::env::games::signaling::{LISTENER, SPEAKER, SignalingGame};
+
+        let device: NdArrayDevice = Default::default();
+        let num_agents = 2;
+        let vocab = 4usize;
+
+        // Heterogeneous obs dims: speaker sees a length-`vocab` one-hot,
+        // listener sees a single received-token slot. Both emit one token over
+        // the vocabulary (message for the speaker, guess for the listener), so
+        // `num_action_dims == 1` is uniform.
+        let speaker = MlpBurnPolicy::<B>::new(vocab, vocab, 8, &device);
+        let listener = MlpBurnPolicy::<B>::new(1, vocab, 8, &device);
+        let policies = vec![speaker, listener];
+        let optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 3e-4);
+
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: 16,
+            n_epochs: 1,
+            minibatch_size: 16,
+            comms_coef: 0.5,
+            ..Default::default()
+        };
+        let mut trainer =
+            JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
+
+        let mut env = SignalingGame::with_hidden(vocab, 2);
+        let mut last_obs = env.reset_joint(None);
+        // The adapter reports per-agent obs dims — this is the layout that
+        // panicked before the #275 `obs_dims` fix.
+        assert_eq!(last_obs[SPEAKER].len(), vocab);
+        assert_eq!(last_obs[LISTENER].len(), 1);
+
+        let mut rng = StdRng::seed_from_u64(7);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
+
+        // Challenge B: the rollout records heterogeneous per-agent obs dims and
+        // sizes each agent's flat buffer accordingly.
+        assert_eq!(rollout.obs_dims, vec![vocab, 1]);
+        assert_eq!(rollout.observations_per_agent[SPEAKER].len(), 16 * vocab);
+        assert_eq!(rollout.observations_per_agent[LISTENER].len(), 16);
+
+        let stats = trainer
+            .update(&rollout, &mut rng, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
+                None
+            })
+            .expect("update should not error on the signaling game");
+
+        // Challenge C: with `comms_coef > 0` the comms penalty populates the
+        // aux-loss slot even though `aux_fn` returned `None`.
+        assert!(stats.aux_loss.is_finite(), "aux_loss must be finite");
+        assert_ne!(stats.aux_loss, 0.0, "comms_coef > 0 must populate aux_loss");
+
+        // All per-agent PPO stats remain finite across the heterogeneous-obs
+        // joint update.
+        for i in 0..num_agents {
+            assert!(stats.policy_loss[i].is_finite(), "policy_loss[{i}] finite");
+            assert!(stats.value_loss[i].is_finite(), "value_loss[{i}] finite");
+            assert!(stats.entropy[i].is_finite(), "entropy[{i}] finite");
+        }
+        assert!(stats.total_loss.is_finite(), "total_loss must be finite");
+    }
+
+    /// Issue #275: the comms term is strictly opt-in. With the default
+    /// `comms_coef == 0.0` and an `aux_fn` returning `None`, `aux_loss` stays
+    /// exactly `0.0` — the guarantee that keeps PSRO/NFSP determinism intact.
+    #[test]
+    fn comms_disabled_by_default_leaves_aux_loss_zero() {
+        use crate::env::games::signaling::SignalingGame;
+
+        let device: NdArrayDevice = Default::default();
+        let num_agents = 2;
+        let vocab = 4usize;
+
+        let speaker = MlpBurnPolicy::<B>::new(vocab, vocab, 8, &device);
+        let listener = MlpBurnPolicy::<B>::new(1, vocab, 8, &device);
+        let policies = vec![speaker, listener];
+        let optimizers = build_optimizers::<MlpBurnPolicy<B>>(num_agents, 3e-4);
+
+        // comms_coef defaults to 0.0 (disabled).
+        let config = JointTrainerConfig {
+            num_agents,
+            rollout_steps: 16,
+            n_epochs: 1,
+            minibatch_size: 16,
+            ..Default::default()
+        };
+        assert_eq!(config.comms_coef, 0.0);
+        let mut trainer =
+            JointMultiAgentTrainer::new(policies, optimizers, config, device).unwrap();
+
+        let mut env = SignalingGame::with_hidden(vocab, 1);
+        let mut last_obs = env.reset_joint(None);
+        let mut rng = StdRng::seed_from_u64(11);
+        let rollout = trainer.collect_rollout(&mut env, &mut last_obs, &mut rng);
+        let stats = trainer
+            .update(&rollout, &mut rng, |_features: &[Tensor<B, 2>]| -> Option<Tensor<B, 1>> {
+                None
+            })
+            .expect("update should not error");
+
+        assert_eq!(stats.aux_loss, 0.0, "aux_loss must be 0 when comms is off and aux_fn is None");
     }
 
     /// Issue #239 fix #4: with a dedicated critic optimizer
