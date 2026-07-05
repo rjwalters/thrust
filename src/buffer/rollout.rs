@@ -19,6 +19,7 @@ pub use gae::{
     compute_advantages, compute_advantages_multi_agent, compute_advantages_partial,
     compute_mc_returns, compute_nstep_returns, normalize_advantages,
 };
+pub use recurrent::{RecurrentMinibatchIterator, RecurrentRolloutBatch, RecurrentRolloutBuffer};
 pub use sampling::{
     Minibatch, MinibatchIterator, generate_minibatch_indices, sample_minibatch, shuffle_indices,
     train_val_split,
@@ -28,6 +29,7 @@ pub use vtrace::compute_vtrace_advantages;
 
 // Submodules
 mod gae;
+mod recurrent;
 mod sampling;
 mod storage;
 mod vtrace;
