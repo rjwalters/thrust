@@ -55,6 +55,8 @@ pub mod bucket_brigade_metrics;
 /// Bucket-brigade best-response improvability oracle (issue #259).
 #[cfg(feature = "env-bucket-brigade")]
 pub mod bucket_brigade_oracle;
+/// Fixed-vocab agent-to-agent communication (comms) surface (issue #274).
+pub mod comms;
 /// Multi-agent environment trait.
 pub mod environment;
 /// Synchronized joint multi-agent PPO trainer.
@@ -66,6 +68,7 @@ pub mod nfsp;
 /// Policy-Space Response Oracles (PSRO) meta-game trainer (issue #107).
 pub mod psro;
 
+pub use comms::{AgentMessage, CommunicatingEnvironment, Delivery};
 pub use environment::{MultiAgentEnvironment, MultiAgentResult};
 pub use joint::{
     JointEnv, JointMultiAgentTrainer, JointPolicy, JointRollout, JointStats, JointStepResult,
