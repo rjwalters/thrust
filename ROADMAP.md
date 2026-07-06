@@ -1,6 +1,6 @@
 # Thrust Development Roadmap
 
-**Last Updated**: 2026-06-19
+**Last Updated**: 2026-07-06 (post-v0.3.0)
 
 ## Vision
 
@@ -35,6 +35,12 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
 - [x] PPO, A2C, DQN (Double-DQN + Polyak), SAC (continuous control)
 - [x] Behavioral cloning (supervised imitation from demonstrations)
 - [x] PSRO with α-rank meta-solver (N-player), NFSP (N-player, multi-discrete)
+- [x] Recurrent (LSTM) PPO — `LstmBurnPolicy` + `RecurrentRolloutBuffer` +
+      `RecurrentPPOTrainer`, validated on a FlickeringCartPole POMDP (v0.3.0)
+- [x] V-trace (IMPALA) off-policy correction + single-host async actor-learner
+      (2.1× synchronous throughput) (v0.3.0)
+- [x] Multi-agent communication Phases 1–2: `CommunicatingEnvironment` +
+      SignalingGame + joint-trainer comms hook (v0.3.0)
 
 **WASM Infrastructure (Partial)**
 - [x] Pure Rust inference module (no external deps)
@@ -55,36 +61,42 @@ Thrust aims to be the **first production-ready RL library in pure Rust** with:
    GPU host time on alc-2; the *infrastructure* is shipped, the multi-hour
    *runs* are pending an operator. This is the single highest-value open item.
 
-2. **WASM Visualization** — pure Rust inference is ready; remaining work is the
-   `wasm-bindgen` bindings and a browser demo. Files: needs `src/wasm.rs`.
+2. **Multi-agent communication Phase 3** — differentiable (Gumbel-softmax)
+   comms channel; Phases 1–2 shipped in v0.3.0 (issue #276, deferred until
+   the discrete-channel results motivate it).
+
+3. **Multi-host distributed training** — design note shipped
+   (`docs/DISTRIBUTED_TRAINING_DESIGN.md`); benchmarks and coordination
+   blocked on workloads that saturate a single host (issue #281).
+
+4. **Mixed-precision (FP16/BF16) training** — feasibility spike done
+   (`docs/FP16_FEASIBILITY.md`); blocked upstream on Burn/Metal bf16 matmul
+   kernels (issues #270/#272).
 
 ### ✅ Recently completed
-- **ROADMAP Milestone 6 (Algorithm Expansion) — DONE.** A2C and behavioral
-  cloning landed (epics #150, #161), joining DQN/SAC/PSRO/NFSP.
-- **Benchmark coverage (epic #159)** — DQN + SAC added to the throughput harness;
-  learning-curve CSV across all single-agent examples.
-- **MountainCarContinuous (epic #163)** — second in-tree continuous-control
-  benchmark; SAC reaches the +90 published solved bar.
+- **v0.3.0 (2026-07-06)** — recurrent (LSTM) PPO stack validated on a
+  FlickeringCartPole POMDP, V-trace, async actor-learner, comms Phases 1–2,
+  k* phase-diagram research artifact, `max_grad_norm` behavior fix.
+- **v0.2.0 (2026-06-30)** — PSRO/NFSP research release; the Bucket Brigade
+  no-convergence question answered (negative, root-caused) in
+  `docs/research/`.
+- **WASM demo shipped** — live at
+  [rjwalters.github.io/thrust](https://rjwalters.github.io/thrust/) with
+  CartPole, Snake, Pong, bandit, and a training dashboard.
 
 ## Roadmap
 
 ### Q4 2025 - Foundation
 
-#### Milestone 1: Multi-Agent Training Working ⏳
-**Goal**: Train 4 agents simultaneously in CartPole
+#### Milestone 1: Multi-Agent Training Working ✅ (superseded design)
+**Goal**: Train multiple agents simultaneously
 
-**Tasks**:
-- [ ] Add crossbeam dependency to Cargo.toml
-- [ ] Define Experience and PolicyUpdate message types
-- [ ] Implement GameSimulator::run() with channels
-- [ ] Implement PolicyLearner::train() with PPO loop
-- [ ] Create examples/train_multi_cartpole.rs
-- [ ] Benchmark: 4 agents @ 800+ steps/sec on GPU
-- [ ] Document multi-agent API
-
-**Deliverable**: Working multi-agent training demo
-
-**Estimated Effort**: 2-3 days
+Shipped via a different design than originally sketched here: per-agent
+PPO learners over a shared env (`train_snake_multi_v2`), the
+`JointMultiAgentTrainer`, and — in v0.3.0 — a crossbeam-channel async
+actor-learner (`train_cartpole_async`). The original
+GameSimulator/PolicyLearner message-passing sketch was never built and is
+retained only in `docs/MULTI_AGENT_DESIGN.md` for the record.
 
 ---
 
@@ -104,23 +116,15 @@ the validation run is the remaining piece (#134).*
 
 ---
 
-#### Milestone 3: WASM Web Demo 🌐
+#### Milestone 3: WASM Web Demo ✅
 **Goal**: Interactive web demo of trained CartPole policy
 
-**Tasks**:
-- [x] Weight export to JSON (`ExportedModel` / universal inference format) — the
-      pre-Burn `tch` weight-extraction blocker is gone; Burn modules serialize directly
-- [ ] Add wasm-bindgen to Cargo.toml with features
-- [ ] Create src/wasm.rs with WASM bindings
-- [ ] Implement CartPole environment in pure Rust (already env-trait native)
-- [ ] Create web/index.html with Canvas rendering
-- [ ] Create web/cartpole.js for game loop
-- [ ] Build with wasm-pack
-- [ ] Deploy to GitHub Pages or similar
+**Tasks**: all done ✅ — `src/wasm.rs` bindings, the React app under `web/`,
+wasm-pack build in CI, and GitHub Pages deployment.
 
-**Deliverable**: Live web demo at https://your-site.com/cartpole
-
-**Estimated Effort**: 3-4 days
+**Deliverable**: live at
+[rjwalters.github.io/thrust](https://rjwalters.github.io/thrust/) (CartPole,
+Snake, Pong, bandit, training dashboard).
 
 ---
 
@@ -152,8 +156,9 @@ the validation run is the remaining piece (#134).*
 
 #### Milestone 7: Performance Optimization
 - [x] Benchmark suite (criterion throughput harness for PPO/A2C/DQN/SAC; see `benches/trainer_throughput.rs`)
-- [ ] Multi-GPU data parallelism
-- [ ] Mixed precision training (FP16)
+- [x] Async actor-learner (single-host; 2.1× synchronous throughput, v0.3.0)
+- [ ] Multi-GPU data parallelism (design note: `docs/DISTRIBUTED_TRAINING_DESIGN.md`; blocked on workloads, #281)
+- [ ] Mixed precision training (FP16) — blocked upstream on Burn/Metal bf16 kernels (#270/#272; spike: `docs/FP16_FEASIBILITY.md`)
 - [ ] JIT compilation for environments
 - [ ] CUDA kernel optimization
 - [x] GPU-backend (wgpu) training benchmarks vs the CPU NdArray baseline — measured on RTX 4090; CPU wins 4.4–9.5× at current small-net sizes (see `docs/BURN_BACKENDS.md` → "Measured CPU-vs-GPU throughput")
@@ -162,13 +167,13 @@ the validation run is the remaining piece (#134).*
 
 ### Q2 2026 - Production Ready
 
-#### Milestone 8: Library Polish
-- [ ] Comprehensive documentation
+#### Milestone 8: Library Polish (Mostly Complete ✅)
+- [x] Comprehensive documentation (docs.rs, warning-free)
 - [ ] Tutorial series
-- [ ] Example gallery
+- [x] Example gallery ([docs/EXAMPLES.md](docs/EXAMPLES.md), 18 examples)
 - [ ] Performance benchmarks vs Python
-- [ ] CI/CD pipeline
-- [ ] Publish to crates.io
+- [x] CI/CD pipeline (tests on Linux+macOS, clippy, fmt, docs, security audit, publish dry-run, Pages deploy)
+- [x] Publish to crates.io (v0.1.0 2026-06-08 → v0.3.0 2026-07-06)
 
 #### Milestone 9: Research Features
 - [ ] Curriculum learning
@@ -179,33 +184,27 @@ the validation run is the remaining piece (#134).*
 
 ## Priority Queue (Next Tasks)
 
-With Milestone 6 (algorithm expansion) complete and the benchmark harness in
-place, the meaningful next moves are:
+As of v0.3.0 the entire actionable backlog has shipped; every open item is
+blocked on a scope decision, an external event, or larger workloads:
 
-1. **Research validation on alc-2** (operator-gated, issue #134)
-   - Long-budget PSRO/NFSP training on the Bucket Brigade no-convergence cells
-   - Answers the open research question (do PSRO+α-rank / NFSP beat PPO there?)
-   - Infrastructure is shipped; needs GPU host time + manual artifact promotion.
-     The single highest-value open item — not automatable.
+1. **Multi-agent comms Phase 3** (#276) — differentiable Gumbel-softmax
+   channel; deferred until the discrete-channel (Phases 1–2) results
+   motivate it.
 
-2. **WASM demo** (Milestone 3)
-   - `wasm-bindgen` bindings + browser inference + a Canvas CartPole demo
-   - Pure-Rust inference path is already done; no weight-export blocker remains
-     post-Burn. Highest-visibility "train in Rust, deploy to web" showcase.
+2. **Multi-host distributed training** (#281) — design note shipped; blocked
+   until single-host workloads saturate (the async actor-learner covers the
+   single-host case today).
 
-3. **GPU-backend benchmarking** (Milestone 7) — ✅ done for `wgpu`
-   - Measured on an RTX 4090: CPU NdArray wins every group by 4.4–9.5× at the
-     harness's small-net sizes (kernel-launch/transfer overhead dominates). See
-     `docs/BURN_BACKENDS.md`. Remaining: a `cuda`-toolkit run, and re-measuring
-     once larger-net / high-parallelism workloads exist.
+3. **Mixed precision (FP16/BF16)** (#270/#272) — blocked upstream on
+   Burn/Metal bf16 matmul kernels; cheapest path is waiting for a
+   Burn/cubecl release.
 
-4. **More environments** (Milestone 5)
-   - The next env adds breadth: a discrete grid world, an Atari/ALE binding, or
-     MuJoCo via `mujoco-rs` (now that SAC + two continuous envs are proven).
+4. **A real memory-hard environment suite** — FlickeringCartPole proved the
+   recurrent stack; T-maze or occluded-observation envs would deepen the
+   POMDP story.
 
-5. **Library polish toward crates.io** (Milestone 8)
-   - The algorithm surface is now broad enough to be worth packaging: API docs,
-     an example gallery, and a first published release.
+5. **More environments** (Milestone 5) — Atari/ALE bindings or MuJoCo via
+   `mujoco-rs` for breadth beyond the in-tree envs.
 
 ## Dependencies & Blockers
 
@@ -276,5 +275,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 - [MULTI_AGENT_DESIGN.md](docs/MULTI_AGENT_DESIGN.md) - Multi-agent architecture
 - [WASM_ROADMAP.md](docs/WASM_ROADMAP.md) - WASM visualization plan
-- [VERSIONS.md](VERSIONS.md) - Version compatibility matrix
-- [PROJECT_STATUS.md](PROJECT_STATUS.md) - Detailed status updates
+- [CHANGELOG.md](CHANGELOG.md) - Release history and per-version status

@@ -72,15 +72,16 @@ thrust/
 
 ## 🎯 Current Status
 
-**Phase 1: Foundation** - Building core infrastructure
-
-We're currently implementing:
-- ✅ Project structure and module layout
-- 🔄 CartPole environment
-- 🔄 Experience buffers
+**v0.3.0 — published on [crates.io](https://crates.io/crates/thrust-rl).**
+The training loop is fully shipped: five single-agent algorithms (PPO, A2C,
+DQN, SAC, BC) plus recurrent (LSTM) PPO and an async actor-learner, two
+multi-agent meta-solvers (PSRO, NFSP), WASM inference, and a
+[live browser demo](https://rjwalters.github.io/thrust/). See
+[CHANGELOG.md](../CHANGELOG.md) for release history and
+[ROADMAP.md](../ROADMAP.md) for what's next.
 - 🔄 PPO training loop
 
-See [WORKPLAN.md](../WORKPLAN.md) for the complete roadmap.
+See [ROADMAP.md](../ROADMAP.md) for the complete roadmap.
 
 ## 👥 How to Contribute
 
@@ -106,10 +107,14 @@ See [WORKPLAN.md](../WORKPLAN.md) for the complete roadmap.
 ## ❓ FAQ
 
 ### When will v1.0 be released?
-Target: Q2 2025 (see [WORKPLAN.md](../WORKPLAN.md))
+No date committed. Per the pre-1.0 policy ([CHANGELOG.md](../CHANGELOG.md)),
+breaking API changes land in MINOR bumps until the public API stabilizes;
+1.0 comes when it stops moving.
 
 ### Can I use Thrust in production?
-Not yet - we're in pre-alpha. Follow development and we'll announce when production-ready.
+The crate is published and the API is documented and tested, but pre-1.0
+semantics apply: MINOR releases may break the API. Pin a version and read the
+CHANGELOG when upgrading.
 
 ### How can I help?
 See [CONTRIBUTING.md](../CONTRIBUTING.md) and check issues labeled `help-wanted`.
@@ -133,6 +138,6 @@ Please [open an issue](https://github.com/yourusername/thrust/issues/new/choose)
 
 ---
 
-**Ready to dive in?** Check out [WORKPLAN.md](../WORKPLAN.md) for areas where we need help!
+**Ready to dive in?** Check out [ROADMAP.md](../ROADMAP.md) and the open issues for areas where we need help!
 
 *Built with 🦀 Rust and ❤️ for reinforcement learning*

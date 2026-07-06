@@ -4,7 +4,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/thrust-rl.svg)](https://crates.io/crates/thrust-rl)
 [![Documentation](https://docs.rs/thrust-rl/badge.svg)](https://docs.rs/thrust-rl)
-[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 
 > **Give your agents some thrust** 🚀
 
@@ -74,7 +74,7 @@ development schedule.
 - [x] Universal inference system (JSON model format)
 - [x] Complete WASM bindings (`src/wasm.rs`)
 - [x] Browser-based demos ([live](https://rjwalters.github.io/thrust/): CartPole, Snake, Pong, bandit)
-- [ ] Multi-agent communication channels
+- [x] Multi-agent communication channels (Phases 1–2: `CommunicatingEnvironment` + SignalingGame + trainer hook; differentiable Phase 3 deferred)
 
 ### Phase 3: Features
 - [x] SAC for continuous control (twin critics, auto-entropy, Polyak targets)
@@ -82,15 +82,16 @@ development schedule.
 - [x] A2C (Advantage Actor-Critic)
 - [x] Behavioral cloning / imitation learning
 - [x] Prioritized experience replay (sum-tree buffer; `DqnConfig::prioritized_replay`)
-- [ ] LSTM policy support
-- [ ] V-trace importance sampling
-- [ ] Mixed precision training
-- [ ] Distributed training
+- [x] LSTM policy support (recurrent PPO validated on a FlickeringCartPole POMDP)
+- [x] V-trace importance sampling (IMPALA; corrects staleness in the async actor-learner)
+- [x] Async actor-learner (single-host, 2.1× synchronous throughput)
+- [ ] Mixed precision training (blocked on upstream Burn/Metal bf16 kernels)
+- [ ] Distributed training (multi-host; design note in `docs/DISTRIBUTED_TRAINING_DESIGN.md`)
 
 ### Phase 4: Demo Site (Live ✅)
 - [x] WebAssembly policy compilation
 - [x] Browser inference engine
-- [ ] Live training dashboard
+- [x] Live training dashboard (recorded CartPole curves)
 - [x] Public demo deployment ([rjwalters.github.io/thrust](https://rjwalters.github.io/thrust/))
 
 ## 🏗️ Architecture
@@ -116,6 +117,9 @@ development schedule.
 ## 🎮 Environments
 
 - **CartPole** ✅ - Classic control benchmark (solved: 301.6 avg reward)
+- **FlickeringCartPole** ✅ - POMDP variant (whole-observation dropout, Hausknecht & Stone); the recurrent-PPO memory benchmark
+- **MaskedCartPole** ✅ - Velocity-masked variant (kept as a documented negative result: not actually a POMDP)
+- **GridWorld** ✅ - Discrete navigation benchmark (DQN)
 - **PendulumSwingUp** ✅ - Continuous-control benchmark (Gym `Pendulum-v1`; SAC's reference env)
 - **MountainCarContinuous** ✅ - Deceptive-reward continuous-control benchmark (SAC)
 - **ContinuousLqr** ✅ - Linear-quadratic regulator (continuous-action trait existence proof)
@@ -123,12 +127,13 @@ development schedule.
 - **Pong** ✅ - Two-player competitive self-play
 - **SimpleBandit** ✅ - Contextual multi-armed bandits
 - **Matching Pennies** ✅ - Two-player and N-player zero-sum (PSRO/NFSP smoke tests)
+- **SignalingGame** ✅ - Sender/receiver communication reference env (`CommunicatingEnvironment`)
 - **Bucket Brigade** ✅ - Cooperative multi-agent coordination (Slepian-Wolf MARL adapter)
 - More coming soon!
 
 ## 🧠 Algorithms
 
-- **PPO** ✅ - Proximal Policy Optimization (on-policy, actor-critic; single- and multi-agent)
+- **PPO** ✅ - Proximal Policy Optimization (on-policy, actor-critic; single- and multi-agent), plus a **recurrent (LSTM) variant** for POMDPs and an **async actor-learner** with **V-trace** off-policy correction
 - **A2C** ✅ - Advantage Actor-Critic (synchronous, on-policy; un-clipped policy gradient + MSE value, one update per rollout)
 - **DQN** ✅ - Deep Q-Network (off-policy, replay buffer + target network), including **Double-DQN** target computation and optional **Polyak (soft) target updates**
 - **SAC** ✅ - Soft Actor-Critic (off-policy, continuous control; twin critics, automatic entropy tuning, Polyak target updates)
@@ -172,9 +177,10 @@ cargo run --release --features "training,cuda" --example train_simple_bandit
 
 ### More Examples
 
-The bandit trainer is just one of **twelve** runnable examples. See the
+The bandit trainer is just one of **eighteen** runnable examples. See the
 **[Example Gallery](docs/EXAMPLES.md)** for the full set — a trainer per
-algorithm (PPO, A2C, DQN, SAC, BC, PSRO, NFSP) across all environments, with
+algorithm (PPO, recurrent PPO, A2C, DQN, SAC, BC, PSRO, NFSP) across all
+environments, plus the async actor-learner and research harnesses, with
 copy-paste run commands and the env vars each one honors.
 
 ### Library Usage

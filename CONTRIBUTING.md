@@ -268,13 +268,10 @@ thrust/
 
 ## 🎯 Current Priorities
 
-See [WORKPLAN.md](WORKPLAN.md) for the complete roadmap. We're currently in **Phase 1: Foundation**.
-
-### High Priority (Phase 1)
-- [ ] CartPole environment implementation
-- [ ] Experience buffer with CPU backend
-- [ ] PPO training loop
-- [ ] Basic testing framework
+See [ROADMAP.md](ROADMAP.md) for the current roadmap and
+[CHANGELOG.md](CHANGELOG.md) for what has already shipped. As of v0.3.0 the
+foundation phases are complete; active work is multi-agent communication
+(Phase 3), multi-host distributed training, and mixed-precision support.
 
 ### Help Wanted
 Check issues labeled `good-first-issue` or `help-wanted` for specific tasks.
@@ -402,7 +399,6 @@ Violations may result in temporary or permanent ban from the project.
 ## 🎉 Recognition
 
 Contributors will be:
-- Listed in [CONTRIBUTORS.md](CONTRIBUTORS.md)
 - Credited in release notes
 - Mentioned in blog posts (for major contributions)
 - Given credit in relevant documentation

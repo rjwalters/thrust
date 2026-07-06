@@ -44,7 +44,8 @@ exclude = [
     # Project planning docs that aren't consumed by `cargo doc`.
     "docs/WASM_ROADMAP.md",
     "docs/MULTI_AGENT_DESIGN.md",
-    "VERSIONS.md",
+    # Superseded internal docs — kept in-repo for the record, noise on crates.io.
+    "docs/archive/**",
     "package.json",
 ]
 

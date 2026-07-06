@@ -77,3 +77,6 @@ alc_results_*/
 
 # Local libtorch C++ distribution (244MB; pre-Burn export experiments)
 /libtorch/
+
+# wasm-pack output at repo root (generated; web demo consumes web/public copies)
+/pkg/

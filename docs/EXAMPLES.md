@@ -1,6 +1,6 @@
 # 🎮 Example Gallery
 
-Thrust ships **twelve** runnable training/evaluation examples under
+Thrust ships **eighteen** runnable training/evaluation examples under
 [`examples/games/`](../examples/games). Each one is a self-contained `[[example]]`
 target registered in [`Cargo.toml`](../Cargo.toml), so you can run any of them
 with a single `cargo run` command — no setup beyond a Rust toolchain.
@@ -25,6 +25,10 @@ the feature list, e.g. `--features "training,wgpu"`. See
 | [`train_cartpole_modern`](#train_cartpole_modern) | PPO | CartPole | Single-agent |
 | [`train_cartpole_dqn`](#train_cartpole_dqn) | DQN (Double-DQN) | CartPole | Single-agent |
 | [`train_cartpole_a2c`](#train_cartpole_a2c) | A2C | CartPole | Single-agent |
+| [`train_cartpole_async`](#train_cartpole_async) | PPO (async actor-learner, V-trace) | CartPole | Single-agent |
+| [`recurrent_ppo_flickering_cartpole`](#recurrent_ppo_flickering_cartpole) | Recurrent PPO (LSTM) vs MLP | FlickeringCartPole | POMDP contrast |
+| [`recurrent_ppo_masked_cartpole`](#recurrent_ppo_masked_cartpole) | Recurrent PPO (LSTM) vs MLP | MaskedCartPole | Negative result |
+| [`train_dqn_grid_world`](#train_dqn_grid_world) | DQN | GridWorld | Single-agent |
 | [`train_bc_cartpole`](#train_bc_cartpole) | Behavioral Cloning | CartPole | Imitation |
 | [`train_sac`](#train_sac) | SAC | PendulumSwingUp | Continuous control |
 | [`train_sac_mountain_car`](#train_sac_mountain_car) | SAC | MountainCarContinuous | Continuous control |
@@ -33,6 +37,8 @@ the feature list, e.g. `--features "training,wgpu"`. See
 | [`eval_pong`](#eval_pong) | Evaluation / model export | Pong | Tooling |
 | [`train_psro`](#train_psro) | PSRO + α-rank | BucketBrigade | Multi-agent (feature-gated) |
 | [`train_nfsp`](#train_nfsp) | NFSP | BucketBrigade | Multi-agent (feature-gated) |
+| [`train_br_probe`](#train_br_probe) | Single best-response A/B probe | BucketBrigade | Research (feature-gated) |
+| [`br_oracle`](#br_oracle) | Coalition improvability oracle (k*) | BucketBrigade | Research (feature-gated) |
 
 ---
 
@@ -135,6 +141,74 @@ EXPERT_TIMESTEPS=200000 \
 ```
 
 Source: [`examples/games/cartpole/train_bc_cartpole.rs`](../examples/games/cartpole/train_bc_cartpole.rs)
+
+### `train_cartpole_async`
+
+Single-host **async actor-learner** PPO on CartPole-v1: actor threads collect
+rollouts over crossbeam channels while the learner updates concurrently,
+reaching the learning bar at ~2.1× synchronous throughput. Optional **V-trace**
+(IMPALA) off-policy correction compensates for policy staleness in the queued
+rollouts.
+
+```bash
+cargo run --release --features training --example train_cartpole_async
+```
+
+**Environment variables:** `TOTAL_TIMESTEPS`, `NUM_ACTORS`, `USE_VTRACE`,
+`MAX_LEAD_STEPS`, `BROADCAST_EVERY`, `GAE_LAMBDA`, `SEED`.
+
+```bash
+NUM_ACTORS=4 USE_VTRACE=1 \
+    cargo run --release --features training --example train_cartpole_async
+```
+
+Source: [`examples/games/cartpole/train_cartpole_async.rs`](../examples/games/cartpole/train_cartpole_async.rs)
+
+### `recurrent_ppo_flickering_cartpole`
+
+The **memory benchmark**: recurrent (LSTM) PPO vs a feedforward MLP baseline on
+`FlickeringCartPole`, a POMDP where the whole observation is zeroed with
+probability `p = 0.5` per step (Hausknecht & Stone). Memory is load-bearing by
+construction — the LSTM solves the env (peak ~484/500) while the memoryless MLP
+plateaus far below (~176). Both arms get identical training treatment.
+
+```bash
+cargo run --release --features training --example recurrent_ppo_flickering_cartpole
+```
+
+**Environment variables:** `TOTAL_TIMESTEPS` (per arm), `FLICKER_PROB`
+(default `0.5`).
+
+Source: [`examples/games/cartpole/recurrent_ppo_flickering_cartpole.rs`](../examples/games/cartpole/recurrent_ppo_flickering_cartpole.rs)
+
+### `recurrent_ppo_masked_cartpole`
+
+A documented **negative result**, kept runnable on purpose: the same
+LSTM-vs-MLP contrast on `MaskedCartPole` (velocity components zeroed).
+Empirically this is *not* a POMDP — a reactive `[x, θ]` controller solves it
+outright, and the MLP beats the LSTM. Useful as a cautionary baseline when
+designing memory tasks.
+
+```bash
+cargo run --release --features training --example recurrent_ppo_masked_cartpole
+```
+
+**Environment variables:** `TOTAL_TIMESTEPS` (per arm).
+
+Source: [`examples/games/cartpole/recurrent_ppo_masked_cartpole.rs`](../examples/games/cartpole/recurrent_ppo_masked_cartpole.rs)
+
+### `train_dqn_grid_world`
+
+DQN on the discrete `GridWorld` navigation env — a second off-policy reference
+alongside the CartPole DQN example.
+
+```bash
+cargo run --release --features training --example train_dqn_grid_world
+```
+
+**Environment variables:** `TOTAL_TIMESTEPS`, `CURVE_CSV`.
+
+Source: [`examples/games/grid_world/train_dqn_grid_world.rs`](../examples/games/grid_world/train_dqn_grid_world.rs)
 
 ---
 
@@ -302,3 +376,34 @@ TOTAL_ITERATIONS=20 ROLLOUT_STEPS=4096 CELL=beta01 \
 ```
 
 Source: [`examples/games/bucket_brigade/train_nfsp.rs`](../examples/games/bucket_brigade/train_nfsp.rs)
+
+### `train_br_probe`
+
+Research harness, not a tutorial: a standalone **single best-response A/B
+probe** for fast critic-fit investigation on the Bucket Brigade cells
+(explained-variance diagnostics without a full PSRO/NFSP outer loop).
+
+```bash
+cargo run --release --features "training,env-bucket-brigade" --example train_br_probe
+```
+
+**Environment variables:** `CELL`, `ITERATIONS`, `ROLLOUT_STEPS`,
+`BR_TRAIN_STEPS`, `BR_REWARD_SCALE`, `BR_MAX_MINIBATCHES_PER_EPOCH`,
+`CRITIC_LR`, `VF_COEF`, `SEED`.
+
+Source: [`examples/games/bucket_brigade/train_br_probe.rs`](../examples/games/bucket_brigade/train_br_probe.rs)
+
+### `br_oracle`
+
+The non-PPO **coalition improvability oracle**: scores scripted/searched
+policies against frozen-uniform opponents to measure the k* coalition-size
+threshold, and can sweep raw `(beta, kappa, c)` grids to produce the full
+phase-diagram artifact (`docs/research/2026-07-kstar-phase-diagram.md`).
+
+```bash
+cargo run --release --features "training,env-bucket-brigade" --example br_oracle
+```
+
+**Environment variables:** `PHASE`, `CELL` / `CELLS`, `K`, `ALPHA`, `OUT_DIR`.
+
+Source: [`examples/games/bucket_brigade/br_oracle.rs`](../examples/games/bucket_brigade/br_oracle.rs)

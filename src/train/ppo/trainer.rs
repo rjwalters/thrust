@@ -10,8 +10,7 @@
 //! Burn's `Optimizer<M, B>` is move-through: every gradient step
 //! consumes the module by value and returns the updated copy. Phase
 //! 1's scout (#78) confirmed this is the **single biggest** structural
-//! divergence between the two backends — see
-//! `docs/BURN_MIGRATION_PHASE1_REPORT.md` friction point #1.
+//! divergence between the two backends (Burn-migration friction point #1).
 //!
 //! The Burn trainer therefore *owns* the policy module via an
 //! `Option<P>` field and swaps it through the optimizer on every
