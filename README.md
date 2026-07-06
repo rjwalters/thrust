@@ -33,18 +33,19 @@ Our goal is to create the fastest, safest, and most ergonomic reinforcement lear
 
 ## 📦 Project Status
 
-**v0.2.0 — published on [crates.io](https://crates.io/crates/thrust-rl).** The
+**v0.3.0 — published on [crates.io](https://crates.io/crates/thrust-rl).** The
 full loop is shipped: train in Rust, export the policy, and run the trained
 agent in the browser via WebAssembly. That covers five single-agent algorithms
-(PPO, A2C, DQN, SAC, BC), two multi-agent meta-solvers (PSRO, NFSP), nine
-environments, twelve runnable [examples](docs/EXAMPLES.md), WASM bindings
-(`src/wasm.rs`), and a [live demo](https://rjwalters.github.io/thrust/) with
-CartPole, Snake, Pong, and a contextual-bandit playground. The public API is
-documented on [docs.rs](https://docs.rs/thrust-rl), warning-free, and packaged
-for crates.io.
+(PPO, A2C, DQN, SAC, BC) plus recurrent (LSTM) PPO with V-trace off-policy
+correction and an async actor-learner, two multi-agent meta-solvers (PSRO,
+NFSP), a growing environment zoo (including POMDP variants), runnable
+[examples](docs/EXAMPLES.md), WASM bindings (`src/wasm.rs`), and a
+[live demo](https://rjwalters.github.io/thrust/) with CartPole, Snake, Pong,
+and a contextual-bandit playground. The public API is documented on
+[docs.rs](https://docs.rs/thrust-rl), warning-free, and packaged for crates.io.
 
-Active work is advanced algorithm features (LSTM policies, prioritized replay,
-distributed training) and long-budget multi-agent research validation (#134).
+Active work is multi-agent communication (Phase 3), distributed training, and
+mixed-precision support (blocked on upstream Burn/Metal kernels).
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes, [docs/RELEASING.md](docs/RELEASING.md)
 for the publish process, and [ROADMAP.md](ROADMAP.md) for the detailed
