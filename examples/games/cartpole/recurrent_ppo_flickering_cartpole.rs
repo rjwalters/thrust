@@ -1,46 +1,53 @@
-//! Recurrent PPO on velocity-masked CartPole — a DOCUMENTED NEGATIVE RESULT.
+//! Recurrent PPO on flickering CartPole (a POMDP by construction).
 //!
-//! Phase 3 of the recurrent-policy epic (#262). This example trains an
+//! Phase 3 of the recurrent-policy epic (#262), re-scoped per issue #287. This
+//! end-to-end example is the learning-signal payoff for the whole recurrent
+//! stack: it trains an
 //! [`LstmBurnPolicy`](thrust_rl::policy::lstm::LstmBurnPolicy) with
 //! [`RecurrentPPOTrainer`](thrust_rl::train::ppo::RecurrentPPOTrainer) on
-//! [`MaskedCartPole`](thrust_rl::env::MaskedCartPole) — CartPole with the two
-//! velocity coordinates hidden — and contrasts it against a feedforward
+//! [`FlickeringCartPole`](thrust_rl::env::FlickeringCartPole) — CartPole whose
+//! 4-D observation is blanked to zeros with probability `p` (default 0.5) — and
+//! contrasts it against a feedforward
 //! [`MlpBurnPolicy`](thrust_rl::policy::mlp::MlpBurnPolicy) baseline on the
-//! *same* masked observation.
+//! *same* flickering observation stream.
 //!
-//! # The result: velocity-masking is NOT a POMDP
+//! # Why flickering (and not velocity-masking)
 //!
-//! `MaskedCartPole` exposes only `[cart_position, pole_angle]`. The hypothesis
-//! was that this is non-Markov and that recurrence would therefore beat a
-//! memoryless policy. A real 500k-step run **disproved** it: a reactive
-//! angle/position feedback controller is memoryless yet balances the pole for
-//! hundreds of steps, so the feedforward MLP *solves* masked CartPole and in
-//! fact **beats** the LSTM (measured MLP ~324 vs LSTM ~222, seed 0). Masking
-//! velocities does not make memory load-bearing — the reactive-control loophole
-//! remains open.
+//! An earlier version of this example masked CartPole's two velocity
+//! coordinates. A real 500k-step run **disproved** that as a POMDP: a
+//! memoryless reactive controller on `[x, theta]` solved it and actually *beat*
+//! the LSTM (MLP mean return ~324 vs LSTM ~222). Masking velocities does not
+//! make memory load-bearing, because a reactive angle/position feedback loop
+//! balances CartPole on its own. `MaskedCartPole` is retained in the crate as a
+//! documented negative result.
 //!
-//! This example is retained as the empirical record of that finding. For the
-//! POMDP where memory genuinely wins, see the sibling example
-//! `recurrent_ppo_flickering_cartpole`, which blanks the entire observation
-//! with probability `p` (the Hausknecht & Stone 2015 flickering protocol) and
-//! makes memory load-bearing by construction.
+//! Flickering closes that loophole. This is the canonical Atari-POMDP protocol
+//! from Hausknecht & Stone (2015): with probability `p` the entire observed
+//! frame is blanked to zeros. A feedforward policy cannot act on a zeroed frame
+//! — it has no state to fall back on. A recurrent policy carries its hidden
+//! state across the blanked gap and integrates the intermittent stream over
+//! time. Memory is load-bearing **by construction**.
 //!
 //! # Usage
 //!
 //! ```bash
 //! # Run both (LSTM, then feedforward baseline) and print the contrast:
-//! cargo run --example recurrent_ppo_masked_cartpole --features training --release
+//! cargo run --example recurrent_ppo_flickering_cartpole --features training --release
 //!
 //! # Run just one arm:
-//! cargo run --example recurrent_ppo_masked_cartpole --features training --release -- lstm
-//! cargo run --example recurrent_ppo_masked_cartpole --features training --release -- baseline
+//! cargo run --example recurrent_ppo_flickering_cartpole --features training --release -- lstm
+//! cargo run --example recurrent_ppo_flickering_cartpole --features training --release -- baseline
 //! ```
 //!
-//! Override the per-arm step budget with `TOTAL_TIMESTEPS` (default 500k).
+//! Override the per-arm step budget with `TOTAL_TIMESTEPS` (default 500k) and
+//! the flicker probability with `FLICKER_PROB` (default 0.5).
+
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
 use burn::{
     backend::Autodiff,
+    grad_clipping::GradientClippingConfig,
     nn::LstmState,
     optim::AdamConfig,
     tensor::{Int, Tensor, TensorData, activation},
@@ -48,7 +55,7 @@ use burn::{
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use thrust_rl::{
     buffer::rollout::RecurrentRolloutBuffer,
-    env::{Environment, SpaceType, masked_cartpole::MaskedCartPole, pool::EnvPool},
+    env::{Environment, SpaceType, flickering_cartpole::FlickeringCartPole, pool::EnvPool},
     policy::{
         lstm::{LstmBurnConfig, LstmBurnPolicy},
         mlp::{BurnActivation, MlpBurnConfig, MlpBurnPolicy},
@@ -66,20 +73,62 @@ const NUM_ENVS: usize = 16;
 const NUM_STEPS: usize = 128;
 const HIDDEN_DIM: usize = 64;
 const DEFAULT_TIMESTEPS: usize = 500_000;
+const DEFAULT_FLICKER_PROB: f64 = 0.5;
 /// LSTM base learning rate; annealed linearly toward a small floor over the
-/// run (the masked POMDP overshoots late, so annealing stabilizes the final
-/// policy above the solved bar).
-const LSTM_LR: f64 = 2e-3;
+/// run (the POMDP overshoots late, so annealing stabilizes the final policy
+/// above the solved bar).
+const LSTM_LR: f64 = 1.5e-3;
 /// Feedforward baseline learning rate (standard CartPole PPO value).
 const MLP_LR: f64 = 3e-4;
 const GAMMA: f32 = 0.99;
 const GAE_LAMBDA: f32 = 0.95;
-const N_EPOCHS: usize = 10;
+/// PPO epochs per rollout for the LSTM arm. Kept low (4): reusing each
+/// recurrent rollout many times amplifies off-policy drift through the hidden
+/// state and drives the late-stage oscillation seen at higher epoch counts.
+const N_EPOCHS: usize = 4;
 const ENVS_PER_MINIBATCH: usize = 4;
 const SEED: u64 = 0;
 
-/// CartPole-v1 "solved" bar; the LSTM must clear this on the masked POMDP.
+/// Train-time reward scale (both arms, symmetric). CartPole's +1/step reward
+/// gives discounted returns of magnitude ~40-60; against targets that large the
+/// PPO2 clipped value loss (`clip_range_vf = 0.2`) freezes the critic (it can
+/// move at most ~0.2 per rollout iteration — measured explained_var ≈ 0 over an
+/// entire 500k run), while *disabling* the clip lets the huge squared-error
+/// gradients blow out the shared LSTM trunk. Scaling rewards to O(1) returns
+/// fixes both at the source. Reported episode returns remain in RAW units.
+const REWARD_SCALE: f32 = 0.02;
+
+/// CartPole-v1 "solved" bar; the LSTM must clear this on the flickering POMDP.
 const SOLVED_THRESHOLD: f32 = 195.0;
+
+/// Outcome of one training arm.
+///
+/// `final_mean` is the mean return over the last ≤100 episodes at the end of
+/// training (noisy at episode granularity). `best_mean` is the peak of that
+/// moving average observed at any update during the run — the honest answer to
+/// "did the policy *reach* the solved bar within budget?", reported alongside
+/// the final value so nothing is hidden by end-of-run oscillation.
+#[derive(Clone, Copy)]
+struct ArmResult {
+    final_mean: f32,
+    best_mean: f32,
+}
+
+/// Build an [`EnvPool`] of [`FlickeringCartPole`]s with per-env seeded flicker
+/// streams (env `i` gets seed `base_seed*1000 + i`), so the schedule is
+/// reproducible yet decorrelated across the pool. Both training arms call this
+/// with the same `base_seed`, so they see the *identical* flicker stream — the
+/// only difference between the runs is the policy class (memory vs. no memory).
+fn make_pool(base_seed: u64, flicker_prob: f64) -> EnvPool<FlickeringCartPole> {
+    let ctr = AtomicU64::new(base_seed.wrapping_mul(1000));
+    EnvPool::new(
+        || {
+            let s = ctr.fetch_add(1, Ordering::Relaxed);
+            FlickeringCartPole::with_seed_and_probability(s, flicker_prob)
+        },
+        NUM_ENVS,
+    )
+}
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
@@ -88,77 +137,101 @@ fn main() -> Result<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_TIMESTEPS);
+    let flicker_prob: f64 = std::env::var("FLICKER_PROB")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_FLICKER_PROB);
 
     let mode = std::env::args().nth(1).unwrap_or_default();
 
-    tracing::info!("Recurrent PPO on MaskedCartPole (velocity-masked POMDP)");
+    tracing::info!("Recurrent PPO on FlickeringCartPole (Hausknecht & Stone POMDP)");
     tracing::info!("  backend         = NdArray<f32> + Autodiff (CPU)");
     tracing::info!("  num_envs        = {}", NUM_ENVS);
     tracing::info!("  num_steps       = {}", NUM_STEPS);
     tracing::info!("  hidden_dim      = {}", HIDDEN_DIM);
+    tracing::info!("  flicker_prob    = {}", flicker_prob);
     tracing::info!("  total_timesteps = {} per arm", total_timesteps);
     tracing::info!("------------------------------------------------------------");
 
-    let mut lstm_return: Option<f32> = None;
-    let mut ff_return: Option<f32> = None;
+    let mut lstm_return: Option<ArmResult> = None;
+    let mut ff_return: Option<ArmResult> = None;
 
     if mode != "baseline" {
         tracing::info!(">>> Training LSTM (recurrent) policy");
-        lstm_return = Some(run_lstm(total_timesteps)?);
+        lstm_return = Some(run_lstm(total_timesteps, flicker_prob)?);
     }
     if mode != "lstm" {
         tracing::info!(">>> Training feedforward (MLP) baseline");
-        ff_return = Some(run_feedforward(total_timesteps)?);
+        ff_return = Some(run_feedforward(total_timesteps, flicker_prob)?);
     }
 
     tracing::info!("============================================================");
-    tracing::info!("Results on MaskedCartPole (mean return of last ≤100 episodes):");
+    tracing::info!(
+        "Results on FlickeringCartPole (p={}, mean return of last ≤100 episodes):",
+        flicker_prob
+    );
     if let Some(r) = lstm_return {
-        tracing::info!("  LSTM (recurrent)     : {:.1}", r);
+        tracing::info!(
+            "  LSTM (recurrent)     : final {:.1}  best {:.1}",
+            r.final_mean,
+            r.best_mean
+        );
     }
     if let Some(r) = ff_return {
-        tracing::info!("  MLP  (feedforward)   : {:.1}", r);
+        tracing::info!(
+            "  MLP  (feedforward)   : final {:.1}  best {:.1}",
+            r.final_mean,
+            r.best_mean
+        );
     }
     if let (Some(l), Some(f)) = (lstm_return, ff_return) {
         tracing::info!("------------------------------------------------------------");
+        // Acceptance ("reaches >195 within budget") is answered by the peak of
+        // the moving average; the final value is reported too for honesty.
         tracing::info!(
-            "  LSTM {} solved bar ({}); feedforward {} it.",
-            if l > SOLVED_THRESHOLD {
+            "  LSTM {} solved bar ({}) within budget (peak {:.1}); final {:.1}.",
+            if l.best_mean > SOLVED_THRESHOLD {
                 "CLEARED"
             } else {
                 "MISSED"
             },
             SOLVED_THRESHOLD,
-            if f < SOLVED_THRESHOLD {
-                "did NOT clear"
-            } else {
-                "unexpectedly cleared"
-            },
+            l.best_mean,
+            l.final_mean,
         );
+        // Compare the peaks: the memoryless policy's ceiling vs the LSTM's.
+        let gap = l.best_mean - f.best_mean;
+        let rel = if l.best_mean > 0.0 {
+            100.0 * gap / l.best_mean
+        } else {
+            0.0
+        };
         tracing::info!(
-            "  Memory advantage: LSTM balances a POMDP the memoryless policy cannot ({:.1} vs {:.1}).",
-            l,
-            f
+            "  Memory advantage (peak): LSTM {:.1} vs feedforward {:.1} — gap {:.1} ({:.0}% of LSTM).",
+            l.best_mean,
+            f.best_mean,
+            gap,
+            rel,
         );
     }
 
     Ok(())
 }
 
-/// Train the recurrent LSTM policy on MaskedCartPole. Returns the final mean
-/// return over the last ≤100 completed episodes.
-fn run_lstm(total_timesteps: usize) -> Result<f32> {
+/// Train the recurrent LSTM policy on FlickeringCartPole. Returns the final and
+/// peak mean return over the last ≤100 completed episodes.
+fn run_lstm(total_timesteps: usize, flicker_prob: f64) -> Result<ArmResult> {
     let start = std::time::Instant::now();
     let device = Default::default();
 
-    let probe = MaskedCartPole::new();
+    let probe = FlickeringCartPole::new();
     let obs_dim = probe.observation_space().shape[0];
     let action_dim = match probe.action_space().space_type {
         SpaceType::Discrete(n) => n,
-        _ => panic!("MaskedCartPole must be discrete"),
+        _ => panic!("FlickeringCartPole must be discrete"),
     };
 
-    let mut env_pool = EnvPool::new(MaskedCartPole::new, NUM_ENVS);
+    let mut env_pool = make_pool(SEED, flicker_prob);
 
     let policy_config =
         LstmBurnConfig { hidden_dim: HIDDEN_DIM, ..Default::default() }.with_seed(SEED);
@@ -166,7 +239,13 @@ fn run_lstm(total_timesteps: usize) -> Result<f32> {
         LstmBurnPolicy::<Backend>::with_config(obs_dim, action_dim, policy_config, &device);
 
     let lr = LSTM_LR;
-    let inner_opt = AdamConfig::new().init();
+    // Global gradient-norm clip at the optimizer level: the PPO trainers do
+    // not themselves apply `max_grad_norm`, so honor it here (matches SAC's
+    // `build_adam`). Load-bearing for the recurrent trunk, where value-loss
+    // spikes otherwise wipe out the policy features.
+    let inner_opt = AdamConfig::new()
+        .with_grad_clipping(Some(GradientClippingConfig::Norm(0.5)))
+        .init();
     let burn_opt: BurnOptimizer<Backend, LstmBurnPolicy<Backend>, _> =
         BurnOptimizer::new(inner_opt, lr);
 
@@ -176,6 +255,9 @@ fn run_lstm(total_timesteps: usize) -> Result<f32> {
         .gamma(GAMMA as f64)
         .gae_lambda(GAE_LAMBDA as f64)
         .clip_range(0.2)
+        // With rewards scaled to O(1) returns (REWARD_SCALE) the standard 0.2
+        // value clip is meaningful relative to its targets and the critic can
+        // actually track them.
         .clip_range_vf(0.2)
         .vf_coef(0.5)
         .ent_coef(0.01)
@@ -188,11 +270,13 @@ fn run_lstm(total_timesteps: usize) -> Result<f32> {
     let num_updates = total_timesteps / (NUM_STEPS * NUM_ENVS);
     tracing::info!("  planned PPO updates: {}", num_updates);
 
-    // Standardize observations to ~unit scale. CartPole's raw observations are
-    // tiny early on (perturbations ~0.05); the LSTM's tanh gates squash such
-    // small inputs to near-zero features, starving both heads of gradient. A
-    // running per-dimension mean/std normalizer keeps every input coordinate
-    // at O(1), which is what makes the recurrent trunk learnable at all.
+    // Standardize the VISIBLE observations to ~unit scale. CartPole's raw
+    // observations are tiny early on (perturbations ~0.05); the LSTM's tanh
+    // gates squash such small inputs to near-zero features, starving both heads
+    // of gradient. A running per-dimension mean/std normalizer keeps every
+    // visible coordinate at O(1). Blanked (flickered) frames — all-zeros — are
+    // passed through as zeros and excluded from the running statistics, so the
+    // "no observation" signal stays a clean zero for both policies.
     let mut norm = ObsNormalizer::new(obs_dim);
 
     let mut buffer = RecurrentRolloutBuffer::new(NUM_STEPS, NUM_ENVS, obs_dim, HIDDEN_DIM);
@@ -218,6 +302,7 @@ fn run_lstm(total_timesteps: usize) -> Result<f32> {
     let mut last_c = vec![0.0_f32; NUM_ENVS * HIDDEN_DIM];
     let mut total_env_steps = 0usize;
     let mut last_mean = 0.0_f32;
+    let mut best_mean = 0.0_f32;
 
     for update in 0..num_updates {
         buffer.reset();
@@ -248,7 +333,9 @@ fn run_lstm(total_timesteps: usize) -> Result<f32> {
                     env,
                     &observations[env],
                     actions[env],
-                    r.reward,
+                    // Train on scaled rewards (see REWARD_SCALE); reporting
+                    // below stays in raw units.
+                    r.reward * REWARD_SCALE,
                     values_host[env],
                     log_probs[env],
                     r.terminated,
@@ -306,8 +393,8 @@ fn run_lstm(total_timesteps: usize) -> Result<f32> {
         buffer.compute_advantages(&last_values, GAMMA, GAE_LAMBDA);
 
         // Linear LR annealing (standard PPO): decay from `lr` toward a small
-        // floor over the run. The masked POMDP learns fast early but overshoots
-        // and oscillates late once the value function catches up; annealing the
+        // floor over the run. The POMDP learns fast early but overshoots and
+        // oscillates late once the value function catches up; annealing the
         // step size stabilizes the final policy above the solved bar.
         let frac = 1.0 - (update as f64) / (num_updates.max(1) as f64);
         trainer.set_learning_rate(lr * frac.max(0.05));
@@ -335,6 +422,7 @@ fn run_lstm(total_timesteps: usize) -> Result<f32> {
             let n = completed.len();
             let recent = &completed[n.saturating_sub(100)..];
             last_mean = recent.iter().sum::<f32>() / recent.len() as f32;
+            best_mean = best_mean.max(last_mean);
         }
 
         if update % 10 == 0 || update == num_updates - 1 {
@@ -352,29 +440,30 @@ fn run_lstm(total_timesteps: usize) -> Result<f32> {
     }
 
     tracing::info!(
-        "  [lstm] done in {:.1}s — final mean return {:.1}",
+        "  [lstm] done in {:.1}s — final mean return {:.1} (best {:.1})",
         start.elapsed().as_secs_f64(),
-        last_mean
+        last_mean,
+        best_mean
     );
-    Ok(last_mean)
+    Ok(ArmResult { final_mean: last_mean, best_mean })
 }
 
-/// Train the feedforward MLP baseline on the SAME masked observation. Returns
-/// the final mean return over the last ≤100 completed episodes. Expected to
-/// plateau well below the solved bar — it cannot recover the hidden
-/// velocities.
-fn run_feedforward(total_timesteps: usize) -> Result<f32> {
+/// Train the feedforward MLP baseline on the SAME flickering observation
+/// stream. Returns the final and peak mean return over the last ≤100 completed
+/// episodes. Expected to plateau below the LSTM — it cannot act on a blanked
+/// frame and has no memory to bridge the gaps.
+fn run_feedforward(total_timesteps: usize, flicker_prob: f64) -> Result<ArmResult> {
     let start = std::time::Instant::now();
     let device = Default::default();
 
-    let probe = MaskedCartPole::new();
+    let probe = FlickeringCartPole::new();
     let obs_dim = probe.observation_space().shape[0];
     let action_dim = match probe.action_space().space_type {
         SpaceType::Discrete(n) => n,
-        _ => panic!("MaskedCartPole must be discrete"),
+        _ => panic!("FlickeringCartPole must be discrete"),
     };
 
-    let mut env_pool = EnvPool::new(MaskedCartPole::new, NUM_ENVS);
+    let mut env_pool = make_pool(SEED, flicker_prob);
 
     let policy_config = MlpBurnConfig {
         num_layers: 2,
@@ -385,7 +474,10 @@ fn run_feedforward(total_timesteps: usize) -> Result<f32> {
     };
     let policy = MlpBurnPolicy::<Backend>::with_config(obs_dim, action_dim, policy_config, &device);
 
-    let inner_opt = AdamConfig::new().init();
+    // Gradient clipping mirrors the LSTM arm (see run_lstm).
+    let inner_opt = AdamConfig::new()
+        .with_grad_clipping(Some(GradientClippingConfig::Norm(0.5)))
+        .init();
     let burn_opt: BurnOptimizer<Backend, MlpBurnPolicy<Backend>, _> =
         BurnOptimizer::new(inner_opt, MLP_LR);
 
@@ -415,7 +507,8 @@ fn run_feedforward(total_timesteps: usize) -> Result<f32> {
     let mut buf_dones: Vec<f32> = Vec::with_capacity(cap);
 
     // Same running normalizer as the LSTM arm so the ONLY difference between
-    // the two runs is the policy class (memory vs. no memory).
+    // the two runs is the policy class (memory vs. no memory). Blanked frames
+    // pass through as zeros (see ObsNormalizer).
     let mut norm = ObsNormalizer::new(obs_dim);
     let mut observations: Vec<Vec<f32>> =
         env_pool.reset().iter().map(|o| norm.normalize(o)).collect();
@@ -423,6 +516,7 @@ fn run_feedforward(total_timesteps: usize) -> Result<f32> {
     let mut completed: Vec<f32> = Vec::new();
     let mut total_env_steps = 0usize;
     let mut last_mean = 0.0_f32;
+    let mut best_mean = 0.0_f32;
 
     for update in 0..num_updates {
         buf_obs.clear();
@@ -446,7 +540,9 @@ fn run_feedforward(total_timesteps: usize) -> Result<f32> {
                 buf_actions.push(actions[env_id]);
                 buf_log_probs.push(log_probs[env_id]);
                 buf_values.push(values[env_id]);
-                buf_rewards.push(results[env_id].reward);
+                // Train on scaled rewards (see REWARD_SCALE); reporting stays
+                // in raw units.
+                buf_rewards.push(results[env_id].reward * REWARD_SCALE);
                 let done = results[env_id].terminated || results[env_id].truncated;
                 buf_dones.push(if done { 1.0 } else { 0.0 });
 
@@ -515,6 +611,7 @@ fn run_feedforward(total_timesteps: usize) -> Result<f32> {
             let n = completed.len();
             let recent = &completed[n.saturating_sub(100)..];
             last_mean = recent.iter().sum::<f32>() / recent.len() as f32;
+            best_mean = best_mean.max(last_mean);
         }
 
         if update % 10 == 0 || update == num_updates - 1 {
@@ -531,22 +628,32 @@ fn run_feedforward(total_timesteps: usize) -> Result<f32> {
     }
 
     tracing::info!(
-        "  [mlp ] done in {:.1}s — final mean return {:.1}",
+        "  [mlp ] done in {:.1}s — final mean return {:.1} (best {:.1})",
         start.elapsed().as_secs_f64(),
-        last_mean
+        last_mean,
+        best_mean
     );
-    Ok(last_mean)
+    Ok(ArmResult { final_mean: last_mean, best_mean })
 }
 
-/// Running per-dimension observation standardizer (Welford mean/variance).
+/// Running per-dimension observation standardizer (Welford mean/variance) with
+/// flicker-aware pass-through.
 ///
-/// Normalizes each observation coordinate to zero mean / unit variance using
-/// online statistics accumulated over every observation seen so far, then
-/// clips to `[-10, 10]`. This is the standard `VecNormalize`-style wrapper.
-/// It is load-bearing for the recurrent policy: CartPole's raw observations
-/// are tiny (perturbations ~0.05), and an LSTM's tanh gates squash such small
-/// inputs to near-zero features. Standardizing to O(1) restores a usable
-/// gradient signal through the recurrent trunk.
+/// Normalizes each *visible* observation coordinate to zero mean / unit
+/// variance using online statistics accumulated over every visible observation
+/// seen so far, then clips to `[-10, 10]`. This is the standard
+/// `VecNormalize`-style wrapper. It is load-bearing for the recurrent policy:
+/// CartPole's raw observations are tiny (perturbations ~0.05), and an LSTM's
+/// tanh gates squash such small inputs to near-zero features. Standardizing to
+/// O(1) restores a usable gradient signal through the recurrent trunk.
+///
+/// A **blanked (flickered) frame is all-zeros** — a state CartPole physics
+/// never produces. Such frames are passed through unchanged (all zeros) and
+/// **excluded** from the running statistics: the "no observation" signal must
+/// stay a clean, constant zero for both policies, and folding zeros into the
+/// mean/std would (a) pollute the statistics and (b) turn the blank into a
+/// recognizable non-zero constant, both of which would muddy the memory-vs-no-
+/// memory contrast.
 struct ObsNormalizer {
     mean: Vec<f64>,
     /// Sum of squared deviations from the running mean (Welford's M2).
@@ -559,9 +666,14 @@ impl ObsNormalizer {
         Self { mean: vec![0.0; dim], m2: vec![0.0; dim], count: 0.0 }
     }
 
-    /// Update the running statistics with `obs` and return the standardized,
-    /// clipped observation.
+    /// Update the running statistics with a *visible* `obs` and return the
+    /// standardized, clipped observation. A blanked frame (all-zeros) is
+    /// returned as-is and does not update the statistics.
     fn normalize(&mut self, obs: &[f32]) -> Vec<f32> {
+        // Flickered frames are exactly all-zero; pass them through untouched.
+        if obs.iter().all(|&x| x == 0.0) {
+            return obs.to_vec();
+        }
         self.count += 1.0;
         for (i, &xf) in obs.iter().enumerate() {
             let x = xf as f64;

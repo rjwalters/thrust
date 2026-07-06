@@ -222,8 +222,19 @@ required-features = ["training"]
 
 # Recurrent PPO on velocity-masked CartPole (Phase 3 of the recurrent-policy
 # epic #262): trains an LstmBurnPolicy with RecurrentPPOTrainer on the
-# MaskedCartPole POMDP and contrasts it against a feedforward MLP baseline on
-# the same masked observation — the memory advantage is the learning signal.
+# FlickeringCartPole POMDP (4-D obs blanked to zeros with probability p, the
+# Hausknecht & Stone 2015 protocol) and contrasts it against a feedforward MLP
+# baseline on the same flickering stream — memory is load-bearing by
+# construction, so the LSTM-vs-MLP gap is the learning signal.
+[[example]]
+name = "recurrent_ppo_flickering_cartpole"
+path = "examples/games/cartpole/recurrent_ppo_flickering_cartpole.rs"
+required-features = ["training"]
+
+# Velocity-masked CartPole — retained as a DOCUMENTED NEGATIVE RESULT (issue
+# #287): a 500k-step run showed a memoryless [x, theta] controller solves it
+# and beats the LSTM, so velocity-masking alone is not a POMDP. Superseded by
+# the flickering example above; kept as the empirical record.
 [[example]]
 name = "recurrent_ppo_masked_cartpole"
 path = "examples/games/cartpole/recurrent_ppo_masked_cartpole.rs"

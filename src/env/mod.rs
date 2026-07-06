@@ -179,9 +179,9 @@ pub mod games;
 
 // Re-export game environments for backwards compatibility
 pub use games::{
-    CartPole, ContinuousLqr, GridWorld, MaskedCartPole, MountainCarContinuous, PendulumSwingUp,
-    Pong, SimpleBandit, SnakeEnv, cartpole, continuous_lqr, grid_world, masked_cartpole,
-    mountain_car_continuous, pendulum, pong, simple_bandit, snake,
+    CartPole, ContinuousLqr, FlickeringCartPole, GridWorld, MaskedCartPole, MountainCarContinuous,
+    PendulumSwingUp, Pong, SimpleBandit, SnakeEnv, cartpole, continuous_lqr, flickering_cartpole,
+    grid_world, masked_cartpole, mountain_car_continuous, pendulum, pong, simple_bandit, snake,
 };
 // `signaling` depends on `crate::multi_agent`, which is gated behind the
 // `training` feature, so its re-export must be gated the same way.
