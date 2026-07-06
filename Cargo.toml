@@ -118,7 +118,7 @@ chrono = { version = "0.4", optional = true }
 # uncomment this block plus the `env-bucket-brigade` feature definition.
 # See `docs/RELEASING.md` for the full procedure and the follow-up plan
 # for restoring this feature in v0.2.x.
-# bucket-brigade-core = { path = "envs/bucket-brigade/bucket-brigade-core", default-features = false, optional = true }
+bucket-brigade-core = { path = "envs/bucket-brigade/bucket-brigade-core", default-features = false, optional = true }
 
 # WASM support
 wasm-bindgen = { version = "0.2", optional = true }
@@ -180,15 +180,7 @@ wasm = ["wasm-bindgen", "web-sys", "js-sys", "console_error_panic_hook"]  # Pure
 # `bucket_brigade` module in src/ is `#[cfg(feature = "env-bucket-brigade")]`
 # gated and will simply be omitted from the published crate. Re-enable
 # locally by uncommenting both this line and the dependency above.
-# env-bucket-brigade = ["bucket-brigade-core"]
-
-# Tell rustc that `env-bucket-brigade` is a *known-but-disabled* feature
-# name, so the `#[cfg(feature = "env-bucket-brigade")]` gates don't
-# trigger `unexpected_cfgs` (denied via `-D warnings` in CI's `cargo
-# doc` job). Once the feature is re-enabled in [features] above, this
-# stanza can be removed --- cargo derives the cfg automatically.
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("env-bucket-brigade"))'] }
+env-bucket-brigade = ["bucket-brigade-core"]
 
 [dev-dependencies]
 criterion = "0.5"
