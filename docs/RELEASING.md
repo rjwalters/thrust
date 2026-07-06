@@ -86,6 +86,11 @@ git commit -m "chore: bump version to vX.Y.Z"
 (`Cargo.lock` is `.gitignore`d in this repo, so only `Cargo.toml`
 will appear in the commit. That's expected.)
 
+Also bump the version tripwire test in `src/lib.rs` (`tests::test_version`
+asserts `VERSION` against a hardcoded string) — CI fails on both test
+jobs until it matches the new `Cargo.toml` version. Include it in the
+same bump commit.
+
 ## Step 2.5: Disable the `env-bucket-brigade` feature for publish
 
 `bucket-brigade-core` lives in the `envs/bucket-brigade/` git submodule
@@ -96,8 +101,17 @@ commented out **before** the publish (and the `unexpected_cfgs` lint
 shim re-added) so that `cargo publish --dry-run` in Step 3 already
 mirrors what crates.io will see.
 
-Apply the following three edits to `Cargo.toml` and commit them as a
-release-only chore commit:
+**Do NOT commit these edits to `main`.** CI's Clippy job lints with
+`--features "training,env-bucket-brigade"` and its `publish_dry_run`
+job applies these same three edits itself, throwaway, on the runner —
+so a committed Step 2.5 turns `main` red (missing feature in Clippy,
+duplicate `[lints.rust]` in the dry-run job). This matches the v0.2.0
+precedent: the `v0.2.0` tag ships with the feature *enabled*. Instead,
+apply the three edits **locally and uncommitted** at publish time, run
+Steps 3 and 6 with `--allow-dirty`, and discard the edits afterwards
+(`git checkout -- Cargo.toml`).
+
+The three local edits:
 
 1. Re-comment the dep line in `[dependencies]`:
 
@@ -126,25 +140,11 @@ release-only chore commit:
    unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("env-bucket-brigade"))'] }
    ```
 
-Commit:
+**After** Step 6 (`cargo publish` succeeds), discard the local edits:
 
 ```bash
-git add Cargo.toml
-git commit -m "chore: disable env-bucket-brigade feature for vX.Y.Z publish"
+git checkout -- Cargo.toml
 ```
-
-**After** Step 6 (`cargo publish` succeeds), revert these three edits
-on `main` so that local builds, CI, and the `env-bucket-brigade`
-feature continue to work between releases:
-
-```bash
-# Re-uncomment the dep, re-uncomment the feature, drop the lint shim.
-git revert <SHA of the chore: disable env-bucket-brigade commit>
-git push origin main
-```
-
-(Or apply the inverse three edits by hand and commit as
-`chore: re-enable env-bucket-brigade after vX.Y.Z publish`.)
 
 ## Step 3: Validate the publish
 
@@ -153,11 +153,12 @@ and the tarball builds:
 
 ```bash
 # Full default-features dry-run (Burn NdArray backend; pure Rust, no
-# external system libraries required):
-cargo publish --dry-run
+# external system libraries required). --allow-dirty because the Step 2.5
+# edits are local and uncommitted by design:
+cargo publish --dry-run --allow-dirty
 
 # No-default-features dry-run (skips the training stack entirely):
-cargo publish --dry-run --no-default-features
+cargo publish --dry-run --no-default-features --allow-dirty
 ```
 
 Inspect the tarball contents:
@@ -217,18 +218,20 @@ build from source via `cargo install thrust-rl`.
 Do not delegate it to autonomous agents.
 
 ```bash
-# Make sure you're on the exact tagged commit:
+# Make sure you're on the exact tagged commit, then re-apply the
+# Step 2.5 edits locally (they are never committed):
 git checkout vX.Y.Z
 
 # Authenticate (one-time per machine; token stored in
 # ~/.cargo/credentials.toml):
 cargo login <your-crates.io-token>
 
-# Publish for real (no --dry-run this time):
-cargo publish
+# Publish for real (no --dry-run this time). --allow-dirty covers the
+# uncommitted Step 2.5 edits:
+cargo publish --allow-dirty
 
 # Or, if you trust the dry-run and want to skip the verification rebuild:
-cargo publish --no-verify
+cargo publish --no-verify --allow-dirty
 ```
 
 `cargo publish` will:
