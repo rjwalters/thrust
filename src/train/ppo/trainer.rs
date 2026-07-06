@@ -55,7 +55,10 @@ use super::{
     },
     stats::TrainingStats,
 };
-use crate::train::optimizer::{BackendOptimizer, BurnOptimizer};
+use crate::train::{
+    grad_clip::clip_grads_by_global_norm,
+    optimizer::{BackendOptimizer, BurnOptimizer},
+};
 
 /// Burn-backend PPO trainer.
 ///
@@ -96,9 +99,18 @@ where
     O: Optimizer<P, B>,
 {
     /// Build a new Burn PPO trainer.
-    pub fn new(config: PPOConfig, policy: P, optimizer: BurnOptimizer<B, P, O>) -> Result<Self> {
+    ///
+    /// Validates the config and stages the global gradient-norm cap
+    /// ([`PPOConfig::max_grad_norm`]) on the optimizer wrapper; `train_step`
+    /// applies it to the gradients of every minibatch step (issue #299).
+    pub fn new(
+        config: PPOConfig,
+        policy: P,
+        mut optimizer: BurnOptimizer<B, P, O>,
+    ) -> Result<Self> {
         config.validate()?;
         let rng = StdRng::seed_from_u64(config.seed);
+        optimizer.clip_grad_norm(config.max_grad_norm);
         Ok(Self {
             config,
             policy: Some(policy),
@@ -240,6 +252,16 @@ where
                 // Burn gradient flow: backward → GradientsParams → step.
                 let grads = total_loss.backward();
                 let grads = GradientsParams::from_grads(grads, &policy);
+                // Global gradient-norm clip (issue #299):
+                // `PPOConfig::max_grad_norm` is staged on the wrapper in
+                // `new` and applied to the gradient slice before the
+                // move-through step, mirroring the joint trainer (#239).
+                let grads = match self.optimizer.grad_clip_norm() {
+                    Some(max_norm) if max_norm > 0.0 => {
+                        clip_grads_by_global_norm::<B, P>(&policy, grads, max_norm as f32)
+                    }
+                    _ => grads,
+                };
                 let lr = self.optimizer.learning_rate();
                 let policy = self.optimizer.inner_mut().step(lr, policy, grads);
                 self.policy = Some(policy);
@@ -346,6 +368,7 @@ fn select_rows_int<B: AutodiffBackend>(
 mod tests {
     use burn::{
         backend::{Autodiff, NdArray},
+        module::{Module, ModuleVisitor, Param},
         optim::AdamConfig,
     };
 
@@ -353,6 +376,33 @@ mod tests {
     use crate::{policy::mlp::MlpBurnPolicy, train::optimizer::BurnOptimizer};
 
     type B = Autodiff<NdArray<f32>>;
+
+    /// Flatten every float parameter of a module into one host vector.
+    fn params_flat<M: Module<B>>(module: &M) -> Vec<f32> {
+        struct Collect {
+            out: Vec<f32>,
+        }
+        impl ModuleVisitor<B> for Collect {
+            fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+                let host: Vec<f32> = param.val().into_data().to_vec().unwrap_or_default();
+                self.out.extend(host);
+            }
+        }
+        let mut c = Collect { out: Vec::new() };
+        module.visit(&mut c);
+        c.out
+    }
+
+    /// L2 norm of the parameter update `after - before`.
+    fn update_norm(before: &[f32], after: &[f32]) -> f64 {
+        assert_eq!(before.len(), after.len());
+        before
+            .iter()
+            .zip(after)
+            .map(|(&a, &b)| ((b - a) as f64).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    }
 
     /// Smoke test: a Burn PPO trainer constructs and exposes the same
     /// config back through `config()`.
@@ -429,5 +479,90 @@ mod tests {
         // Stats should be finite.
         assert!(stats.policy_loss.is_finite());
         assert!(stats.value_loss.is_finite());
+    }
+
+    /// Issue #299: `PPOConfig::max_grad_norm` must actually be applied.
+    ///
+    /// Two trainers start from identical (cloned) policies, identical
+    /// synthetic data, and identical seeds; the only difference is the cap.
+    /// The tiny cap scales the gradients far below Adam's epsilon, so its
+    /// parameter update must come out much smaller than the
+    /// effectively-unbounded control's. The huge-cap control doubles as the
+    /// no-clip baseline: gradients below the cap pass through untouched (see
+    /// `train::grad_clip::tests` for the direct no-op assertion).
+    #[test]
+    fn ppo_trainer_burn_applies_max_grad_norm() {
+        let device: burn::backend::ndarray::NdArrayDevice = Default::default();
+        let policy = MlpBurnPolicy::<B>::new(4, 2, 16, &device);
+
+        let batch = 8;
+        let make_batch = || {
+            let obs_dim = 4;
+            let obs_data: Vec<f32> = (0..batch * obs_dim).map(|i| (i as f32) * 0.01).collect();
+            let observations = Tensor::<B, 2>::from_data(
+                burn::tensor::TensorData::new(obs_data, [batch, obs_dim]),
+                &device,
+            );
+            let actions = Tensor::<B, 1, Int>::from_data(
+                burn::tensor::TensorData::new(vec![0i64, 1, 0, 1, 0, 1, 0, 1], [batch]),
+                &device,
+            );
+            let old_log_probs = Tensor::<B, 1>::from_data(
+                burn::tensor::TensorData::new(vec![-0.7f32; batch], [batch]),
+                &device,
+            );
+            let old_values = Tensor::<B, 1>::from_data(
+                burn::tensor::TensorData::new(vec![0.0f32; batch], [batch]),
+                &device,
+            );
+            let advantages = Tensor::<B, 1>::from_data(
+                burn::tensor::TensorData::new(
+                    vec![1.0f32, -1.0, 0.5, -0.5, 1.0, -1.0, 0.5, -0.5],
+                    [batch],
+                ),
+                &device,
+            );
+            let returns = Tensor::<B, 1>::from_data(
+                burn::tensor::TensorData::new(vec![1.0f32; batch], [batch]),
+                &device,
+            );
+            (observations, actions, old_log_probs, old_values, advantages, returns)
+        };
+
+        let run = |config: PPOConfig, policy: MlpBurnPolicy<B>| -> f64 {
+            let inner_opt = AdamConfig::new().init();
+            let burn_opt: BurnOptimizer<B, MlpBurnPolicy<B>, _> =
+                BurnOptimizer::new(inner_opt, 1e-3);
+            let mut trainer = PPOTrainerBurn::new(config, policy, burn_opt).unwrap();
+            let before = params_flat(trainer.policy());
+            let (observations, actions, old_log_probs, old_values, advantages, returns) =
+                make_batch();
+            trainer
+                .train_step(
+                    observations,
+                    actions,
+                    old_log_probs,
+                    old_values,
+                    advantages,
+                    returns,
+                    |p, o, a| p.evaluate_actions(o, a),
+                )
+                .unwrap();
+            let after = params_flat(trainer.policy());
+            update_norm(&before, &after)
+        };
+
+        // `batch_size == batch` → one minibatch; `n_epochs == 1` → exactly
+        // one gradient step per trainer.
+        let base = PPOConfig::default().batch_size(batch).n_epochs(1);
+        let clipped = run(base.clone().max_grad_norm(1e-6), policy.clone());
+        let unclipped = run(base.max_grad_norm(1e9), policy);
+
+        assert!(unclipped > 0.0, "control update must move parameters");
+        assert!(clipped > 0.0, "clipped update should still move parameters");
+        assert!(
+            clipped < 0.2 * unclipped,
+            "tiny max_grad_norm must shrink the update: clipped {clipped} vs unclipped {unclipped}"
+        );
     }
 }

@@ -68,13 +68,14 @@
 
 use anyhow::{Result, anyhow};
 use burn::{
-    module::{AutodiffModule, Module, ModuleVisitor, Param},
+    module::AutodiffModule,
     optim::{GradientsParams, Optimizer},
     tensor::{Int, Tensor, backend::AutodiffBackend},
 };
 use rand::rngs::StdRng;
 
 use crate::train::{
+    grad_clip::clip_grads_by_global_norm,
     optimizer::{BackendOptimizer, BurnOptimizer},
     ppo::loss::{
         compute_policy_loss, compute_value_loss, generate_minibatch_indices_with_rng, scalar_f64,
@@ -1272,82 +1273,6 @@ where
 // Helpers
 // -----------------------------------------------------------------------
 
-/// Clip a policy's gradients to a global L2 norm (issue #239).
-///
-/// This is the standard PPO/A2C "global gradient norm clip": compute the
-/// L2 norm of the **concatenation** of every parameter's gradient, and if
-/// it exceeds `max_norm`, scale *all* gradients by
-/// `max_norm / (total_norm + eps)`. Unlike Burn's built-in
-/// `GradientClipping::Norm` (which clips each parameter tensor
-/// independently), this preserves the *direction* of the joint gradient —
-/// which is exactly what we need so the large shared-trunk value-loss
-/// gradient is tamed without distorting the relative scale of the policy
-/// and value contributions.
-///
-/// Implemented with two module visitor passes:
-/// 1. accumulate `Σ ‖g_p‖²` across all parameters `p`,
-/// 2. if the resulting norm exceeds `max_norm`, multiply every gradient by the
-///    clip coefficient and re-register it.
-///
-/// A non-finite or non-positive total norm leaves the gradients untouched.
-fn clip_grads_by_global_norm<B, M>(
-    module: &M,
-    grads: GradientsParams,
-    max_norm: f32,
-) -> GradientsParams
-where
-    B: AutodiffBackend,
-    M: Module<B>,
-{
-    // Burn stores gradient tensors on the *inner* (non-autodiff) backend,
-    // so we fetch / re-register them as `Tensor<B::InnerBackend, D>`.
-    type Inner<B> = <B as AutodiffBackend>::InnerBackend;
-
-    // Pass 1: sum of squared gradient norms.
-    struct NormAccumulator<'a, B: AutodiffBackend> {
-        grads: &'a GradientsParams,
-        sum_sq: f64,
-        _marker: core::marker::PhantomData<B>,
-    }
-    impl<B: AutodiffBackend> ModuleVisitor<B> for NormAccumulator<'_, B> {
-        fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
-            if let Some(g) = self.grads.get::<Inner<B>, D>(param.id) {
-                let sq = g.powf_scalar(2.0).sum();
-                self.sum_sq += scalar_f64(sq);
-            }
-        }
-    }
-    let mut acc =
-        NormAccumulator::<B> { grads: &grads, sum_sq: 0.0, _marker: core::marker::PhantomData };
-    module.visit(&mut acc);
-
-    let total_norm = acc.sum_sq.sqrt();
-    if !total_norm.is_finite() || total_norm <= max_norm as f64 || max_norm <= 0.0 {
-        // Already within the cap (or degenerate) — nothing to scale.
-        return grads;
-    }
-    let clip_coef = (max_norm as f64 / (total_norm + 1e-6)) as f32;
-
-    // Pass 2: scale every gradient by the clip coefficient.
-    struct Scaler<'a, B: AutodiffBackend> {
-        grads: &'a mut GradientsParams,
-        coef: f32,
-        _marker: core::marker::PhantomData<B>,
-    }
-    impl<B: AutodiffBackend> ModuleVisitor<B> for Scaler<'_, B> {
-        fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
-            if let Some(g) = self.grads.remove::<Inner<B>, D>(param.id) {
-                self.grads.register::<Inner<B>, D>(param.id, g.mul_scalar(self.coef));
-            }
-        }
-    }
-    let mut grads = grads;
-    let mut scaler =
-        Scaler::<B> { grads: &mut grads, coef: clip_coef, _marker: core::marker::PhantomData };
-    module.visit(&mut scaler);
-    grads
-}
-
 /// Per-agent single-trajectory GAE (host-side).
 ///
 /// Mirrors the pre-Burn `compute_gae_single_agent` helper: takes 1-D
@@ -2028,68 +1953,9 @@ mod tests {
         }
     }
 
-    /// Issue #239: the global-norm clip must (a) leave an already-small
-    /// gradient untouched and (b) scale an oversized gradient down so its
-    /// global L2 norm equals the cap.
-    #[test]
-    fn test_clip_grads_by_global_norm() {
-        let device: NdArrayDevice = Default::default();
-        let policy = MlpBurnPolicy::<B>::new(4, 3, 16, &device);
-
-        // Build a real gradient via a forward/backward so the param ids in
-        // `GradientsParams` line up with the module's params.
-        let obs = Tensor::<B, 2>::from_data(
-            burn::tensor::TensorData::new(vec![0.1_f32; 4 * 8], [8, 4]),
-            &device,
-        );
-        let logits = policy.encoder_features_joint(obs);
-        let loss = logits.powf_scalar(2.0).sum();
-        let grads = GradientsParams::from_grads(loss.backward(), &policy);
-
-        // Helper: global L2 norm of a GradientsParams over `policy`'s params.
-        fn global_norm(policy: &MlpBurnPolicy<B>, grads: &GradientsParams) -> f64 {
-            struct Acc<'a> {
-                grads: &'a GradientsParams,
-                sum_sq: f64,
-            }
-            impl ModuleVisitor<B> for Acc<'_> {
-                fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
-                    if let Some(g) =
-                        self.grads.get::<<B as AutodiffBackend>::InnerBackend, D>(param.id)
-                    {
-                        self.sum_sq += scalar_f64(g.powf_scalar(2.0).sum());
-                    }
-                }
-            }
-            let mut acc = Acc { grads, sum_sq: 0.0 };
-            policy.visit(&mut acc);
-            acc.sum_sq.sqrt()
-        }
-
-        let norm_before = global_norm(&policy, &grads);
-        assert!(norm_before.is_finite() && norm_before > 0.0);
-
-        // (a) A cap well above the gradient norm is a no-op.
-        let big_cap = norm_before * 10.0;
-        let unclipped =
-            clip_grads_by_global_norm::<B, MlpBurnPolicy<B>>(&policy, grads, big_cap as f32);
-        let norm_unclipped = global_norm(&policy, &unclipped);
-        assert!(
-            (norm_unclipped - norm_before).abs() < 1e-4,
-            "cap above norm must not change gradients: {norm_before} -> {norm_unclipped}"
-        );
-
-        // (b) A small cap scales the global norm down to (approximately) the
-        // cap.
-        let small_cap = (norm_before / 4.0) as f32;
-        let clipped =
-            clip_grads_by_global_norm::<B, MlpBurnPolicy<B>>(&policy, unclipped, small_cap);
-        let norm_clipped = global_norm(&policy, &clipped);
-        assert!(
-            (norm_clipped - small_cap as f64).abs() < 1e-3 * small_cap as f64 + 1e-4,
-            "clipped global norm {norm_clipped} should equal cap {small_cap}"
-        );
-    }
+    // NOTE: the `clip_grads_by_global_norm` unit test moved to
+    // `crate::train::grad_clip::tests` when the helper was extracted for
+    // reuse by the single-agent PPO trainers (issue #299).
 
     /// Issue #239: with `iterate_all_minibatches = true` the update walks
     /// every minibatch per epoch (more gradient steps than the single-draw

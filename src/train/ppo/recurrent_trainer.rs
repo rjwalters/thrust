@@ -59,7 +59,10 @@ use super::{
 };
 use crate::{
     buffer::rollout::RecurrentRolloutBuffer,
-    train::optimizer::{BackendOptimizer, BurnOptimizer},
+    train::{
+        grad_clip::clip_grads_by_global_norm,
+        optimizer::{BackendOptimizer, BurnOptimizer},
+    },
 };
 
 /// Recurrent PPO trainer (Burn backend).
@@ -106,13 +109,18 @@ where
     /// feedforward trainer, which reads the device off the observation tensor
     /// passed to `train_step` — the recurrent trainer must be told which
     /// device to build minibatches on).
+    ///
+    /// Validates the config and stages the global gradient-norm cap
+    /// ([`PPOConfig::max_grad_norm`]) on the optimizer wrapper; `train_step`
+    /// applies it to the gradients of every minibatch step (issue #299).
     pub fn new(
         config: PPOConfig,
         policy: P,
-        optimizer: BurnOptimizer<B, P, O>,
+        mut optimizer: BurnOptimizer<B, P, O>,
         device: B::Device,
     ) -> Result<Self> {
         config.validate()?;
+        optimizer.clip_grad_norm(config.max_grad_norm);
         Ok(Self {
             config,
             policy: Some(policy),
@@ -261,6 +269,16 @@ where
                 // Burn gradient flow: backward → GradientsParams → step.
                 let grads = total_loss.backward();
                 let grads = GradientsParams::from_grads(grads, &policy);
+                // Global gradient-norm clip (issue #299):
+                // `PPOConfig::max_grad_norm` is staged on the wrapper in
+                // `new` and applied to the gradient slice before the
+                // move-through step, mirroring the joint trainer (#239).
+                let grads = match self.optimizer.grad_clip_norm() {
+                    Some(max_norm) if max_norm > 0.0 => {
+                        clip_grads_by_global_norm::<B, P>(&policy, grads, max_norm as f32)
+                    }
+                    _ => grads,
+                };
                 let lr = self.lr_override.unwrap_or_else(|| self.optimizer.learning_rate());
                 let policy = self.optimizer.inner_mut().step(lr, policy, grads);
                 self.policy = Some(policy);
@@ -328,6 +346,7 @@ fn host_std_biased(xs: &[f32], mean: f64) -> f64 {
 mod tests {
     use burn::{
         backend::{Autodiff, NdArray},
+        module::{Module, ModuleVisitor, Param},
         optim::AdamConfig,
     };
 
@@ -335,6 +354,33 @@ mod tests {
     use crate::{policy::lstm::LstmBurnPolicy, train::optimizer::BurnOptimizer};
 
     type B = Autodiff<NdArray<f32>>;
+
+    /// Flatten every float parameter of a module into one host vector.
+    fn params_flat<M: Module<B>>(module: &M) -> Vec<f32> {
+        struct Collect {
+            out: Vec<f32>,
+        }
+        impl ModuleVisitor<B> for Collect {
+            fn visit_float<const D: usize>(&mut self, param: &Param<Tensor<B, D>>) {
+                let host: Vec<f32> = param.val().into_data().to_vec().unwrap_or_default();
+                self.out.extend(host);
+            }
+        }
+        let mut c = Collect { out: Vec::new() };
+        module.visit(&mut c);
+        c.out
+    }
+
+    /// L2 norm of the parameter update `after - before`.
+    fn update_norm(before: &[f32], after: &[f32]) -> f64 {
+        assert_eq!(before.len(), after.len());
+        before
+            .iter()
+            .zip(after)
+            .map(|(&a, &b)| ((b - a) as f64).powi(2))
+            .sum::<f64>()
+            .sqrt()
+    }
 
     /// Build a small synthetic recurrent buffer with deterministic data and a
     /// computed GAE, ready to feed `train_step`.
@@ -395,5 +441,49 @@ mod tests {
         assert!(stats.policy_loss.is_finite());
         assert!(stats.value_loss.is_finite());
         assert!(stats.entropy.is_finite());
+    }
+
+    /// Issue #299: the recurrent trainer must apply
+    /// `PPOConfig::max_grad_norm`. Two trainers start from identical
+    /// (cloned) policies and the same synthetic buffer; the only difference
+    /// is the cap. The tiny cap scales the gradients far below Adam's
+    /// epsilon, so its parameter update must come out much smaller than the
+    /// effectively-unbounded control's (the huge-cap control doubles as the
+    /// no-clip baseline; see `train::grad_clip::tests` for the direct no-op
+    /// assertion).
+    #[test]
+    fn recurrent_trainer_applies_max_grad_norm() {
+        let device: burn::backend::ndarray::NdArrayDevice = Default::default();
+        let (num_steps, num_envs, obs_dim, action_dim) = (4, 4, 2, 2);
+        let policy = LstmBurnPolicy::<B>::new(obs_dim, action_dim, 8, &device);
+        let buffer = synthetic_buffer(num_steps, num_envs, obs_dim);
+
+        let run = |config: PPOConfig, policy: LstmBurnPolicy<B>| -> f64 {
+            let inner_opt = AdamConfig::new().init();
+            let burn_opt: BurnOptimizer<B, LstmBurnPolicy<B>, _> =
+                BurnOptimizer::new(inner_opt, 1e-3);
+            let mut trainer = RecurrentPPOTrainer::new(config, policy, burn_opt, device).unwrap();
+            let before = params_flat(trainer.policy());
+            trainer
+                .train_step(&buffer, num_envs, |p, obs_seq, actions, episode_starts| {
+                    p.evaluate_sequences(obs_seq, actions, None, episode_starts)
+                })
+                .unwrap();
+            let after = params_flat(trainer.policy());
+            update_norm(&before, &after)
+        };
+
+        // `envs_per_minibatch == num_envs` → one minibatch; `n_epochs == 1`
+        // → exactly one gradient step per trainer.
+        let base = PPOConfig::default().n_epochs(1).target_kl(1.0);
+        let clipped = run(base.clone().max_grad_norm(1e-6), policy.clone());
+        let unclipped = run(base.max_grad_norm(1e9), policy);
+
+        assert!(unclipped > 0.0, "control update must move parameters");
+        assert!(clipped > 0.0, "clipped update should still move parameters");
+        assert!(
+            clipped < 0.2 * unclipped,
+            "tiny max_grad_norm must shrink the update: clipped {clipped} vs unclipped {unclipped}"
+        );
     }
 }

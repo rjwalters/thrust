@@ -39,7 +39,18 @@ pub struct PPOConfig {
     /// Entropy bonus coefficient
     pub ent_coef: f64,
 
-    /// Maximum gradient norm for clipping
+    /// Maximum gradient norm for clipping.
+    ///
+    /// Applied by both
+    /// [`PPOTrainerBurn`](crate::train::ppo::trainer::PPOTrainerBurn) and
+    /// [`RecurrentPPOTrainer`](crate::train::ppo::recurrent_trainer::RecurrentPPOTrainer)
+    /// as a **global** L2-norm clip (see
+    /// [`clip_grads_by_global_norm`](crate::train::grad_clip::clip_grads_by_global_norm))
+    /// over the concatenation of every parameter's gradient, immediately
+    /// before each optimizer step (issue #299; prior to that fix the field
+    /// was silently ignored by both trainers). Must be positive —
+    /// [`validate`](PPOConfig::validate) rejects non-positive values — so to
+    /// effectively disable clipping set a very large cap (e.g. `1e9`).
     pub max_grad_norm: f64,
 
     /// Target KL divergence for early stopping
