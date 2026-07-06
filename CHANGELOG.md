@@ -15,6 +15,59 @@ release procedure (tagging, GitHub Release creation, and `cargo publish`).
 
 Nothing yet.
 
+## [0.3.0] - 2026-07-06
+
+### Summary
+
+The recurrent-policy and off-policy release. 0.3.0 lands the complete LSTM
+policy stack — recurrent actor-critic, sequence-aware rollout buffer, and a
+recurrent PPO trainer validated on a FlickeringCartPole POMDP where memory is
+load-bearing (LSTM 484 peak vs memoryless MLP 176) — alongside V-trace
+(IMPALA) off-policy correction and a single-host async actor-learner that
+reaches the CartPole bar at 2.1× synchronous throughput. Multi-agent
+communication Phases 1–2 (signaling channel + trainer hook) and the k*
+coalition-improvability phase diagram (75 cells, cluster-run) round out the
+research tooling. Includes one notable negative result, documented in-tree:
+velocity-masked CartPole is not a POMDP (a reactive controller beats the
+LSTM), which motivated the flickering variant.
+
+All changes are additive public API (MINOR bump per the pre-1.0 policy); see
+the `max_grad_norm` note under Fixed for one deliberate behavior change.
+
+### Added
+
+#### Recurrent policies
+- `LstmBurnPolicy` recurrent actor-critic with seeded LSTM init (#291).
+- `RecurrentRolloutBuffer` + full-sequence sampler (#294).
+- `RecurrentPPOTrainer`, `FlickeringCartPole` / `MaskedCartPole` envs, and an
+  LSTM-vs-MLP memory-contrast example (#298).
+
+#### Off-policy & throughput
+- V-trace (IMPALA) off-policy advantage estimator (#283) and V-trace
+  correction in the actor-learner learner step (#297).
+- Single-host async actor-learner PPO over crossbeam channels (#296).
+
+#### Multi-agent communication
+- `CommunicatingEnvironment` supertrait + `SignalingGame` reference env (#292).
+- SignalingGame integration into the joint trainer + comms loss hook (#295).
+
+#### Research tooling & docs
+- Coalition improvability oracle measuring the k* threshold (#271); raw
+  (β,κ,c) k* sweep mode + full 75-cell phase-diagram artifact (#290).
+- Live training dashboard page with recorded CartPole curves (#284).
+- Design notes: recurrent policies (#288), distributed / multi-GPU training
+  (#282), multi-agent comms channels (#277), FP16 feasibility spike (#273),
+  burn-collective allreduce spike results (#293).
+
+### Fixed
+- **PPO trainers now honor `PPOConfig::max_grad_norm`** (#300): previously
+  both PPO trainers silently ignored the field (only SAC/A2C clipped).
+  Clipping is applied as a direction-preserving global L2-norm clip via a
+  shared `clip_grads_by_global_norm` helper. This is a behavior fix —
+  training trajectories change for existing configs, which were already
+  requesting clipping. Revalidated on the recurrent example (#301).
+- WASM Pages build: configure the `getrandom` 0.3 `wasm_js` backend.
+
 ## [0.2.0] - 2026-06-30
 
 ### Summary
@@ -202,6 +255,7 @@ relative to "no published version".
 - `bincode` dependency was removed to resolve RUSTSEC-2025-0141 (#37).
 - Misleading `target_synced` field on `DQNStepStats` (#66).
 
-[Unreleased]: https://github.com/rjwalters/thrust/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/rjwalters/thrust/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/rjwalters/thrust/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rjwalters/thrust/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/rjwalters/thrust/releases/tag/v0.1.0
