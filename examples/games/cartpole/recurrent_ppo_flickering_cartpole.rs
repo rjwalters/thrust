@@ -47,7 +47,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use burn::{
     backend::Autodiff,
-    grad_clipping::GradientClippingConfig,
     nn::LstmState,
     optim::AdamConfig,
     tensor::{Int, Tensor, TensorData, activation},
@@ -239,13 +238,11 @@ fn run_lstm(total_timesteps: usize, flicker_prob: f64) -> Result<ArmResult> {
         LstmBurnPolicy::<Backend>::with_config(obs_dim, action_dim, policy_config, &device);
 
     let lr = LSTM_LR;
-    // Global gradient-norm clip at the optimizer level: the PPO trainers do
-    // not themselves apply `max_grad_norm`, so honor it here (matches SAC's
-    // `build_adam`). Load-bearing for the recurrent trunk, where value-loss
+    // Gradient clipping comes from `PPOConfig::max_grad_norm` below (issue
+    // #299): the trainer applies a global gradient-norm clip before every
+    // optimizer step. Load-bearing for the recurrent trunk, where value-loss
     // spikes otherwise wipe out the policy features.
-    let inner_opt = AdamConfig::new()
-        .with_grad_clipping(Some(GradientClippingConfig::Norm(0.5)))
-        .init();
+    let inner_opt = AdamConfig::new().init();
     let burn_opt: BurnOptimizer<Backend, LstmBurnPolicy<Backend>, _> =
         BurnOptimizer::new(inner_opt, lr);
 
@@ -474,10 +471,9 @@ fn run_feedforward(total_timesteps: usize, flicker_prob: f64) -> Result<ArmResul
     };
     let policy = MlpBurnPolicy::<Backend>::with_config(obs_dim, action_dim, policy_config, &device);
 
-    // Gradient clipping mirrors the LSTM arm (see run_lstm).
-    let inner_opt = AdamConfig::new()
-        .with_grad_clipping(Some(GradientClippingConfig::Norm(0.5)))
-        .init();
+    // Gradient clipping comes from `PPOConfig::max_grad_norm` below,
+    // mirroring the LSTM arm (see run_lstm).
+    let inner_opt = AdamConfig::new().init();
     let burn_opt: BurnOptimizer<Backend, MlpBurnPolicy<Backend>, _> =
         BurnOptimizer::new(inner_opt, MLP_LR);
 
