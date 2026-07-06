@@ -74,3 +74,6 @@ venv/
 .loom/*.sock
 alc_results_*/
 .loom/sweep-checkpoint/
+
+# Local libtorch C++ distribution (244MB; pre-Burn export experiments)
+/libtorch/
