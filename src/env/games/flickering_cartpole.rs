@@ -29,6 +29,30 @@
 //! becomes load-bearing **by construction**: the only way to act sensibly on a
 //! flickered frame is to remember the last visible one.
 //!
+//! # I.i.d. vs. burst-structured (correlated) dropout
+//!
+//! The default dropout is **i.i.d.**: each frame is blanked independently with
+//! probability `p`. This is only *partially* memory-hard — at CartPole's control
+//! rate a reactive controller can compensate for isolated blanked frames,
+//! which is why the feedforward baseline does not collapse to chance (#298).
+//!
+//! Issue #302 adds an opt-in **burst-structured** mode (a `burst_len`
+//! parameter) that closes this reactive-compensation loophole while keeping the
+//! *same* overall blank rate `p`. Instead of drawing each frame independently,
+//! the visibility follows a two-state Markov chain (visible ↔ blank) whose mean
+//! blank-run length is `burst_len` (default [`DEFAULT_BURST_LEN`], in the 3–5
+//! range from the issue) and whose stationary blank fraction is still `p`. The
+//! mean visible-run length is set to `burst_len * (1 - p) / p` so the long-run
+//! blank rate matches the i.i.d. baseline exactly — the *only* difference is
+//! temporal correlation. Now blanks arrive in runs of several consecutive
+//! frames, which a reactive controller cannot bridge (its last real
+//! observation is several steps stale) but a recurrent policy can, by
+//! integrating over the gap. The apples-to-apples comparison (same `p`,
+//! i.i.d. vs. burst) isolates the effect of correlation on the memory
+//! advantage. Enable it with
+//! [`FlickeringCartPole::with_seed_probability_and_burst`]; the default
+//! constructors keep the i.i.d. behavior unchanged.
+//!
 //! # Composition, not inheritance
 //!
 //! Rust has no inheritance, so `FlickeringCartPole` **embeds** a `CartPole` and
@@ -62,6 +86,11 @@ use crate::env::{
 /// Default flicker probability — the classic Hausknecht & Stone (2015)
 /// value: each frame is blanked with probability 0.5.
 pub const DEFAULT_FLICKER_PROBABILITY: f64 = 0.5;
+
+/// Default mean blank-burst length for the correlated-occlusion mode (issue
+/// #302). Sits in the middle of the 3–5 range suggested by the issue: on
+/// average a blank, once started, lasts four consecutive frames.
+pub const DEFAULT_BURST_LEN: f64 = 4.0;
 
 /// Snapshot of a [`FlickeringCartPole`]: the inner physics state, the current
 /// flicker flag, and the flicker RNG. Because the RNG is captured, restoring a
@@ -97,6 +126,12 @@ pub struct FlickeringCartPole {
     /// [`Environment::reset`] and [`Environment::step`]; read by
     /// [`Environment::get_observation`].
     flickered: bool,
+    /// Mean blank-burst length for the correlated-occlusion (Markov) mode. When
+    /// `None`, dropout is i.i.d. per frame (the default / #298 behavior). When
+    /// `Some(l)`, visibility follows a two-state Markov chain whose mean
+    /// blank-run length is `l` and whose stationary blank fraction is
+    /// `flicker_prob`.
+    burst_len: Option<f64>,
 }
 
 impl FlickeringCartPole {
@@ -129,6 +164,7 @@ impl FlickeringCartPole {
             flicker_prob,
             rng: StdRng::from_os_rng(),
             flickered: false,
+            burst_len: None,
         }
     }
 
@@ -159,6 +195,38 @@ impl FlickeringCartPole {
             flicker_prob,
             rng: StdRng::seed_from_u64(seed),
             flickered: false,
+            burst_len: None,
+        }
+    }
+
+    /// Create a **burst-structured** (correlated-occlusion) flickering CartPole
+    /// with a seeded flicker RNG (issue #302).
+    ///
+    /// Visibility follows a two-state Markov chain (visible ↔ blank) with
+    /// stationary blank fraction `flicker_prob` and mean blank-run length
+    /// `burst_len`. The mean visible-run length is derived as
+    /// `burst_len * (1 - flicker_prob) / flicker_prob`, so the long-run blank
+    /// rate equals `flicker_prob` exactly — matching the i.i.d. baseline while
+    /// adding temporal correlation. See the [module docs](self) for the
+    /// rationale.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `flicker_prob` is not in the **open** interval `(0, 1)` (a
+    /// Markov burst structure is only meaningful with both states reachable) or
+    /// if `burst_len < 1.0` (a burst must last at least one frame).
+    pub fn with_seed_probability_and_burst(seed: u64, flicker_prob: f64, burst_len: f64) -> Self {
+        assert!(
+            flicker_prob > 0.0 && flicker_prob < 1.0,
+            "burst mode requires flicker probability in (0, 1), got {flicker_prob}"
+        );
+        assert!(burst_len >= 1.0, "burst length must be >= 1.0, got {burst_len}");
+        Self {
+            inner: CartPole::new(),
+            flicker_prob,
+            rng: StdRng::seed_from_u64(seed),
+            flickered: false,
+            burst_len: Some(burst_len),
         }
     }
 
@@ -176,12 +244,57 @@ impl FlickeringCartPole {
         self.flickered
     }
 
-    /// Draw a fresh flicker decision from the seeded RNG.
+    /// The mean blank-burst length for the correlated-occlusion mode, or `None`
+    /// when dropout is i.i.d. per frame (the default).
+    pub fn burst_length(&self) -> Option<f64> {
+        self.burst_len
+    }
+
+    /// Draw a flicker decision from the **stationary** distribution (blank with
+    /// probability `flicker_prob`). Used on [`Environment::reset`] for both the
+    /// i.i.d. and burst modes — in both, the stationary blank fraction is `p`,
+    /// so a fresh episode starts blank with probability `p`.
     fn draw_flicker(&mut self) -> bool {
         // `flicker_prob == 0.0` never blanks; `== 1.0` always blanks. Drawing
         // unconditionally keeps the RNG stream advancing at one draw per frame
         // regardless of `p`, so the schedule is a pure function of the seed.
         self.rng.random::<f64>() < self.flicker_prob
+    }
+
+    /// Advance the flicker state by one frame.
+    ///
+    /// - **I.i.d. mode** (`burst_len == None`): identical to [`draw_flicker`] —
+    ///   each frame is blanked independently with probability `flicker_prob`.
+    ///   Consumes exactly one RNG draw, so the schedule is byte-for-byte the
+    ///   #298 behavior.
+    /// - **Burst mode** (`burst_len == Some(l)`): a two-state Markov transition
+    ///   from the *current* `flickered` state. The per-step probability of
+    ///   switching out of a state is one over that state's mean run length
+    ///   (`1/l` out of blank; `1 / (l * (1 - p) / p)` out of visible), which
+    ///   yields geometric run lengths with the desired means and a stationary
+    ///   blank fraction of `p`.
+    ///
+    /// [`draw_flicker`]: Self::draw_flicker
+    fn advance_flicker(&mut self) -> bool {
+        match self.burst_len {
+            None => self.draw_flicker(),
+            Some(mean_blank_run) => {
+                let u = self.rng.random::<f64>();
+                if self.flickered {
+                    // Currently blank: leave the blank run with prob 1/l_b.
+                    let p_switch = (1.0 / mean_blank_run).clamp(0.0, 1.0);
+                    // Stay blank unless we switch to visible.
+                    u >= p_switch
+                } else {
+                    // Currently visible: enter a blank run with prob 1/l_v,
+                    // where l_v = l_b * (1 - p) / p.
+                    let mean_visible_run =
+                        mean_blank_run * (1.0 - self.flicker_prob) / self.flicker_prob;
+                    let p_switch = (1.0 / mean_visible_run).clamp(0.0, 1.0);
+                    u < p_switch
+                }
+            }
+        }
     }
 
     /// The dimensionality of the (unflickered) observation.
@@ -213,7 +326,7 @@ impl Environment for FlickeringCartPole {
 
     fn step(&mut self, action: i64) -> StepResult {
         let mut result = self.inner.step(action);
-        self.flickered = self.draw_flicker();
+        self.flickered = self.advance_flicker();
         if self.flickered {
             // Blank the entire observation — the flicker protocol zeros the
             // whole frame, not individual coordinates.
@@ -433,5 +546,146 @@ mod tests {
     #[should_panic(expected = "flicker probability must be in [0, 1]")]
     fn test_invalid_probability_panics() {
         let _ = FlickeringCartPole::with_probability(1.5);
+    }
+
+    // ---- Burst-structured (correlated-occlusion) mode, issue #302 ----------
+
+    /// Collect the blank/visible flicker stream over `n` frames (stepping past
+    /// episode ends without resetting, to sample a long uninterrupted stream).
+    fn collect_flicker_stream(env: &mut FlickeringCartPole, n: usize) -> Vec<bool> {
+        env.reset();
+        let mut stream = Vec::with_capacity(n);
+        for i in 0..n {
+            env.step((i % 2) as i64);
+            stream.push(env.is_flickered());
+        }
+        stream
+    }
+
+    /// Mean length of consecutive `true` (blank) runs in a boolean stream.
+    fn mean_blank_run_length(stream: &[bool]) -> f64 {
+        let mut runs = Vec::new();
+        let mut cur = 0usize;
+        for &b in stream {
+            if b {
+                cur += 1;
+            } else if cur > 0 {
+                runs.push(cur);
+                cur = 0;
+            }
+        }
+        if cur > 0 {
+            runs.push(cur);
+        }
+        if runs.is_empty() {
+            0.0
+        } else {
+            runs.iter().sum::<usize>() as f64 / runs.len() as f64
+        }
+    }
+
+    #[test]
+    fn test_burst_mode_reports_burst_length() {
+        let env = FlickeringCartPole::with_seed_probability_and_burst(1, 0.5, 4.0);
+        assert_eq!(env.burst_length(), Some(4.0));
+        // The default i.i.d. constructor reports no burst length.
+        assert_eq!(FlickeringCartPole::new().burst_length(), None);
+    }
+
+    #[test]
+    fn test_burst_observation_shape_invariant() {
+        // Burst mode never changes the observation shape (still 4-D).
+        let mut env = FlickeringCartPole::with_seed_probability_and_burst(7, 0.5, 4.0);
+        assert_eq!(env.observation_space().shape, vec![4]);
+        env.reset();
+        assert_eq!(env.get_observation().len(), 4);
+        for i in 0..200 {
+            let r = env.step((i % 2) as i64);
+            assert_eq!(r.observation.len(), 4);
+            if r.terminated || r.truncated {
+                env.reset();
+            }
+        }
+    }
+
+    #[test]
+    fn test_burst_mode_blank_rate_matches_p() {
+        // The whole point of the burst construction: the stationary blank rate
+        // still equals p, so it is an apples-to-apples comparison with i.i.d.
+        for &p in &[0.3_f64, 0.5, 0.7] {
+            let mut env = FlickeringCartPole::with_seed_probability_and_burst(123, p, 4.0);
+            let stream = collect_flicker_stream(&mut env, 20000);
+            let rate = stream.iter().filter(|&&b| b).count() as f64 / stream.len() as f64;
+            assert!(
+                (rate - p).abs() < 0.05,
+                "burst blank rate {rate} should track p={p} (same as i.i.d.)"
+            );
+        }
+    }
+
+    #[test]
+    fn test_burst_mode_produces_longer_runs_than_iid() {
+        // Burst mode must produce meaningfully longer blank runs than i.i.d. at
+        // the same p — that temporal correlation is what closes the reactive-
+        // compensation loophole.
+        let mut burst = FlickeringCartPole::with_seed_probability_and_burst(99, 0.5, 4.0);
+        let mut iid = FlickeringCartPole::with_seed_and_probability(99, 0.5);
+
+        let burst_run = mean_blank_run_length(&collect_flicker_stream(&mut burst, 20000));
+        let iid_run = mean_blank_run_length(&collect_flicker_stream(&mut iid, 20000));
+
+        // i.i.d. at p=0.5 has mean blank-run length ~1/(1-p) = 2.
+        assert!(iid_run < 2.5, "i.i.d. mean blank run {iid_run} should be ~2");
+        // Burst mode targets a mean blank-run length of 4.
+        assert!(
+            (burst_run - 4.0).abs() < 1.0,
+            "burst mean blank run {burst_run} should be ≈ 4.0"
+        );
+        assert!(burst_run > iid_run + 1.0, "burst runs must be longer than i.i.d. runs");
+    }
+
+    #[test]
+    fn test_burst_schedule_is_deterministic_under_seed() {
+        let mut a = FlickeringCartPole::with_seed_probability_and_burst(42, 0.5, 4.0);
+        let mut b = FlickeringCartPole::with_seed_probability_and_burst(42, 0.5, 4.0);
+        let sa = collect_flicker_stream(&mut a, 2000);
+        let sb = collect_flicker_stream(&mut b, 2000);
+        assert_eq!(sa, sb, "burst schedule must be identical under the same seed");
+    }
+
+    #[test]
+    fn test_burst_clone_restore_reproduces_stream() {
+        // The Markov state lives in `flickered` + `rng`, both captured in the
+        // snapshot, so restore reproduces the correlated stream.
+        let mut env = FlickeringCartPole::with_seed_probability_and_burst(555, 0.5, 4.0);
+        env.reset();
+        for i in 0..10 {
+            env.step((i % 2) as i64);
+        }
+        let snap = env.clone_state();
+        let mut first = Vec::new();
+        for i in 0..40 {
+            env.step((i % 2) as i64);
+            first.push(env.is_flickered());
+        }
+        env.restore_state(&snap);
+        let mut second = Vec::new();
+        for i in 0..40 {
+            env.step((i % 2) as i64);
+            second.push(env.is_flickered());
+        }
+        assert_eq!(first, second, "restore must reproduce the burst stream");
+    }
+
+    #[test]
+    #[should_panic(expected = "burst mode requires flicker probability in (0, 1)")]
+    fn test_burst_invalid_probability_panics() {
+        let _ = FlickeringCartPole::with_seed_probability_and_burst(0, 0.0, 4.0);
+    }
+
+    #[test]
+    #[should_panic(expected = "burst length must be >= 1.0")]
+    fn test_burst_invalid_length_panics() {
+        let _ = FlickeringCartPole::with_seed_probability_and_burst(0, 0.5, 0.5);
     }
 }

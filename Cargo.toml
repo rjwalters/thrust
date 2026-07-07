@@ -232,6 +232,24 @@ name = "recurrent_ppo_flickering_cartpole"
 path = "examples/games/cartpole/recurrent_ppo_flickering_cartpole.rs"
 required-features = ["training"]
 
+# Burst-flickering CartPole — correlated-occlusion POMDP (issue #302). Same
+# blank rate p as the i.i.d. flickering env above, but blanks arrive in Markov
+# bursts (mean run length ~4) the reactive baseline cannot bridge. Runs LSTM
+# and MLP under BOTH regimes and reports the memory gap widening vs. i.i.d.
+[[example]]
+name = "recurrent_ppo_burst_flickering_cartpole"
+path = "examples/games/cartpole/recurrent_ppo_burst_flickering_cartpole.rs"
+required-features = ["training"]
+
+# T-maze — the provably memory-hard POMDP (Bakker 2001, issue #302). A cue is
+# shown only at step 0; the agent must recall it N steps later at the junction,
+# where a memoryless policy is provably at chance. Contrasts LSTM vs MLP across
+# a corridor-length sweep N in {5, 10, 20} to locate the memory-horizon knee.
+[[example]]
+name = "recurrent_ppo_t_maze"
+path = "examples/games/t_maze/recurrent_ppo_t_maze.rs"
+required-features = ["training"]
+
 # Velocity-masked CartPole — retained as a DOCUMENTED NEGATIVE RESULT (issue
 # #287): a 500k-step run showed a memoryless [x, theta] controller solves it
 # and beats the LSTM, so velocity-masking alone is not a POMDP. Superseded by
