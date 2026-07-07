@@ -23,8 +23,8 @@ and *why the determinism contract matters*, rather than on env design.
 
 ## The trait, in full
 
-`Environment` has two associated types and ten methods. There are no default
-implementations — you provide all ten — but several are one-liners.
+`Environment` has two associated types and nine methods. There are no default
+implementations — you provide all nine — but several are one-liners.
 
 ```text
 trait Environment {
