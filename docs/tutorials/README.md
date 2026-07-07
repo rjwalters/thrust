@@ -24,7 +24,7 @@ tutorial names its prerequisites in a header block.
 |---|----------|--------------|-------------------------|--------|
 | 1 | [Your first agent](01-your-first-agent.md) | The rollout → loss → update loop, by hand; actor-critic; why bandits skip GAE | Actor-critic (PPO-style) · `SimpleBandit` | ✅ Landed |
 | 2 | [Solving CartPole with PPO](02-cartpole-ppo.md) | `EnvPool`, GAE, the `PPOConfig` surface, reading learning curves (`CURVE_CSV`) | PPO · `CartPole` | ✅ Landed |
-| 3 | Off-policy training with DQN | Replay buffers, target networks, ε-annealing; when to prefer DQN over PPO | DQN (Double-DQN) · `CartPole` / `GridWorld` | 🚧 Planned ([#309](https://github.com/rjwalters/thrust/issues/309)) |
+| 3 | [Off-policy training with DQN](03-dqn.md) | Replay buffers, target networks, ε-annealing; when to prefer DQN over PPO | DQN (Double-DQN) · `CartPole` / `GridWorld` | ✅ Landed |
 | 4 | Continuous control with SAC | Box action spaces, tanh action squashing, automatic entropy tuning, twin critics | SAC · `PendulumSwingUp` | 🚧 Planned ([#310](https://github.com/rjwalters/thrust/issues/310)) |
 | 5 | Memory and POMDPs | When an LSTM earns its cost; recurrent rollouts and hidden-state handling | Recurrent PPO · `FlickeringCartPole` | 🚧 Planned ([#311](https://github.com/rjwalters/thrust/issues/311)) |
 | 6 | Writing your own environment | Implementing the `Environment` trait from scratch; the seeding/determinism contract | (trait impl) · tiny gridworld | 🚧 Planned ([#312](https://github.com/rjwalters/thrust/issues/312)) |

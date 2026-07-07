@@ -24,6 +24,9 @@
 //! - [`tutorial_02_cartpole_ppo`](crate::tutorials::tutorial_02_cartpole_ppo) —
 //!   Solving CartPole with PPO (`EnvPool`, GAE, the config surface, reading
 //!   learning curves).
+//! - [`tutorial_03_dqn`](crate::tutorials::tutorial_03_dqn) — Off-policy
+//!   training with DQN (replay buffer, target network, ε-annealing, Double-DQN,
+//!   Polyak soft updates; when to prefer DQN over PPO).
 
 /// Tutorial 1 — Your first agent.
 ///
@@ -38,3 +41,10 @@ pub mod tutorial_01_first_agent {}
 /// [`docs/tutorials/02-cartpole-ppo.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/02-cartpole-ppo.md).
 #[doc = include_str!("../docs/tutorials/02-cartpole-ppo.md")]
 pub mod tutorial_02_cartpole_ppo {}
+
+/// Tutorial 3 — Off-policy training with DQN.
+///
+/// See the rendered Markdown at
+/// [`docs/tutorials/03-dqn.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/03-dqn.md).
+#[doc = include_str!("../docs/tutorials/03-dqn.md")]
+pub mod tutorial_03_dqn {}
