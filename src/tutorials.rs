@@ -19,8 +19,8 @@
 //! # Landed tutorials
 //!
 //! - [`tutorial_01_first_agent`](crate::tutorials::tutorial_01_first_agent) —
-//!   Your first agent (SimpleBandit + actor-critic; the rollout → loss →
-//!   update loop).
+//!   Your first agent (SimpleBandit + actor-critic; the rollout → loss → update
+//!   loop).
 //! - [`tutorial_02_cartpole_ppo`](crate::tutorials::tutorial_02_cartpole_ppo) —
 //!   Solving CartPole with PPO (`EnvPool`, GAE, the config surface, reading
 //!   learning curves).
