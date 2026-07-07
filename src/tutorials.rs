@@ -35,6 +35,9 @@
 //!   POMDPs with recurrent PPO (`FlickeringCartPole`, LSTM policy, recurrent
 //!   rollouts and hidden-state handling; when an LSTM earns its cost vs. a
 //!   memoryless MLP baseline).
+//! - [`tutorial_06_own_env`](crate::tutorials::tutorial_06_own_env) — Writing
+//!   your own environment (implementing the `Environment` trait from scratch;
+//!   the seeding/determinism contract behind `clone_state` / `restore_state`).
 
 /// Tutorial 1 — Your first agent.
 ///
@@ -70,3 +73,10 @@ pub mod tutorial_04_sac {}
 /// [`docs/tutorials/05-memory-pomdps.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/05-memory-pomdps.md).
 #[doc = include_str!("../docs/tutorials/05-memory-pomdps.md")]
 pub mod tutorial_05_memory {}
+
+/// Tutorial 6 — Writing your own environment.
+///
+/// See the rendered Markdown at
+/// [`docs/tutorials/06-your-own-env.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/06-your-own-env.md).
+#[doc = include_str!("../docs/tutorials/06-your-own-env.md")]
+pub mod tutorial_06_own_env {}

@@ -27,7 +27,7 @@ tutorial names its prerequisites in a header block.
 | 3 | [Off-policy training with DQN](03-dqn.md) | Replay buffers, target networks, ε-annealing; when to prefer DQN over PPO | DQN (Double-DQN) · `CartPole` / `GridWorld` | ✅ Landed |
 | 4 | [Continuous control with SAC](04-sac-continuous.md) | Box action spaces, tanh action squashing, automatic entropy tuning, twin critics | SAC · `PendulumSwingUp` | ✅ Landed |
 | 5 | [Memory and POMDPs](05-memory-pomdps.md) | When an LSTM earns its cost; recurrent rollouts and hidden-state handling | Recurrent PPO · `FlickeringCartPole` | ✅ Landed |
-| 6 | Writing your own environment | Implementing the `Environment` trait from scratch; the seeding/determinism contract | (trait impl) · tiny gridworld | 🚧 Planned ([#312](https://github.com/rjwalters/thrust/issues/312)) |
+| 6 | [Writing your own environment](06-your-own-env.md) | Implementing the `Environment` trait from scratch; the seeding/determinism contract | (trait impl) · tiny gridworld | ✅ Landed |
 | 7 | Train in Rust, run in the browser | Exporting to the JSON inference format and wiring it into the WASM demo | Inference export · WASM | 🚧 Planned ([#313](https://github.com/rjwalters/thrust/issues/313)) |
 
 ### Dependency order, spelled out
