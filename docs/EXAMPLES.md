@@ -28,6 +28,8 @@ the feature list, e.g. `--features "training,wgpu"`. See
 | [`train_cartpole_async`](#train_cartpole_async) | PPO (async actor-learner, V-trace) | CartPole | Single-agent |
 | [`recurrent_ppo_flickering_cartpole`](#recurrent_ppo_flickering_cartpole) | Recurrent PPO (LSTM) vs MLP | FlickeringCartPole | POMDP contrast |
 | [`recurrent_ppo_masked_cartpole`](#recurrent_ppo_masked_cartpole) | Recurrent PPO (LSTM) vs MLP | MaskedCartPole | Negative result |
+| [`recurrent_ppo_burst_flickering_cartpole`](#recurrent_ppo_burst_flickering_cartpole) | Recurrent PPO (LSTM) vs MLP | FlickeringCartPole (burst) | POMDP contrast |
+| [`recurrent_ppo_t_maze`](#recurrent_ppo_t_maze) | Recurrent PPO (LSTM) vs MLP | TMaze | POMDP contrast |
 | [`train_dqn_grid_world`](#train_dqn_grid_world) | DQN | GridWorld | Single-agent |
 | [`train_bc_cartpole`](#train_bc_cartpole) | Behavioral Cloning | CartPole | Imitation |
 | [`train_sac`](#train_sac) | SAC | PendulumSwingUp | Continuous control |
@@ -196,6 +198,43 @@ cargo run --release --features training --example recurrent_ppo_masked_cartpole
 **Environment variables:** `TOTAL_TIMESTEPS` (per arm).
 
 Source: [`examples/games/cartpole/recurrent_ppo_masked_cartpole.rs`](../examples/games/cartpole/recurrent_ppo_masked_cartpole.rs)
+
+### `recurrent_ppo_burst_flickering_cartpole`
+
+The **correlated-occlusion** counterpart of the flickering benchmark (issue
+#302): the same LSTM-vs-MLP contrast run under *both* i.i.d. and
+burst-structured (Markov) dropout at the same blank rate `p = 0.5`, so the
+effect of temporal correlation on the memory advantage is measured directly.
+Measured (200k steps/arm): i.i.d. gap 263.4 (LSTM 422 vs MLP 158.7); burst gap
+102.7 (LSTM 203.1 vs MLP 100.4) — bursts harden the task for both arms and
+narrow the absolute gap, reported honestly against the widening hypothesis.
+
+```bash
+cargo run --release --features training --example recurrent_ppo_burst_flickering_cartpole
+```
+
+**Environment variables:** `TOTAL_TIMESTEPS` (per arm), `FLICKER_PROB`
+(default `0.5`), `BURST_LEN` (mean blank-run length, default `4`).
+
+Source: [`examples/games/cartpole/recurrent_ppo_burst_flickering_cartpole.rs`](../examples/games/cartpole/recurrent_ppo_burst_flickering_cartpole.rs)
+
+### `recurrent_ppo_t_maze`
+
+The **provably memory-hard** contrast (Bakker 2001, issue #302): a cue shown
+only at step 0 must be recalled `N` steps later at the T-junction, where the
+observation is identical for both cues — a memoryless policy is at chance (50%)
+by construction. Sweeps corridor length `N ∈ {5, 10, 20}`. Measured (200k
+steps/arm): LSTM final junction accuracy 100/99/92% at N=5/10/20; MLP at chance
+(45/50/39%).
+
+```bash
+cargo run --release --features training --example recurrent_ppo_t_maze
+```
+
+**Environment variables:** `TOTAL_TIMESTEPS` (per arm), `TMAZE_SWEEP`
+(comma-separated corridor lengths, default `5,10,20`).
+
+Source: [`examples/games/t_maze/recurrent_ppo_t_maze.rs`](../examples/games/t_maze/recurrent_ppo_t_maze.rs)
 
 ### `train_dqn_grid_world`
 
