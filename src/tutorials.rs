@@ -27,6 +27,10 @@
 //! - [`tutorial_03_dqn`](crate::tutorials::tutorial_03_dqn) — Off-policy
 //!   training with DQN (replay buffer, target network, ε-annealing, Double-DQN,
 //!   Polyak soft updates; when to prefer DQN over PPO).
+//! - [`tutorial_04_sac`](crate::tutorials::tutorial_04_sac) — Continuous
+//!   control with SAC (Box action spaces, tanh squashing, automatic entropy
+//!   tuning, twin critics; reusing the off-policy replay + Polyak machinery for
+//!   continuous actions).
 
 /// Tutorial 1 — Your first agent.
 ///
@@ -48,3 +52,10 @@ pub mod tutorial_02_cartpole_ppo {}
 /// [`docs/tutorials/03-dqn.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/03-dqn.md).
 #[doc = include_str!("../docs/tutorials/03-dqn.md")]
 pub mod tutorial_03_dqn {}
+
+/// Tutorial 4 — Continuous control with SAC.
+///
+/// See the rendered Markdown at
+/// [`docs/tutorials/04-sac-continuous.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/04-sac-continuous.md).
+#[doc = include_str!("../docs/tutorials/04-sac-continuous.md")]
+pub mod tutorial_04_sac {}
