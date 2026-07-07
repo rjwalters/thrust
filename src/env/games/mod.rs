@@ -11,6 +11,11 @@
 //!   the observation. Retained as a documented NEGATIVE result — a 500k-step
 //!   run showed a memoryless `[x, theta]` controller solves it, so
 //!   velocity-masking alone does NOT make memory load-bearing (issue #287)
+//! - TMaze: the provably memory-hard T-maze POMDP (Bakker 2001). A cue is shown
+//!   only at step 0; the agent must recall it `N` steps later to turn correctly
+//!   at the junction. A memoryless policy is provably at chance (50%) — the
+//!   clean qualitative memory contrast that FlickeringCartPole only
+//!   approximates (issue #302, epic #262)
 //! - GridWorld: in-tree `4x4` FrozenLake-style sparse-reward navigation task
 //!   (issue #182, `i64` discrete action `0=Up/1=Right/2=Down/3=Left`, 16-dim
 //!   one-hot observation, absorbing goal/hole terminals + step-cap truncation)
@@ -53,6 +58,7 @@ pub mod pong;
 pub mod signaling;
 pub mod simple_bandit;
 pub mod snake;
+pub mod t_maze;
 
 #[cfg(feature = "env-bucket-brigade")]
 pub mod bucket_brigade;
@@ -76,3 +82,4 @@ pub use pong::Pong;
 pub use signaling::SignalingGame;
 pub use simple_bandit::SimpleBandit;
 pub use snake::SnakeEnv;
+pub use t_maze::TMaze;
