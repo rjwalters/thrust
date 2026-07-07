@@ -341,6 +341,15 @@ name = "train_br_probe"
 path = "examples/games/bucket_brigade/train_br_probe.rs"
 required-features = ["training", "env-bucket-brigade"]
 
+# SignalingGame protocol-emergence experiment (issue #304): trains the joint
+# multi-agent PPO trainer (#295) on the SignalingGame reference env (#292) with
+# the comms-loss hook, and measures whether a discrete protocol emerges
+# (reward vs a no-comms ablation + referent/message/guess mutual information).
+[[example]]
+name = "signaling_protocol"
+path = "examples/games/signaling/signaling_protocol.rs"
+required-features = ["training"]
+
 # Best-response improvability oracle (issue #259): score scripted policies
 # (uniform, specialist, firefighter family + random search) for the single BR
 # agent vs N-1 frozen uniform opponents; report best achievable per-step team
