@@ -31,6 +31,10 @@
 //!   control with SAC (Box action spaces, tanh squashing, automatic entropy
 //!   tuning, twin critics; reusing the off-policy replay + Polyak machinery for
 //!   continuous actions).
+//! - [`tutorial_05_memory`](crate::tutorials::tutorial_05_memory) — Memory and
+//!   POMDPs with recurrent PPO (`FlickeringCartPole`, LSTM policy, recurrent
+//!   rollouts and hidden-state handling; when an LSTM earns its cost vs. a
+//!   memoryless MLP baseline).
 
 /// Tutorial 1 — Your first agent.
 ///
@@ -59,3 +63,10 @@ pub mod tutorial_03_dqn {}
 /// [`docs/tutorials/04-sac-continuous.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/04-sac-continuous.md).
 #[doc = include_str!("../docs/tutorials/04-sac-continuous.md")]
 pub mod tutorial_04_sac {}
+
+/// Tutorial 5 — Memory and POMDPs with recurrent PPO.
+///
+/// See the rendered Markdown at
+/// [`docs/tutorials/05-memory-pomdps.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/05-memory-pomdps.md).
+#[doc = include_str!("../docs/tutorials/05-memory-pomdps.md")]
+pub mod tutorial_05_memory {}
