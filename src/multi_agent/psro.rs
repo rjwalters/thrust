@@ -1002,6 +1002,40 @@ pub struct PsroConfig {
     pub br_reward_scale: f32,
     /// RNG seed for opponent sampling and deterministic tests.
     pub seed: u64,
+    /// Serialize the per-agent best-response `update` (backward) calls to
+    /// avoid a concurrent-`backward()` deadlock in `burn-autodiff 0.21` on
+    /// some many-core hosts (issue #307).
+    ///
+    /// The #232 parallel path dispatches `num_agents` independent
+    /// best-response tasks via `rayon`, so all agents' `joint_loss.backward()`
+    /// passes run concurrently on worker threads. `burn-autodiff 0.21`
+    /// guards its `GraphLocator`/`GraphState` singletons with `parking_lot`
+    /// mutexes acquired in an inconsistent order across the two backward
+    /// code paths, producing a lock-order inversion that deterministically
+    /// wedges on macOS arm64 (8-core M-series) with `N = 4` concurrent
+    /// backward passes. Linux CI (2-core x86) rarely hits the race window.
+    ///
+    /// When `true` (the default until the upstream burn issue is resolved
+    /// — no `burn 0.22` exists on crates.io yet), the parallel `par_iter`
+    /// is replaced by a serial `.map()` that trains each agent's BR in
+    /// fixed agent order, so at most one backward graph is live at a time.
+    /// When `false`, all agents' backward passes run concurrently under
+    /// `rayon` (the original #232 path).
+    ///
+    /// # Determinism
+    ///
+    /// This flag does **not** affect results. All shared-mutable draws are
+    /// hoisted into the fixed-order pre-pass in
+    /// `train_best_responses_parallel` before any dispatch, and each
+    /// BR is a pure function of its pre-drawn inputs, collected by index.
+    /// Serial vs. parallel dispatch therefore yields bit-identical
+    /// `PsroStats` for a given seed; only wall-clock concurrency of the
+    /// backward passes changes. The #232 thread-count-invariance guarantee
+    /// is preserved in both modes.
+    ///
+    /// Set this back to `false` once a burn version that fixes the
+    /// autodiff graph-lock inversion is adopted (tracked in #307).
+    pub serialize_br_updates: bool,
 }
 
 impl Default for PsroConfig {
@@ -1014,6 +1048,7 @@ impl Default for PsroConfig {
             max_payoff_evals_per_iteration: None,
             br_reward_scale: 1.0,
             seed: 0,
+            serialize_br_updates: true,
         }
     }
 }
@@ -1968,24 +2003,35 @@ where
         let optimizer_factory = &self.optimizer_factory;
         let env_factory = &self.env_factory;
 
-        // --- Parallel region: one independent BR per agent. ---
-        let results: Vec<Result<(JointStats, P)>> = (0..num_agents)
-            .into_par_iter()
-            .map(|active_agent| {
-                train_best_response_pure::<B, P, O, E, _, _, _>(
-                    active_agent,
-                    &opp_indices[active_agent],
-                    init_seeds[active_agent],
-                    populations,
-                    config,
-                    joint_config,
-                    device,
-                    policy_factory,
-                    optimizer_factory,
-                    env_factory,
-                )
-            })
-            .collect();
+        // --- BR region: one independent BR per agent. ---
+        //
+        // The closure body is a pure function of the pre-drawn inputs and
+        // collected by index, so serial vs. parallel dispatch is
+        // bit-identical (see `PsroConfig::serialize_br_updates`). When
+        // `serialize_br_updates` is set (the default), the BRs run in a
+        // serial `.map()` so at most one `burn-autodiff` backward graph is
+        // live at a time, side-stepping the 0.21 `GraphLocator`/`GraphState`
+        // lock-order deadlock (issue #307). Otherwise they run concurrently
+        // under `rayon` (the #232 parallel path).
+        let run_br = |active_agent: usize| {
+            train_best_response_pure::<B, P, O, E, _, _, _>(
+                active_agent,
+                &opp_indices[active_agent],
+                init_seeds[active_agent],
+                populations,
+                config,
+                joint_config,
+                device,
+                policy_factory,
+                optimizer_factory,
+                env_factory,
+            )
+        };
+        let results: Vec<Result<(JointStats, P)>> = if config.serialize_br_updates {
+            (0..num_agents).map(run_br).collect()
+        } else {
+            (0..num_agents).into_par_iter().map(run_br).collect()
+        };
 
         // --- Join: unpack results in fixed agent order, propagating the
         // first error deterministically. The immutable borrow of
@@ -2905,6 +2951,7 @@ mod tests {
             max_payoff_evals_per_iteration: None,
             br_reward_scale: 1.0,
             seed: 0,
+            serialize_br_updates: true,
         };
         let joint_config = JointTrainerConfig {
             num_agents: 2,
@@ -3253,6 +3300,7 @@ mod tests {
             max_payoff_evals_per_iteration: None,
             br_reward_scale: 1.0,
             seed: 12345,
+            serialize_br_updates: true,
         };
         let joint_config = JointTrainerConfig {
             num_agents: 2,
@@ -3344,6 +3392,7 @@ mod tests {
             max_payoff_evals_per_iteration: None,
             br_reward_scale: 1.0,
             seed: 0xC0FF_EE12,
+            serialize_br_updates: true,
         };
         let joint_config = JointTrainerConfig {
             num_agents: 2,
@@ -3465,6 +3514,7 @@ mod tests {
             max_payoff_evals_per_iteration: None,
             br_reward_scale: 1.0,
             seed: 0x5EED_2323,
+            serialize_br_updates: true,
         };
         let joint_config = JointTrainerConfig {
             num_agents: 2,

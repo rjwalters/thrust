@@ -44,6 +44,7 @@ fn psro_exploitability_trace(seed: u64) -> Vec<f32> {
         max_payoff_evals_per_iteration: None,
         br_reward_scale: 1.0,
         seed,
+        serialize_br_updates: true,
     };
     let joint_config = JointTrainerConfig {
         num_agents: 2,

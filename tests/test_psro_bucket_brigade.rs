@@ -376,6 +376,7 @@ fn test_psro_beats_ppo_on_no_convergence_cells() {
             max_payoff_evals_per_iteration: None,
             br_reward_scale: 1.0,
             seed: SEED.wrapping_add(cell_idx as u64),
+            serialize_br_updates: true,
         };
         let joint_config = JointTrainerConfig {
             num_agents: NUM_AGENTS,
