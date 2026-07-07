@@ -113,7 +113,8 @@ pub mod wasm;
 ///   and its [`MlpBurnConfig`](crate::policy::mlp::MlpBurnConfig), the trainer
 ///   configs/trainers (A2C, PPO, DQN, SAC, BC), and the
 ///   [`RolloutBuffer`](crate::buffer::rollout::RolloutBuffer) /
-///   [`ReplayBuffer`](crate::buffer::replay::ReplayBuffer) experience buffers.
+///   [`ReplayBuffer`](crate::buffer::replay::ReplayBuffer) experience buffers,
+///   and the [`EnvPool`](crate::env::pool::EnvPool) vectorized env wrapper.
 ///
 /// Training-only re-exports are `#[cfg(feature = "training")]`-gated so
 /// `--no-default-features` still compiles.
@@ -126,6 +127,8 @@ pub mod prelude {
     pub use crate::buffer::replay::ReplayBuffer;
     #[cfg(feature = "training")]
     pub use crate::buffer::rollout::RolloutBuffer;
+    #[cfg(feature = "training")]
+    pub use crate::env::pool::EnvPool;
     pub use crate::env::{CartPole, Environment, SimpleBandit, SpaceInfo, SpaceType, StepResult};
     #[cfg(feature = "training")]
     pub use crate::policy::mlp::{BurnActivation, MlpBurnConfig, MlpBurnPolicy};
@@ -135,6 +138,15 @@ pub mod prelude {
         PPOTrainerBurn, SacConfig, SacTrainer,
     };
 }
+
+/// Guided tutorial series (requires the `training` feature).
+///
+/// A dependency-ordered path from install to a trained, deployed policy.
+/// Each tutorial's code is doc-tested, so the copy-paste snippets in the
+/// prose are CI-enforced against the live API. See the module docs for the
+/// index, or read the Markdown source under `docs/tutorials/`.
+#[cfg(feature = "training")]
+pub mod tutorials;
 
 /// Current version of thrust-rl
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

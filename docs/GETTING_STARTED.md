@@ -48,7 +48,16 @@ This is one of twelve runnable trainers. Browse the full
 [Example Gallery](EXAMPLES.md) for a trainer per algorithm (PPO, A2C, DQN, SAC,
 BC, PSRO, NFSP) across every environment, with copy-paste run commands.
 
-### 5. Build Documentation
+### 5. Follow the Tutorial Series
+
+Examples are reference material; the **[Tutorial Series](tutorials/README.md)**
+is a guided, dependency-ordered path from your first agent to a
+trained-and-deployed policy. Every code block is CI-doc-tested. Start with
+[Your first agent](tutorials/01-your-first-agent.md) (SimpleBandit + actor-critic,
+the rollout → loss → update loop by hand), then
+[Solving CartPole with PPO](tutorials/02-cartpole-ppo.md).
+
+### 6. Build Documentation
 
 ```bash
 cargo doc --open
