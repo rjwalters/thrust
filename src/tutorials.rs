@@ -38,6 +38,10 @@
 //! - [`tutorial_06_own_env`](crate::tutorials::tutorial_06_own_env) — Writing
 //!   your own environment (implementing the `Environment` trait from scratch;
 //!   the seeding/determinism contract behind `clone_state` / `restore_state`).
+//! - [`tutorial_07_wasm`](crate::tutorials::tutorial_07_wasm) — Train in Rust,
+//!   run in the browser (exporting a trained `MlpBurnPolicy` to the
+//!   `InferenceModel` JSON format, the Burn→inference weight transpose, and
+//!   wiring the JSON into the WASM demo).
 
 /// Tutorial 1 — Your first agent.
 ///
@@ -80,3 +84,10 @@ pub mod tutorial_05_memory {}
 /// [`docs/tutorials/06-your-own-env.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/06-your-own-env.md).
 #[doc = include_str!("../docs/tutorials/06-your-own-env.md")]
 pub mod tutorial_06_own_env {}
+
+/// Tutorial 7 — Train in Rust, run in the browser.
+///
+/// See the rendered Markdown at
+/// [`docs/tutorials/07-wasm-deploy.md`](https://github.com/rjwalters/thrust/blob/main/docs/tutorials/07-wasm-deploy.md).
+#[doc = include_str!("../docs/tutorials/07-wasm-deploy.md")]
+pub mod tutorial_07_wasm {}
