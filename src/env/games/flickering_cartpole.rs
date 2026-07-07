@@ -213,15 +213,30 @@ impl FlickeringCartPole {
     ///
     /// # Panics
     ///
-    /// Panics if `flicker_prob` is not in the **open** interval `(0, 1)` (a
-    /// Markov burst structure is only meaningful with both states reachable) or
-    /// if `burst_len < 1.0` (a burst must last at least one frame).
+    /// Panics if any of the following hold:
+    /// - `flicker_prob` is not in the **open** interval `(0, 1)` (a Markov
+    ///   burst structure is only meaningful with both states reachable).
+    /// - `burst_len < 1.0` (a burst must last at least one frame).
+    /// - `flicker_prob > burst_len / (burst_len + 1)`. Beyond this limit the
+    ///   derived mean visible-run length `burst_len * (1 - flicker_prob) /
+    ///   flicker_prob` falls below one frame, which is geometrically
+    ///   ill-defined and would silently clamp the stationary blank rate to
+    ///   `burst_len / (burst_len + 1)` instead of `flicker_prob`. To reach a
+    ///   higher blank rate, increase `burst_len` rather than `flicker_prob`.
     pub fn with_seed_probability_and_burst(seed: u64, flicker_prob: f64, burst_len: f64) -> Self {
         assert!(
             flicker_prob > 0.0 && flicker_prob < 1.0,
             "burst mode requires flicker probability in (0, 1), got {flicker_prob}"
         );
         assert!(burst_len >= 1.0, "burst length must be >= 1.0, got {burst_len}");
+        let max_p = burst_len / (burst_len + 1.0);
+        assert!(
+            flicker_prob <= max_p,
+            "burst mode: flicker_prob {flicker_prob} exceeds the achievable maximum \
+             burst_len/(burst_len+1) = {max_p:.4} for burst_len {burst_len}; \
+             the mean visible-run length would be < 1 frame. \
+             Either reduce flicker_prob or increase burst_len."
+        );
         Self {
             inner: CartPole::new(),
             flicker_prob,
@@ -613,7 +628,9 @@ mod tests {
     fn test_burst_mode_blank_rate_matches_p() {
         // The whole point of the burst construction: the stationary blank rate
         // still equals p, so it is an apples-to-apples comparison with i.i.d.
-        for &p in &[0.3_f64, 0.5, 0.7] {
+        // `p = 0.8` sits exactly at the `burst_len/(burst_len+1)` limit for
+        // `burst_len = 4.0`, so it is the boundary case the constructor allows.
+        for &p in &[0.3_f64, 0.5, 0.7, 0.8] {
             let mut env = FlickeringCartPole::with_seed_probability_and_burst(123, p, 4.0);
             let stream = collect_flicker_stream(&mut env, 20000);
             let rate = stream.iter().filter(|&&b| b).count() as f64 / stream.len() as f64;
@@ -688,5 +705,24 @@ mod tests {
     #[should_panic(expected = "burst length must be >= 1.0")]
     fn test_burst_invalid_length_panics() {
         let _ = FlickeringCartPole::with_seed_probability_and_burst(0, 0.5, 0.5);
+    }
+
+    #[test]
+    #[should_panic(expected = "burst mode: flicker_prob")]
+    fn test_burst_prob_above_achievable_max_panics() {
+        // For burst_len = 4.0 the achievable max blank rate is 4/5 = 0.8.
+        // p = 0.9 exceeds it, so the mean visible-run length would fall below
+        // one frame and the stationary blank rate would silently clamp to 0.8.
+        let _ = FlickeringCartPole::with_seed_probability_and_burst(0, 0.9, 4.0);
+    }
+
+    #[test]
+    fn test_burst_prob_at_achievable_max_does_not_panic() {
+        // Exactly at the limit (p = burst_len/(burst_len+1) = 0.8 for
+        // burst_len = 4.0) the mean visible-run length is exactly one frame,
+        // which is valid — the constructor must accept it.
+        let env = FlickeringCartPole::with_seed_probability_and_burst(0, 0.8, 4.0);
+        assert_eq!(env.flicker_probability(), 0.8);
+        assert_eq!(env.burst_length(), Some(4.0));
     }
 }
