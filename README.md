@@ -162,6 +162,14 @@ cargo run --release --example train_simple_bandit
 The default `training` feature builds against Burn's pure-Rust NdArray
 backend; no external libraries (libtorch, CUDA, etc.) are required.
 
+### 📚 Tutorials — a guided learning path
+
+New to Thrust? Start with the **[Tutorial Series](docs/tutorials/README.md)**: a
+dependency-ordered path from your first agent to a trained-and-deployed policy.
+Every code snippet is CI-doc-tested, so nothing rots. Begin with
+[Your first agent](docs/tutorials/01-your-first-agent.md) and
+[Solving CartPole with PPO](docs/tutorials/02-cartpole-ppo.md).
+
 ### GPU Training
 
 Burn ships several GPU backends behind feature flags. Compose them with
