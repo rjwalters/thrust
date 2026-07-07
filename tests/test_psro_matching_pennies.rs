@@ -92,6 +92,7 @@ fn psro_matching_pennies_smoke_runs_and_is_finite() {
         max_payoff_evals_per_iteration: None,
         br_reward_scale: 1.0,
         seed: 17,
+        serialize_br_updates: true,
     };
     let joint_config = JointTrainerConfig {
         num_agents: 2,
@@ -171,6 +172,7 @@ fn test_psro_converges_to_uniform_on_matching_pennies() {
         max_payoff_evals_per_iteration: None,
         br_reward_scale: 1.0,
         seed: 17,
+        serialize_br_updates: true,
     };
     let joint_config = JointTrainerConfig {
         num_agents: 2,
@@ -303,6 +305,7 @@ fn test_psro_exploitability_non_increasing_trend_on_matching_pennies() {
             max_payoff_evals_per_iteration: None,
             br_reward_scale: 1.0,
             seed,
+            serialize_br_updates: true,
         };
         let mut trainer = PsroTrainer::new(
             psro_config,

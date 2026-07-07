@@ -168,6 +168,10 @@ fn run_psro_n4_cfg(
         max_payoff_evals_per_iteration: None,
         br_reward_scale,
         seed,
+        // Serialize per-agent BR backward passes to avoid the burn-autodiff
+        // 0.21 GraphLocator/GraphState lock-order deadlock on many-core
+        // hosts (issue #307). Does not affect results (determinism holds).
+        serialize_br_updates: true,
     };
     let joint_config = JointTrainerConfig {
         num_agents,
@@ -275,6 +279,62 @@ fn psro_n4_smoke_runs_and_is_finite() {
             (sum - 1.0).abs() <= 1e-3,
             "agent {agent} marginal must sum to ~1, got {sum} on {marginal:?}"
         );
+    }
+}
+
+/// Issue #307 regression guard: two independent N=4 PSRO runs with the
+/// same seed must produce bit-identical `PsroStats`. This pins down two
+/// properties at once on every CI run:
+///
+/// 1. **Hang-free completion.** The serialized best-response path
+///    (`PsroConfig::serialize_br_updates = true`, the default) that side-steps
+///    the burn-autodiff 0.21 `GraphLocator`/`GraphState` lock-order deadlock
+///    (issue #307) drives the full N=4 control flow to completion twice without
+///    wedging.
+///
+/// 2. **Determinism (#232 invariant preserved).** Serializing the BR backward
+///    passes must not change the mathematical result: all shared-mutable draws
+///    are still hoisted into the fixed-order pre-pass and each BR is a pure
+///    function of its pre-drawn inputs, so the per-iteration NashConv and
+///    per-agent meta-Nash marginals must match bit-for-bit between the two
+///    runs.
+#[test]
+fn psro_n4_serialized_br_is_deterministic_issue307() {
+    let max_iterations = 2_usize;
+    let seed = 19_u64;
+    let (_t_a, stats_a) = run_psro_n4(max_iterations, seed);
+    let (_t_b, stats_b) = run_psro_n4(max_iterations, seed);
+
+    assert_eq!(
+        stats_a.iterations.len(),
+        stats_b.iterations.len(),
+        "both runs must record the same number of iterations"
+    );
+    for (i, (a, b)) in stats_a.iterations.iter().zip(stats_b.iterations.iter()).enumerate() {
+        assert_eq!(
+            a.exploitability.to_bits(),
+            b.exploitability.to_bits(),
+            "iteration {i}: NashConv must be bit-identical across seeded runs \
+             ({} vs {})",
+            a.exploitability,
+            b.exploitability
+        );
+        assert_eq!(
+            a.meta_nash_per_agent.len(),
+            b.meta_nash_per_agent.len(),
+            "iteration {i}: both runs must report the same agent count"
+        );
+        for (agent, (ma, mb)) in
+            a.meta_nash_per_agent.iter().zip(b.meta_nash_per_agent.iter()).enumerate()
+        {
+            let bits_a: Vec<u32> = ma.iter().map(|x| x.to_bits()).collect();
+            let bits_b: Vec<u32> = mb.iter().map(|x| x.to_bits()).collect();
+            assert_eq!(
+                bits_a, bits_b,
+                "iteration {i}, agent {agent}: meta-Nash marginal must be \
+                 bit-identical across seeded runs ({ma:?} vs {mb:?})"
+            );
+        }
     }
 }
 

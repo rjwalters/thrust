@@ -332,6 +332,9 @@ fn main() -> Result<()> {
         max_payoff_evals_per_iteration,
         br_reward_scale,
         seed: base_seed(),
+        // Serialize per-agent BR backward passes to avoid the burn-autodiff
+        // 0.21 graph-lock deadlock on many-core hosts (issue #307).
+        serialize_br_updates: true,
     };
     let joint_config = JointTrainerConfig {
         num_agents: NUM_AGENTS,
