@@ -2,10 +2,11 @@
 //!
 //! Part of the recurrent-policy epic (#262), issue #302. This example is the
 //! correlated-dropout counterpart of `recurrent_ppo_flickering_cartpole`
-//! (#298). It trains an [`LstmBurnPolicy`](thrust_rl::policy::lstm::LstmBurnPolicy)
+//! (#298). It trains an
+//! [`LstmBurnPolicy`](thrust_rl::policy::lstm::LstmBurnPolicy)
 //! and a feedforward [`MlpBurnPolicy`](thrust_rl::policy::mlp::MlpBurnPolicy)
-//! baseline on [`FlickeringCartPole`](thrust_rl::env::FlickeringCartPole), under
-//! **two** dropout regimes at the *same* blank rate `p`:
+//! baseline on [`FlickeringCartPole`](thrust_rl::env::FlickeringCartPole),
+//! under **two** dropout regimes at the *same* blank rate `p`:
 //!
 //! 1. **i.i.d.** — each frame blanked independently with probability `p` (the
 //!    #298 protocol).
@@ -21,9 +22,26 @@
 //! dropout keeps the same overall blank rate but forces the blanks into
 //! multi-step runs the reactive controller cannot bridge — its last real
 //! observation is several steps stale. The recurrent policy integrates over the
-//! gap. The hypothesis is that correlation *widens* the LSTM-vs-MLP gap relative
-//! to i.i.d. This example reports both gaps side by side so the effect is
-//! measured directly (honestly, either direction).
+//! gap. The hypothesis is that correlation *widens* the LSTM-vs-MLP gap
+//! relative to i.i.d. This example reports both gaps side by side so the effect
+//! is measured directly (honestly, either direction).
+//!
+//! # Measured results (issue #302, 200k steps/arm, p=0.5, burst_len=4, seed 0)
+//!
+//! ```text
+//! regime   LSTM (final/best)   MLP (final/best)   gap (best)
+//! iid        420.0 / 422.0       144.5 / 158.7       263.4
+//! burst      178.9 / 203.1        89.0 / 100.4       102.7
+//! ```
+//!
+//! **Honest negative on the absolute-gap hypothesis**: correlated bursts made
+//! the task harder for BOTH policy classes, and the absolute LSTM−MLP gap
+//! *narrowed* (263 → 103) rather than widened. The relative picture is more
+//! nuanced: the burst LSTM still clears the 195 solved bar (peak 203) while the
+//! burst MLP drops to ~100 — roughly half its i.i.d. ceiling — so memory
+//! remains decisively load-bearing; the LSTM simply loses more absolute return
+//! to the harder observation stream than the MLP has left to lose. Consistent
+//! with the #298 i.i.d. reference (LSTM 484 vs MLP 176 at 500k; here 200k).
 //!
 //! # Usage
 //!
@@ -32,8 +50,9 @@
 //! cargo run --example recurrent_ppo_burst_flickering_cartpole --features training --release
 //! ```
 //!
-//! Env overrides: `TOTAL_TIMESTEPS` (per-arm budget, default 200k), `FLICKER_PROB`
-//! (blank rate, default 0.5), `BURST_LEN` (mean blank-run length, default 4).
+//! Env overrides: `TOTAL_TIMESTEPS` (per-arm budget, default 200k),
+//! `FLICKER_PROB` (blank rate, default 0.5), `BURST_LEN` (mean blank-run
+//! length, default 4).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -174,7 +193,11 @@ fn main() -> Result<()> {
         );
         tracing::info!(
             "          LSTM {} solved bar {} (peak {:.1})",
-            if lstm.best_mean > SOLVED_THRESHOLD { "CLEARED" } else { "MISSED" },
+            if lstm.best_mean > SOLVED_THRESHOLD {
+                "CLEARED"
+            } else {
+                "MISSED"
+            },
             SOLVED_THRESHOLD,
             lstm.best_mean,
         );
@@ -191,7 +214,11 @@ fn main() -> Result<()> {
         let delta = b - i;
         tracing::info!(
             "  Correlation {} the memory advantage by {:.1} ({}).",
-            if delta > 0.0 { "WIDENED" } else { "did NOT widen" },
+            if delta > 0.0 {
+                "WIDENED"
+            } else {
+                "did NOT widen"
+            },
             delta.abs(),
             if delta > 0.0 {
                 "burst dropout is harder for the reactive baseline, as hypothesized"

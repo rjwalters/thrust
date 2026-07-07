@@ -6,8 +6,8 @@
 //! [`LstmBurnPolicy`](thrust_rl::policy::lstm::LstmBurnPolicy) with
 //! [`RecurrentPPOTrainer`](thrust_rl::train::ppo::RecurrentPPOTrainer) on the
 //! [`TMaze`](thrust_rl::env::TMaze) (Bakker 2001) and contrasts it against a
-//! feedforward [`MlpBurnPolicy`](thrust_rl::policy::mlp::MlpBurnPolicy) baseline
-//! on the *same* task.
+//! feedforward [`MlpBurnPolicy`](thrust_rl::policy::mlp::MlpBurnPolicy)
+//! baseline on the *same* task.
 //!
 //! # Why the T-maze (and not just flickering)
 //!
@@ -21,10 +21,10 @@
 //! information-theoretically absent from the junction observation it acts on.
 //!
 //! This doubles as a **self-test on the environment**: if the feedforward
-//! baseline beats chance by a meaningful margin, the env has an information leak
-//! (a bug), not the policy a talent. The expected qualitative result is a clean
-//! separation — LSTM well above 90% junction accuracy at `N = 10`, MLP pinned at
-//! ~50%.
+//! baseline beats chance by a meaningful margin, the env has an information
+//! leak (a bug), not the policy a talent. The expected qualitative result is a
+//! clean separation — LSTM well above 90% junction accuracy at `N = 10`, MLP
+//! pinned at ~50%.
 //!
 //! # Corridor-length sweep
 //!
@@ -32,6 +32,22 @@
 //! example sweeps `N ∈ {5, 10, 20}` (override with `TMAZE_SWEEP="5,10,20"`) and
 //! reports junction accuracy for both arms at each `N`, documenting where the
 //! LSTM's effective memory horizon begins to degrade.
+//!
+//! # Measured results (issue #302, 200k steps/arm, seed 0, CPU NdArray)
+//!
+//! ```text
+//! N      LSTM (final/best acc)   MLP (final/best acc)
+//! N=5        100% / 100%             45% / 61%
+//! N=10        99% / 100%             50% / 60%
+//! N=20        92% / 100%             39% / 60%
+//! ```
+//!
+//! The LSTM clears the >90% bar at every swept `N`, with final accuracy
+//! beginning to degrade at `N = 20` (100 → 99 → 92%) — the onset of its
+//! effective memory horizon under this budget. The MLP's *final* accuracy sits
+//! at chance for every `N` (39–50%), as provably required; its "best" ≈ 60% is
+//! the expected maximum of a running 100-episode accuracy estimate under a
+//! ±5% binomial noise floor, not an information leak.
 //!
 //! # Usage
 //!
@@ -44,6 +60,8 @@
 //!   cargo run --example recurrent_ppo_t_maze --features training --release
 //! ```
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use anyhow::Result;
 use burn::{
     backend::Autodiff,
@@ -52,7 +70,6 @@ use burn::{
     tensor::{Int, Tensor, TensorData, activation},
 };
 use rand::{Rng, SeedableRng, rngs::StdRng};
-use std::sync::atomic::{AtomicU64, Ordering};
 use thrust_rl::{
     buffer::rollout::RecurrentRolloutBuffer,
     env::{Environment, SpaceType, pool::EnvPool, t_maze::TMaze},
@@ -93,9 +110,9 @@ const SOLVED_ACC: f32 = 0.90;
 
 /// Outcome of one training arm: junction accuracy over the last ≤100 episodes.
 ///
-/// `final_acc` is the accuracy at the end of training; `best_acc` is the peak of
-/// the moving accuracy observed at any update — reported together so end-of-run
-/// oscillation hides nothing.
+/// `final_acc` is the accuracy at the end of training; `best_acc` is the peak
+/// of the moving accuracy observed at any update — reported together so
+/// end-of-run oscillation hides nothing.
 #[derive(Clone, Copy)]
 struct ArmResult {
     final_acc: f32,
@@ -204,12 +221,8 @@ fn main() -> Result<()> {
         tracing::info!("  N={:<4}  {:<18}  {:<16}  {}", n, ls, ms, verdict);
     }
     tracing::info!("------------------------------------------------------------");
-    tracing::info!(
-        "Expectation: LSTM accuracy stays high at small N and degrades as N grows"
-    );
-    tracing::info!(
-        "past its effective memory horizon; MLP stays ~50% for all N (provable)."
-    );
+    tracing::info!("Expectation: LSTM accuracy stays high at small N and degrades as N grows");
+    tracing::info!("past its effective memory horizon; MLP stays ~50% for all N (provable).");
 
     Ok(())
 }

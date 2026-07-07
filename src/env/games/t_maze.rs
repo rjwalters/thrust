@@ -1,46 +1,49 @@
 //! T-maze — the canonical memory-hard POMDP benchmark (Bakker 2001).
 //!
 //! Part of the recurrent-policy epic (#262), extending the memory-hard
-//! environment suite alongside [`FlickeringCartPole`](super::FlickeringCartPole)
-//! (#298). Where flickering CartPole is only *approximately* memory-hard — a
-//! reactive controller partially compensates at CartPole's control rate — the
-//! T-maze is **provably** memory-hard: a memoryless policy is at chance (50%)
-//! at the junction regardless of capacity. This is the clean qualitative
-//! contrast that `MaskedCartPole` failed to provide (#287's negative result).
+//! environment suite alongside
+//! [`FlickeringCartPole`](super::FlickeringCartPole) (#298). Where flickering
+//! CartPole is only *approximately* memory-hard — a reactive controller
+//! partially compensates at CartPole's control rate — the T-maze is provably
+//! memory-hard: a memoryless policy is at chance (50%) at the junction
+//! regardless of capacity. This is the clean qualitative contrast that
+//! `MaskedCartPole` failed to provide (#287's negative result).
 //!
 //! # The task
 //!
 //! The agent traverses a straight corridor of length `N` and, at the far end,
 //! reaches a T-junction where it must turn **up** or **down**. Which turn is
-//! rewarded is signalled by a **cue** shown *only at the start* (step 0). To act
-//! correctly at the junction the agent must carry the cue across the entire
+//! rewarded is signalled by a **cue** shown *only at the start* (step 0). To
+//! act correctly at the junction the agent must carry the cue across the entire
 //! corridor in memory. From Bakker, *"Reinforcement Learning with Long
 //! Short-Term Memory"* (NeurIPS 2001).
 //!
 //! - **Corridor length `N`** (configurable, default [`DEFAULT_CORRIDOR_LENGTH`]
 //!   = 10). The episode is exactly `N + 1` steps long: the agent observes the
-//!   cue at step 0, walks the corridor over steps `1..N`, and makes the junction
-//!   decision on the observation seen at step `N`. The memory span the policy
-//!   must bridge is therefore `N` steps.
+//!   cue at step 0, walks the corridor over steps `1..N`, and makes the
+//!   junction decision on the observation seen at step `N`. The memory span the
+//!   policy must bridge is therefore `N` steps.
 //! - **Action:** `i64`, two discrete choices: `0 = up`, `1 = down`. The action
 //!   is only consequential at the junction; while in the corridor the agent
-//!   auto-advances and the action is ignored (a no-op). This isolates the memory
-//!   variable — corridor navigation is trivial and identical for every policy,
-//!   so the *only* thing that separates a memoryful from a memoryless policy is
-//!   recalling the cue.
+//!   auto-advances and the action is ignored (a no-op). This isolates the
+//!   memory variable — corridor navigation is trivial and identical for every
+//!   policy, so the *only* thing that separates a memoryful from a memoryless
+//!   policy is recalling the cue.
 //! - **Observation:** a fixed 3-D `Vec<f32>` `[cue, corridor, junction]`:
-//!   - `cue` is `+1.0` (turn up) or `-1.0` (turn down) **only at step 0**; it is
-//!     `0.0` at every subsequent step. This is the memory-load-bearing channel.
+//!   - `cue` is `+1.0` (turn up) or `-1.0` (turn down) **only at step 0**; it
+//!     is `0.0` at every subsequent step. This is the memory-load-bearing
+//!     channel.
 //!   - `corridor` is `1.0` while the agent is in the corridor (steps `0..N-1`)
 //!     and `0.0` at the junction.
 //!   - `junction` is `1.0` at the junction (step `N`) and `0.0` otherwise.
-//! - **Reward:** `0.0` for every corridor step; at the junction, [`REWARD_CORRECT`]
-//!   (`+1.0`) if the chosen turn matches the cue, else [`REWARD_WRONG`] (`-1.0`).
-//!   Episode return is therefore exactly `+1` (correct) or `-1` (wrong), so the
-//!   mean return maps directly to junction accuracy: `acc = (mean_return + 1) / 2`.
-//! - **Termination:** the episode `terminated`s the moment the junction decision
-//!   is taken (step `N`). There is no truncation in the default configuration —
-//!   the fixed-length corridor always ends at the junction.
+//! - **Reward:** `0.0` for every corridor step; at the junction,
+//!   [`REWARD_CORRECT`] (`+1.0`) if the chosen turn matches the cue, else
+//!   [`REWARD_WRONG`] (`-1.0`). Episode return is therefore exactly `+1`
+//!   (correct) or `-1` (wrong), so the mean return maps directly to junction
+//!   accuracy: `acc = (mean_return + 1) / 2`.
+//! - **Termination:** the episode `terminated`s the moment the junction
+//!   decision is taken (step `N`). There is no truncation in the default
+//!   configuration — the fixed-length corridor always ends at the junction.
 //!
 //! # Why a memoryless policy is provably at chance
 //!
@@ -65,8 +68,8 @@
 //! The cue is drawn from a dedicated seeded [`StdRng`]. Two `TMaze`s built with
 //! [`TMaze::with_seed`] (same seed, same corridor length) produce the identical
 //! cue sequence across resets, independent of the actions taken. The
-//! [`TMazeState`] snapshot captures the position, cue, step counter, **and** the
-//! cue RNG, so [`Environment::restore_state`] followed by further resets
+//! [`TMazeState`] snapshot captures the position, cue, step counter, **and**
+//! the cue RNG, so [`Environment::restore_state`] followed by further resets
 //! reproduces the same cue stream — the same strong determinism guarantee as
 //! [`FlickeringCartPole`](super::FlickeringCartPole).
 
@@ -185,18 +188,15 @@ impl TMaze {
     ///
     /// # Panics
     ///
-    /// Panics if `corridor_length` is zero (see [`TMaze::with_corridor_length`]).
+    /// Panics if `corridor_length` is zero (see
+    /// [`TMaze::with_corridor_length`]).
     pub fn with_seed_and_corridor_length(seed: u64, corridor_length: usize) -> Self {
         assert!(
             corridor_length >= 1,
             "corridor_length must be >= 1 (a zero-length corridor leaks the cue into the junction observation), got {corridor_length}"
         );
-        let mut env = Self {
-            corridor_length,
-            position: 0,
-            cue: Cue::Up,
-            rng: StdRng::seed_from_u64(seed),
-        };
+        let mut env =
+            Self { corridor_length, position: 0, cue: Cue::Up, rng: StdRng::seed_from_u64(seed) };
         env.reset();
         env
     }
@@ -229,8 +229,8 @@ impl Default for TMaze {
 }
 
 impl Environment for TMaze {
-    /// Discrete junction action. `0 = up`, `1 = down`; only consequential at the
-    /// junction (ignored, as a no-op, while in the corridor).
+    /// Discrete junction action. `0 = up`, `1 = down`; only consequential at
+    /// the junction (ignored, as a no-op, while in the corridor).
     type Action = i64;
 
     /// Snapshot type capturing position, cue, and the cue RNG. See
@@ -241,7 +241,11 @@ impl Environment for TMaze {
         self.position = 0;
         // Draw the cue uniformly at random from the seeded RNG (exactly one draw
         // per episode, so the cue sequence is a pure function of the seed).
-        self.cue = if self.rng.random::<bool>() { Cue::Up } else { Cue::Down };
+        self.cue = if self.rng.random::<bool>() {
+            Cue::Up
+        } else {
+            Cue::Down
+        };
     }
 
     fn get_observation(&self) -> Vec<f32> {
@@ -249,7 +253,11 @@ impl Environment for TMaze {
         //   cue      : nonzero ONLY at step 0 (position 0) — the memory channel.
         //   corridor : 1.0 while in the corridor (positions 0..N-1).
         //   junction : 1.0 at the junction (position N); constant across cues.
-        let cue = if self.position == 0 { self.cue.signal() } else { 0.0 };
+        let cue = if self.position == 0 {
+            self.cue.signal()
+        } else {
+            0.0
+        };
         let at_junction = self.position == self.corridor_length;
         let corridor = if at_junction { 0.0 } else { 1.0 };
         let junction = if at_junction { 1.0 } else { 0.0 };
@@ -271,8 +279,11 @@ impl Environment for TMaze {
         } else {
             // At the junction: the action is the decision. Reward +1 if it
             // matches the cue, -1 otherwise, and the episode terminates.
-            let reward =
-                if action == self.cue.correct_action() { REWARD_CORRECT } else { REWARD_WRONG };
+            let reward = if action == self.cue.correct_action() {
+                REWARD_CORRECT
+            } else {
+                REWARD_WRONG
+            };
             StepResult {
                 observation: self.get_observation(),
                 reward,

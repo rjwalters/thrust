@@ -32,9 +32,10 @@
 //! # I.i.d. vs. burst-structured (correlated) dropout
 //!
 //! The default dropout is **i.i.d.**: each frame is blanked independently with
-//! probability `p`. This is only *partially* memory-hard — at CartPole's control
-//! rate a reactive controller can compensate for isolated blanked frames,
-//! which is why the feedforward baseline does not collapse to chance (#298).
+//! probability `p`. This is only *partially* memory-hard — at CartPole's
+//! control rate a reactive controller can compensate for isolated blanked
+//! frames, which is why the feedforward baseline does not collapse to chance
+//! (#298).
 //!
 //! Issue #302 adds an opt-in **burst-structured** mode (a `burst_len`
 //! parameter) that closes this reactive-compensation loophole while keeping the
