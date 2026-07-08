@@ -11,7 +11,7 @@
 //!
 //! # Backend registration
 //!
-//! [`register_all`] runs the whole eight-group suite for one backend, tagging
+//! [`register_all`] runs the whole twelve-group suite for one backend, tagging
 //! each criterion group with a `suffix` (e.g. `a2c_train_step/ndarray`) so
 //! different backends produce distinct, side-by-side groups. The driver
 //! registers the CPU baseline unconditionally:
@@ -32,8 +32,8 @@
 //! ```
 //!
 //! Because CI is CPU-host only and never sets `wgpu`/`cuda`, the default
-//! `cargo bench --features training` path always emits exactly the same eight
-//! logical groups as before, now suffixed `/ndarray`, and never compiles or
+//! `cargo bench --features training` path always emits exactly the same twelve
+//! logical groups, now suffixed `/ndarray`, and never compiles or
 //! constructs a GPU backend. The GPU registration code only compiles when the
 //! corresponding feature is enabled — see the "Throughput benchmarking on GPU
 //! backends" section of `docs/BURN_BACKENDS.md`.
@@ -99,6 +99,19 @@
 //!   Comparable within the off-policy class only, and NOT across environments
 //!   (Pendulum, not CartPole).
 //!
+//! The final four groups are the large-net Nature-DQN CNN crossover
+//! benchmarks (issue #328). They feed synthetic NCHW `[B, 4, 84, 84]`
+//! observations directly to the Nature-DQN conv stack (decoupled from env
+//! stepping / subprocess IPC per the epic Phase 1 spike), at `b32` and `b256`:
+//! - `nature_dqn_policy_forward` — isolated inference cost (no autograd) of the
+//!   actor-critic `NatureDqnBurnPolicy::forward`.
+//! - `nature_dqn_qnet_forward` — isolated inference cost of the
+//!   `NatureDqnQNetwork::forward` Q-network.
+//! - `nature_dqn_policy_train_step` — forward + backward + Adam step for the
+//!   actor-critic policy (the per-minibatch cost PPO pays on Atari frames).
+//! - `nature_dqn_qnet_train_step` — forward + backward + Adam step for the
+//!   Q-network (the CNN analogue of `dqn_train_step`).
+//!
 //! Run quickly with, e.g.:
 //! ```text
 //! cargo bench --features training --bench trainer_throughput -- \
@@ -116,7 +129,7 @@ use burn::backend::Cuda;
 use burn::backend::Wgpu;
 use burn::{
     backend::{Autodiff, NdArray},
-    optim::AdamConfig,
+    optim::{AdamConfig, GradientsParams, Optimizer},
     tensor::{Int, Tensor, TensorData, backend::AutodiffBackend},
 };
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
@@ -126,7 +139,11 @@ use thrust_rl::{
         Environment,
         games::{cartpole::CartPole, pendulum::PendulumSwingUp},
     },
-    policy::{mlp::MlpBurnPolicy, q_network::QNetworkBurn},
+    policy::{
+        atari_cnn::{NatureDqnBurnPolicy, NatureDqnConfig, NatureDqnQNetwork},
+        mlp::MlpBurnPolicy,
+        q_network::QNetworkBurn,
+    },
     train::{
         A2cConfig, A2cTrainer, BurnOptimizer, DQNConfig, DQNTrainerBurn, PPOConfig, PPOTrainerBurn,
         SacConfig, SacTrainer,
@@ -186,6 +203,21 @@ const SAC_NUM_HIDDEN_LAYERS: usize = 2;
 // Number of timed env steps in the SAC full-loop benchmark. Each step is one
 // Pendulum transition + buffer push + one gradient update.
 const SAC_LOOP_STEPS: usize = 16;
+
+// Nature-DQN CNN bench batch sizes.
+// B=32 mirrors the Nature-DQN paper (Mnih 2015); B=256 probes the GPU
+// crossover point (Atari PPO rollout minibatch upper range). In-tree trainer
+// defaults are batch_size=64 for both DQN and PPO, so these are deliberately
+// distinct from `SYNTH_BATCH`/`DQN_BATCH`. The CNN groups feed synthetic
+// NCHW `[B, 4, 84, 84]` observations directly to the Nature-DQN conv stack.
+const CNN_BATCH_DQN: usize = 32;
+const CNN_BATCH_PPO: usize = 256;
+// Standard ALE legal-action count (policy-/Q-head width).
+const CNN_N_ACTIONS: usize = 18;
+// Learning rate for the CNN train-step optimizer (typical Atari PPO/DQN lr).
+const CNN_LR: f64 = 2.5e-4;
+// Entropy-bonus coefficient in the synthetic actor-critic loss.
+const CNN_ENTROPY_COEF: f32 = 0.01;
 
 /// Build a fresh, seeded A2C trainer on backend `B`.
 fn make_a2c_trainer<B: AutodiffBackend>(
@@ -807,10 +839,175 @@ fn bench_sac_pendulum_steps_per_sec<B: AutodiffBackend>(
     group.finish();
 }
 
-/// Run the full eight-group throughput suite for backend `B`, tagging every
+// ---------------------------------------------------------------------------
+// Nature-DQN CNN benchmarks (large-net crossover measurement, issue #328)
+// ---------------------------------------------------------------------------
+
+/// A deterministic synthetic NCHW observation batch `[batch, 4, 84, 84]` for
+/// the Nature-DQN CNN benches. Pixels are a smooth, bounded, seed-free pattern
+/// in `[0, 1]` so the numbers are comparable run-to-run and across backends;
+/// the network is scale-agnostic, so the exact values do not matter.
+fn cnn_obs<B: AutodiffBackend>(batch: usize, device: &B::Device) -> Tensor<B, 4> {
+    let data: Vec<f32> = (0..batch * 4 * 84 * 84).map(|i| (i as f32 * 0.001).sin().abs()).collect();
+    Tensor::<B, 4>::from_data(TensorData::new(data, [batch, 4, 84, 84]), device)
+}
+
+/// A deterministic synthetic action index vector `[batch]` in `0..n_actions`,
+/// used to drive the actor-critic `evaluate_actions` path in the policy
+/// train-step bench.
+fn cnn_actions<B: AutodiffBackend>(batch: usize, device: &B::Device) -> Tensor<B, 1, Int> {
+    let data: Vec<i64> = (0..batch).map(|i| (i % CNN_N_ACTIONS) as i64).collect();
+    Tensor::<B, 1, Int>::from_data(TensorData::new(data, [batch]), device)
+}
+
+/// Build a fresh, seeded Nature-DQN actor-critic policy on backend `B`.
+fn make_cnn_policy<B: AutodiffBackend>(device: &B::Device) -> NatureDqnBurnPolicy<B> {
+    NatureDqnBurnPolicy::<B>::with_config(
+        CNN_N_ACTIONS,
+        NatureDqnConfig::default().with_seed(42),
+        device,
+    )
+}
+
+/// Build a fresh, seeded Nature-DQN Q-network on backend `B`.
+fn make_cnn_qnet<B: AutodiffBackend>(device: &B::Device) -> NatureDqnQNetwork<B> {
+    NatureDqnQNetwork::<B>::with_config(
+        CNN_N_ACTIONS,
+        NatureDqnConfig::default().with_seed(42),
+        device,
+    )
+}
+
+/// `nature_dqn_policy_forward` — isolated **inference** cost (no autograd) of
+/// [`NatureDqnBurnPolicy::forward`] on synthetic NCHW batches at B=32 and
+/// B=256. The setup closure (untimed) builds the policy and input; the timed
+/// closure runs one forward pass over the full Nature-DQN conv stack.
+fn bench_nature_dqn_policy_forward<B: AutodiffBackend>(
+    c: &mut Criterion,
+    device: &B::Device,
+    suffix: &str,
+) {
+    let mut group = c.benchmark_group(format!("nature_dqn_policy_forward/{suffix}"));
+    for &batch in &[CNN_BATCH_DQN, CNN_BATCH_PPO] {
+        group.throughput(Throughput::Elements(batch as u64));
+        group.bench_function(format!("b{batch}"), |b| {
+            b.iter_batched(
+                || (make_cnn_policy::<B>(device), cnn_obs::<B>(batch, device)),
+                |(policy, obs)| {
+                    let (logits, values) = policy.forward(obs);
+                    black_box((logits, values))
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// `nature_dqn_qnet_forward` — isolated **inference** cost (no autograd) of
+/// [`NatureDqnQNetwork::forward`] on synthetic NCHW batches at B=32 and B=256.
+fn bench_nature_dqn_qnet_forward<B: AutodiffBackend>(
+    c: &mut Criterion,
+    device: &B::Device,
+    suffix: &str,
+) {
+    let mut group = c.benchmark_group(format!("nature_dqn_qnet_forward/{suffix}"));
+    for &batch in &[CNN_BATCH_DQN, CNN_BATCH_PPO] {
+        group.throughput(Throughput::Elements(batch as u64));
+        group.bench_function(format!("b{batch}"), |b| {
+            b.iter_batched(
+                || (make_cnn_qnet::<B>(device), cnn_obs::<B>(batch, device)),
+                |(qnet, obs)| {
+                    let q_values = qnet.forward(obs);
+                    black_box(q_values)
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// `nature_dqn_policy_train_step` — **forward + backward + Adam step** for the
+/// Nature-DQN actor-critic policy: the per-minibatch training cost the PPO
+/// trainer would pay on Atari observations. The setup closure (untimed) builds
+/// a fresh seeded policy + Adam optimizer + synthetic obs/action batch; the
+/// timed closure runs a synthetic actor-critic loss (policy-gradient + value
+/// MSE-to-zero + entropy bonus), a full `backward()`, and one optimizer step.
+fn bench_nature_dqn_policy_train_step<B: AutodiffBackend>(
+    c: &mut Criterion,
+    device: &B::Device,
+    suffix: &str,
+) {
+    let mut group = c.benchmark_group(format!("nature_dqn_policy_train_step/{suffix}"));
+    for &batch in &[CNN_BATCH_DQN, CNN_BATCH_PPO] {
+        group.throughput(Throughput::Elements(batch as u64));
+        group.bench_function(format!("b{batch}"), |b| {
+            b.iter_batched(
+                || {
+                    let policy = make_cnn_policy::<B>(device);
+                    let inner_opt = AdamConfig::new().init();
+                    let opt: BurnOptimizer<B, NatureDqnBurnPolicy<B>, _> =
+                        BurnOptimizer::new(inner_opt, CNN_LR);
+                    (policy, opt, cnn_obs::<B>(batch, device), cnn_actions::<B>(batch, device))
+                },
+                |(policy, mut opt, obs, actions)| {
+                    let (log_probs, entropy, values) = policy.evaluate_actions(obs, actions);
+                    // Synthetic actor-critic loss: policy-gradient surrogate +
+                    // value MSE-to-zero + entropy bonus. Exercises both heads and
+                    // the full conv-trunk backward graph.
+                    let loss = log_probs.mean().neg() + values.powf_scalar(2.0).mean()
+                        - entropy.mean().mul_scalar(CNN_ENTROPY_COEF);
+                    let grads = GradientsParams::from_grads(loss.backward(), &policy);
+                    let policy = opt.inner_mut().step(CNN_LR, policy, grads);
+                    black_box(policy)
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// `nature_dqn_qnet_train_step` — **forward + backward + Adam step** for the
+/// Nature-DQN Q-network (the CNN analogue of the MLP `dqn_train_step` group).
+/// Dummy loss `q_values.powf_scalar(2.0).mean()` (MSE against zero) is enough
+/// to exercise the full backward graph. B=32 and B=256.
+fn bench_nature_dqn_qnet_train_step<B: AutodiffBackend>(
+    c: &mut Criterion,
+    device: &B::Device,
+    suffix: &str,
+) {
+    let mut group = c.benchmark_group(format!("nature_dqn_qnet_train_step/{suffix}"));
+    for &batch in &[CNN_BATCH_DQN, CNN_BATCH_PPO] {
+        group.throughput(Throughput::Elements(batch as u64));
+        group.bench_function(format!("b{batch}"), |b| {
+            b.iter_batched(
+                || {
+                    let qnet = make_cnn_qnet::<B>(device);
+                    let inner_opt = AdamConfig::new().init();
+                    let opt: BurnOptimizer<B, NatureDqnQNetwork<B>, _> =
+                        BurnOptimizer::new(inner_opt, CNN_LR);
+                    (qnet, opt, cnn_obs::<B>(batch, device))
+                },
+                |(qnet, mut opt, obs)| {
+                    let q_values = qnet.forward(obs);
+                    let loss = q_values.powf_scalar(2.0).mean();
+                    let grads = GradientsParams::from_grads(loss.backward(), &qnet);
+                    let qnet = opt.inner_mut().step(CNN_LR, qnet, grads);
+                    black_box(qnet)
+                },
+                criterion::BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+}
+
+/// Run the full twelve-group throughput suite for backend `B`, tagging every
 /// criterion group with `suffix` (e.g. `"ndarray"`) so distinct backends
 /// produce side-by-side, non-colliding groups. This is the single seam through
-/// which a backend is registered — a future PR can call this once more behind a
+/// which a backend is registered — the GPU driver calls this once more behind a
 /// `#[cfg(feature = "wgpu")]` / `#[cfg(feature = "cuda")]` gate without
 /// touching any bench body.
 fn register_all<B: AutodiffBackend>(c: &mut Criterion, device: &B::Device, suffix: &str) {
@@ -822,6 +1019,10 @@ fn register_all<B: AutodiffBackend>(c: &mut Criterion, device: &B::Device, suffi
     bench_dqn_cartpole_steps_per_sec::<B>(c, device, suffix);
     bench_sac_train_step::<B>(c, device, suffix);
     bench_sac_pendulum_steps_per_sec::<B>(c, device, suffix);
+    bench_nature_dqn_policy_forward::<B>(c, device, suffix);
+    bench_nature_dqn_qnet_forward::<B>(c, device, suffix);
+    bench_nature_dqn_policy_train_step::<B>(c, device, suffix);
+    bench_nature_dqn_qnet_train_step::<B>(c, device, suffix);
 }
 
 /// Criterion driver. Registers the CPU `ndarray` baseline unconditionally, then
