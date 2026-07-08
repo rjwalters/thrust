@@ -37,7 +37,7 @@ use thrust_rl::env::{
 fn obs(marker: f32, reward: f32, terminated: bool) -> Response {
     let mut pixels = vec![0.0f32; OBS_LEN];
     pixels[0] = marker;
-    Response::Obs { terminated, truncated: false, reward, pixels }
+    Response::Obs { terminated, truncated: false, reward, lives: 0, pixels }
 }
 
 /// Spin up a mock worker on a loopback socket and return an [`AtariEnv`] wired

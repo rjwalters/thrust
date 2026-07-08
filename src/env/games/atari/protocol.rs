@@ -29,7 +29,7 @@
 //!
 //! | Tag  | Name    | Payload                                                        |
 //! |------|---------|---------------------------------------------------------------|
-//! | 0x81 | `Obs`   | 1-byte terminated, 1-byte truncated, 4-byte LE `f32` reward, then `H × W × C` LE `f32` pixels |
+//! | 0x81 | `Obs`   | 1-byte terminated, 1-byte truncated, 4-byte LE `f32` reward, 4-byte LE `u32` lives, then `H × W × C` LE `f32` pixels |
 //! | 0x82 | `State` | opaque ALE `cloneSystemState` blob                            |
 //! | 0x83 | `Error` | UTF-8 error string                                            |
 
@@ -89,6 +89,9 @@ pub enum Response {
         truncated: bool,
         /// Reward accumulated over the transition.
         reward: f32,
+        /// Number of lives remaining after the transition (`ale.lives()`),
+        /// consumed by the preprocessing wrapper's life-loss termination.
+        lives: u32,
         /// Raw pixel data, row-major `H × W × C`, values in `0.0..=255.0`.
         pixels: Vec<f32>,
     },
@@ -176,12 +179,13 @@ pub fn encode_response(resp: &Response) -> Vec<u8> {
 
 fn response_payload(resp: &Response) -> Vec<u8> {
     match resp {
-        Response::Obs { terminated, truncated, reward, pixels } => {
-            let mut p = Vec::with_capacity(7 + pixels.len() * 4);
+        Response::Obs { terminated, truncated, reward, lives, pixels } => {
+            let mut p = Vec::with_capacity(11 + pixels.len() * 4);
             p.push(TAG_OBS);
             p.push(u8::from(*terminated));
             p.push(u8::from(*truncated));
             p.extend_from_slice(&reward.to_le_bytes());
+            p.extend_from_slice(&lives.to_le_bytes());
             for px in pixels {
                 p.extend_from_slice(&px.to_le_bytes());
             }
@@ -215,13 +219,14 @@ pub fn decode_response(payload: &[u8]) -> io::Result<Response> {
         payload.split_first().ok_or_else(|| invalid_data("empty response payload"))?;
     match tag {
         TAG_OBS => {
-            if rest.len() < 6 {
-                return Err(invalid_data("OBS payload shorter than its 6-byte header"));
+            if rest.len() < 10 {
+                return Err(invalid_data("OBS payload shorter than its 10-byte header"));
             }
             let terminated = rest[0] != 0;
             let truncated = rest[1] != 0;
             let reward = f32::from_le_bytes(rest[2..6].try_into().unwrap());
-            let pixel_bytes = &rest[6..];
+            let lives = u32::from_le_bytes(rest[6..10].try_into().unwrap());
+            let pixel_bytes = &rest[10..];
             if !pixel_bytes.len().is_multiple_of(4) {
                 return Err(invalid_data("OBS pixel byte count is not a multiple of 4"));
             }
@@ -229,7 +234,7 @@ pub fn decode_response(payload: &[u8]) -> io::Result<Response> {
             // `as_chunks` remainder is always empty.
             let (chunks, _rest) = pixel_bytes.as_chunks::<4>();
             let pixels = chunks.iter().map(|c| f32::from_le_bytes(*c)).collect();
-            Ok(Response::Obs { terminated, truncated, reward, pixels })
+            Ok(Response::Obs { terminated, truncated, reward, lives, pixels })
         }
         TAG_STATE => Ok(Response::State(rest.to_vec())),
         TAG_ERROR => Ok(Response::Error(String::from_utf8_lossy(rest).into_owned())),
@@ -319,14 +324,16 @@ mod tests {
     #[test]
     fn codec_obs_response_round_trip() {
         let pixels: Vec<f32> = (0..OBS_LEN).map(|i| (i % 256) as f32).collect();
-        let resp = Response::Obs { terminated: false, truncated: true, reward: 1.0, pixels };
+        let resp =
+            Response::Obs { terminated: false, truncated: true, reward: 1.0, lives: 3, pixels };
         let frame = encode_response(&resp);
         let decoded = decode_response(payload_of(&frame)).unwrap();
         match decoded {
-            Response::Obs { terminated, truncated, reward, pixels } => {
+            Response::Obs { terminated, truncated, reward, lives, pixels } => {
                 assert!(!terminated);
                 assert!(truncated);
                 assert_eq!(reward, 1.0);
+                assert_eq!(lives, 3);
                 assert_eq!(pixels.len(), OBS_LEN);
                 assert_eq!(pixels[1], 1.0);
                 assert_eq!(pixels[255], 255.0);
@@ -371,6 +378,6 @@ mod tests {
         assert!(decode_command(&[]).is_err());
         assert!(decode_command(&[0xEE]).is_err());
         assert!(decode_command(&[TAG_RESET, 1, 2]).is_err()); // wrong seed length
-        assert!(decode_response(&[TAG_OBS, 0, 0, 0]).is_err()); // truncated header
+        assert!(decode_response(&[TAG_OBS, 0, 0, 0]).is_err()); // truncated header (< 10 bytes)
     }
 }

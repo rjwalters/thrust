@@ -52,9 +52,11 @@
 //! ```
 
 pub mod error;
+pub mod preprocess;
 pub mod protocol;
 
 mod env;
 
 pub use env::{AtariEnv, DEFAULT_WORKER_SCRIPT, ENV_PYTHON, ENV_WORKER_SCRIPT, PONG_ACTION_COUNT};
 pub use error::AtariEnvError;
+pub use preprocess::{AtariPreprocess, PreprocessConfig, PreprocessState};

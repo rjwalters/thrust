@@ -25,6 +25,7 @@ Wire format (must stay in lock-step with ``src/env/games/atari/protocol.rs``):
 
   Python -> Rust (responses):
     0x81 OBS    1-byte terminated, 1-byte truncated, 4-byte LE f32 reward,
+                4-byte LE u32 lives,
                 then H*W*C little-endian f32 pixels (raw 210x160x3 RGB)
     0x82 STATE  opaque ALE cloneSystemState blob
     0x83 ERROR  UTF-8 error string
@@ -87,9 +88,14 @@ def send_state(blob):
     write_frame(bytes([TAG_STATE]) + bytes(blob))
 
 
-def send_obs(terminated, truncated, reward, pixel_bytes):
+def send_obs(terminated, truncated, reward, lives, pixel_bytes):
     header = bytes([TAG_OBS, 1 if terminated else 0, 1 if truncated else 0])
-    write_frame(header + struct.pack("<f", float(reward)) + pixel_bytes)
+    write_frame(
+        header
+        + struct.pack("<f", float(reward))
+        + struct.pack("<I", int(lives) & 0xFFFFFFFF)
+        + pixel_bytes
+    )
 
 
 def _resolve_rom(rom_id):
@@ -252,7 +258,7 @@ def main():
                     _load_rom(ale, rom_path, seed)
                     loaded_seed = seed
                 ale.reset_game()
-                send_obs(ale.game_over(), False, 0.0, _screen_bytes(ale))
+                send_obs(ale.game_over(), False, 0.0, ale.lives(), _screen_bytes(ale))
             elif tag == TAG_STEP:
                 (action_index,) = struct.unpack("<i", body)
                 if 0 <= action_index < len(minimal_actions):
@@ -261,12 +267,12 @@ def main():
                     action = minimal_actions[0]
                 reward = ale.act(action)
                 terminated = ale.game_over()
-                send_obs(terminated, False, reward, _screen_bytes(ale))
+                send_obs(terminated, False, reward, ale.lives(), _screen_bytes(ale))
             elif tag == TAG_CLONE_STATE:
                 send_state(_clone_state_bytes(ale))
             elif tag == TAG_RESTORE_STATE:
                 _restore_state_bytes(ale, body)
-                send_obs(ale.game_over(), False, 0.0, _screen_bytes(ale))
+                send_obs(ale.game_over(), False, 0.0, ale.lives(), _screen_bytes(ale))
             elif tag == TAG_CLOSE:
                 return 0
             else:
