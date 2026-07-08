@@ -13,16 +13,18 @@ report is committed as a post-run follow-up per the #298 / #306 protocol.
 
 Pong's random floor is ≈ −21. **Any positive mean episode score beats random**
 and is the decisive success signal. Published baselines: DQN ≈ 18.9 (Mnih 2015,
-50M **raw frames**) / PPO ≈ 20.7. Pong typically crosses zero well within ~10M
-**raw frames** per the spike analysis in `docs/ALE_BINDING_STRATEGY.md`.
+50M **raw frames**) / PPO ≈ 20.7. Under the **sticky-action** protocol (p=0.25,
+Machado et al. 2018) crossing zero is typically seen within **10–20M raw
+frames** — later than the classic no-sticky DQN curves; the 5M wrapper step
+(20M raw frame) budget is sized to cover this range.
 
 **Units — frames vs. wrapper steps.** `AtariPreprocess` applies **frame-skip 4**,
 so one wrapper `step()` = 4 raw ALE frames. The loop counts **wrapper steps**
 (`TOTAL_TIMESTEPS` is a wrapper-step budget), while the literature above counts
 **raw frames**. The default `TOTAL_TIMESTEPS=5_000_000` is therefore
-**5M wrapper steps = 20M raw frames**, which is ~2× the ~10M raw frames Pong
-needs to cross zero — conservatively over-budgeted for a *positive* score, not a
-ceiling score.
+**5M wrapper steps = 20M raw frames**, which covers the 10–20M raw frame band in
+which sticky-action Pong typically crosses zero — budgeted for a *positive*
+score, not a ceiling score.
 
 ## Replay-buffer memory (honest f32 math)
 
@@ -45,7 +47,7 @@ requires a new buffer type — out of scope for this issue.
 
 | Parameter | Mnih 2015 (50M raw frames) | This run (5M wrapper steps ≈ 20M raw frames) |
 |---|---|---|
-| `learning_rate` | 2.5e-4 (RMSProp) | 2.5e-4 (Adam) |
+| `learning_rate` | 2.5e-4 (RMSProp) | 6.25e-5 (Adam; Rainbow/Dopamine) |
 | `batch_size` | 32 | 32 |
 | `buffer_capacity` | 1M | 100_000 (f32 budget) |
 | `min_buffer_size` | 50_000 | 10_000 |
@@ -68,12 +70,38 @@ override via env var).
 | `BUFFER_CAPACITY` | `100_000` | Replay capacity (see RAM math). |
 | `MIN_BUFFER_SIZE` | `10_000` | Warmup transitions before updates. |
 | `LOG_INTERVAL` | `10_000` | Env-step period for stdout logs + CSV rows. |
+| `LEARNING_RATE` | `6.25e-5` | Adam learning rate (Atari standard; Rainbow/Dopamine). Must be finite and positive. |
 | `CURVE_CSV` | *(unset)* | Path for the `env_steps,mean_episode_reward` CSV. |
 | `CHECKPOINT_INTERVAL` | *(unset)* | Env-step period for weight snapshots. |
 | `CHECKPOINT_DIR` | `checkpoints` | Directory for `.bin` snapshots. |
 | `ATARI_PYTHON` | `python3` | Interpreter with `ale-py` installed. |
 | `ATARI_WORKER_SCRIPT` | `envs/atari/ale_worker.py` | Worker path (relative → run from repo root). |
 | `ALE_ROM_PATH` | *(unset)* | Override ROM lookup (dir or `.bin` file). |
+
+## Experiment log
+
+### Run 1 — Adam 2.5e-4 (negative result, 2026-07-08)
+
+Stopped at the pre-declared no-learning decision point: **9.56M raw frames
+(2.39M wrapper steps, ~6.2 h on alc-2 RTX 4090)**. `avg(last≤100)` never
+exceeded −20.27 and sat at −20.8 ± 0.1 from ~1M wrapper steps onward (ε
+floor). Greedy policy marginally worse than random — flat curve with zero
+upward trend over 1.4M post-floor steps.
+
+**Diagnosis:** Adam 2.5e-4 is the Mnih 2015 RMSProp rate; the Atari-standard
+Adam rate is 6.25e-5 (Rainbow, Dopamine). The hyperparameter table's Adam
+column was copied from the RMSProp column without adaptation (see issue #342).
+
+**Resolution:** Default changed to 6.25e-5 in this PR. See run 2 below for
+the corrected-LR result. Artifacts preserved on alc-2 under
+`~/pong_dqn_run1_lr2.5e-4/` (curve CSV, full log, 4 checkpoints at 500k
+intervals).
+
+### Run 2 — Adam 6.25e-5 (corrected LR)
+
+_Placeholder — to be filled in post-run. This is the single-variable rerun
+isolating the LR change (6.25e-5 vs. run 1's 2.5e-4); no other hyperparameter
+changes. Append the crossing-zero step and final mean score here._
 
 ## Phase 0 — pre-flight (once, before the run)
 

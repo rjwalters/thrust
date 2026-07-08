@@ -74,7 +74,7 @@
 //!
 //! | Parameter | Mnih 2015 (50M raw frames) | This run (5M wrapper steps ≈ 20M raw frames) |
 //! |---|---|---|
-//! | `learning_rate` | 2.5e-4 (RMSProp) | 2.5e-4 (Adam) |
+//! | `learning_rate` | 2.5e-4 (RMSProp) | 6.25e-5 (Adam; Rainbow/Dopamine) |
 //! | `batch_size` | 32 | 32 |
 //! | `buffer_capacity` | 1M | 100_000 (f32 budget) |
 //! | `min_buffer_size` | 50_000 | 10_000 |
@@ -114,6 +114,8 @@
 //!
 //! # Env-var knobs
 //!
+//! - `LEARNING_RATE` (default `6.25e-5`) — Adam learning rate (Atari standard;
+//!   Rainbow/Dopamine).
 //! - `TOTAL_TIMESTEPS` (default `5_000_000`) — total **wrapper steps**
 //!   (frame-skip 4, so ≈ 4× that many raw ALE frames).
 //! - `BUFFER_CAPACITY` (default `100_000`) — replay capacity (see RAM math).
@@ -165,6 +167,10 @@ const CHANNELS: usize = 4;
 const HEIGHT: usize = 84;
 const WIDTH: usize = 84;
 
+/// Atari-standard Adam LR (Rainbow / Dopamine defaults). 4× lower than the
+/// RMSProp 2.5e-4 from Mnih 2015; see issue #342.
+const DEFAULT_LEARNING_RATE: f64 = 6.25e-5;
+
 /// Total env steps (default; overridable via `TOTAL_TIMESTEPS`).
 const DEFAULT_TIMESTEPS: usize = 5_000_000;
 /// Replay capacity (default; overridable via `BUFFER_CAPACITY`).
@@ -188,6 +194,7 @@ const DEFAULT_LOG_INTERVAL: usize = 10_000;
 fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
+    let learning_rate = env_f64("LEARNING_RATE", DEFAULT_LEARNING_RATE)?;
     let total_timesteps = env_usize("TOTAL_TIMESTEPS", DEFAULT_TIMESTEPS)?;
     let buffer_capacity = env_usize("BUFFER_CAPACITY", DEFAULT_BUFFER_CAPACITY)?;
     let min_buffer_size = env_usize("MIN_BUFFER_SIZE", DEFAULT_MIN_BUFFER_SIZE)?;
@@ -228,6 +235,7 @@ fn main() -> Result<()> {
         buffer_gib(buffer_capacity, obs_len)
     );
     tracing::info!("  min_buffer_size = {}", min_buffer_size);
+    tracing::info!("  learning_rate   = {}  (Adam)", learning_rate);
 
     let device = default_burn_device::<B>();
 
@@ -238,7 +246,7 @@ fn main() -> Result<()> {
     // Mnih-2015-adapted hyperparameters (see module docs). Hard target sync
     // (no soft tau) matches the Nature-DQN spec.
     let config = DQNConfig::new()
-        .learning_rate(2.5e-4)
+        .learning_rate(learning_rate)
         .batch_size(32)
         .buffer_capacity(buffer_capacity)
         .min_buffer_size(min_buffer_size)
@@ -407,6 +415,31 @@ fn env_usize(key: &str, default: usize) -> Result<usize> {
         Ok(s) => s
             .parse::<usize>()
             .map_err(|e| anyhow::anyhow!("{key}={s:?} is not a valid usize: {e}")),
+        Err(_) => Ok(default),
+    }
+}
+
+/// Parse an `f64` env var, falling back to `default` only when the var is
+/// **unset**, mirroring [`env_usize`]'s fail-loud semantics: a present-but-
+/// unparseable value (e.g. `LEARNING_RATE=abc`) is an operator error on a
+/// multi-hour run and fails loudly rather than silently reverting to default.
+///
+/// The positive-finite guard here is **learning-rate-specific**: a
+/// non-finite (`inf`/`NaN`) or non-positive (`0`, negative) LR is a broken run,
+/// so it errors rather than silently producing a stalled or NaN-loss training
+/// loop. Future `env_f64` callers that legitimately accept zero (e.g. an
+/// epsilon floor) should relax or replace this guard for their own knob.
+fn env_f64(key: &str, default: f64) -> Result<f64> {
+    match std::env::var(key) {
+        Ok(s) => {
+            let v = s
+                .parse::<f64>()
+                .map_err(|e| anyhow::anyhow!("{key}={s:?} is not a valid f64: {e}"))?;
+            if !v.is_finite() || v <= 0.0 {
+                anyhow::bail!("{key}={s:?} must be a finite positive f64");
+            }
+            Ok(v)
+        }
         Err(_) => Ok(default),
     }
 }
