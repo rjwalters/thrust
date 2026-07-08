@@ -895,7 +895,10 @@ fn bench_nature_dqn_policy_forward<B: AutodiffBackend>(
                 || (make_cnn_policy::<B>(device), cnn_obs::<B>(batch, device)),
                 |(policy, obs)| {
                     let (logits, values) = policy.forward(obs);
-                    black_box((logits, values))
+                    black_box((logits, values));
+                    // Drain the backend command queue so criterion times the full
+                    // GPU work, not just kernel enqueue. No-op on NdArray.
+                    let _ = B::sync(device);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -919,7 +922,10 @@ fn bench_nature_dqn_qnet_forward<B: AutodiffBackend>(
                 || (make_cnn_qnet::<B>(device), cnn_obs::<B>(batch, device)),
                 |(qnet, obs)| {
                     let q_values = qnet.forward(obs);
-                    black_box(q_values)
+                    black_box(q_values);
+                    // Drain the backend command queue so criterion times the full
+                    // GPU work, not just kernel enqueue. No-op on NdArray.
+                    let _ = B::sync(device);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -960,7 +966,10 @@ fn bench_nature_dqn_policy_train_step<B: AutodiffBackend>(
                         - entropy.mean().mul_scalar(CNN_ENTROPY_COEF);
                     let grads = GradientsParams::from_grads(loss.backward(), &policy);
                     let policy = opt.inner_mut().step(CNN_LR, policy, grads);
-                    black_box(policy)
+                    black_box(policy);
+                    // Drain the backend command queue so criterion times the full
+                    // GPU work, not just kernel enqueue. No-op on NdArray.
+                    let _ = B::sync(device);
                 },
                 criterion::BatchSize::SmallInput,
             );
@@ -995,7 +1004,10 @@ fn bench_nature_dqn_qnet_train_step<B: AutodiffBackend>(
                     let loss = q_values.powf_scalar(2.0).mean();
                     let grads = GradientsParams::from_grads(loss.backward(), &qnet);
                     let qnet = opt.inner_mut().step(CNN_LR, qnet, grads);
-                    black_box(qnet)
+                    black_box(qnet);
+                    // Drain the backend command queue so criterion times the full
+                    // GPU work, not just kernel enqueue. No-op on NdArray.
+                    let _ = B::sync(device);
                 },
                 criterion::BatchSize::SmallInput,
             );

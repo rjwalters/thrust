@@ -313,39 +313,55 @@ cargo bench --features "training,wgpu" --bench trainer_throughput \
     -- --sample-size 10 --warm-up-time 2 --measurement-time 10 'nature_dqn.*wgpu'
 ```
 
+> **Methodology note (issue #335).** The four `nature_dqn_*` timed closures now
+> include an explicit `B::sync(device)` call to drain the GPU command queue
+> *before* criterion stops the clock. Previously they returned device-resident
+> tensors/models without any host read-back, so on async backends (wgpu/Metal,
+> cuda) some GPU work could be deferred past the end of the timed region,
+> under-reporting true compute time. `B::sync` is a no-op on NdArray (CPU numbers
+> unaffected). The wgpu/Metal numbers below were **re-measured with the sync in
+> place** and are materially higher for the forward groups than the original
+> #328 run — the earlier numbers under-counted deferred kernel work. The
+> pending cuda run on alc-2 will use this corrected bench code.
+
 Median per-iteration wall-clock, lower is better. "wgpu faster ×" is
 `ndarray / wgpu` — note the direction is **inverted** from the small-net tables
 above (there CPU won; here the GPU wins, often by two orders of magnitude):
 
 | Benchmark group | NdArray (CPU) | wgpu / Metal | cuda | wgpu faster × |
 | --- | --- | --- | --- | --- |
-| `nature_dqn_policy_forward` (b32) | 181.5 ms | 1.88 ms | **cuda: pending — run on alc-2** | ~96× |
-| `nature_dqn_policy_forward` (b256) | 1.449 s | 13.1 ms | **cuda: pending — run on alc-2** | ~110× |
-| `nature_dqn_qnet_forward` (b32) | 181.9 ms | 5.73 ms ‡ | **cuda: pending — run on alc-2** | ~32× |
-| `nature_dqn_qnet_forward` (b256) | 1.422 s | 19.5 ms | **cuda: pending — run on alc-2** | ~73× |
-| `nature_dqn_policy_train_step` (b32) | 1.968 s | 437 ms † | **cuda: pending — run on alc-2** | ~4.5× † |
-| `nature_dqn_policy_train_step` (b256) | 15.58 s | 737 ms † | **cuda: pending — run on alc-2** | ~21× † |
-| `nature_dqn_qnet_train_step` (b32) | 1.951 s | 16.9 ms | **cuda: pending — run on alc-2** | ~115× |
-| `nature_dqn_qnet_train_step` (b256) | 15.51 s | 219 ms | **cuda: pending — run on alc-2** | ~71× |
+| `nature_dqn_policy_forward` (b32) | 114.4 ms | 13.73 ms | **cuda: pending — run on alc-2** | ~8.3× |
+| `nature_dqn_policy_forward` (b256) | 913.9 ms | 35.74 ms | **cuda: pending — run on alc-2** | ~26× |
+| `nature_dqn_qnet_forward` (b32) | 115.6 ms | 15.48 ms | **cuda: pending — run on alc-2** | ~7.5× |
+| `nature_dqn_qnet_forward` (b256) | 922.2 ms | 113.7 ms ‡ | **cuda: pending — run on alc-2** | ~8.1× ‡ |
+| `nature_dqn_policy_train_step` (b32) | 1.224 s | 29.96 ms | **cuda: pending — run on alc-2** | ~41× |
+| `nature_dqn_policy_train_step` (b256) | 9.873 s | 169.5 ms | **cuda: pending — run on alc-2** | ~58× |
+| `nature_dqn_qnet_train_step` (b32) | 1.238 s | 27.85 ms | **cuda: pending — run on alc-2** | ~45× |
+| `nature_dqn_qnet_train_step` (b256) | 10.63 s | 167.1 ms | **cuda: pending — run on alc-2** | ~64× |
 
-† The `nature_dqn_policy_train_step/wgpu` rows did not stabilize at 10 samples —
-criterion reported very wide confidence intervals (b32 `[9.68 ms, 437 ms,
-1.28 s]`; b256 `[196 ms, 737 ms, 1.74 s]`), the same JIT-kernel / autotune
-contamination seen on the smallest cuda group in the #219 run above. The stable
-lower bounds (~10 ms at b32, ~196 ms at b256) line up with the sibling
-`qnet_train_step` numbers and the forward passes, so the true steady-state speedup
-is in the same ~70–200× band as the other train-step rows; treat the ~4.5×/~21×
-medians as autotune-inflated floors, not the real ratio. A longer run
-(`--sample-size 50 --measurement-time 30`) or a fixed-module optimizer that does
-not rebuild per iteration would tighten these.
+All eight rows above were **re-measured after the in-region `B::sync(device)`
+fix (issue #335)**, replacing the original #328 numbers. The most visible change
+is the forward groups: forcing a command-queue drain inside the timed region
+pushed `policy_forward/b32` from a reported 1.88 ms up to 13.73 ms and
+`qnet_forward/b256` from 19.5 ms up to 113.7 ms — the earlier figures were
+under-counting deferred kernel work. The `policy_train_step/wgpu` rows, which
+previously showed autotune-contaminated wide intervals (medians of 437 ms /
+737 ms), now stabilize cleanly at ~30 ms / ~170 ms once the sync bounds the
+per-iteration work — confirming the earlier medians were autotune-inflated
+floors rather than real steady-state cost. The GPU still wins every row
+decisively; the ratios are simply more honest.
 
-‡ `nature_dqn_qnet_forward/wgpu/b32` also showed a wider-than-usual interval
-(`[2.81 ms, 5.73 ms, 13.3 ms]`) — first-use autotune on the smallest batch. The
-b256 sibling (19.5 ms, tight) is the more reliable read.
+‡ `nature_dqn_qnet_forward/wgpu/b256` showed a wider-than-usual interval
+(`[35.85 ms, 113.7 ms, 159.2 ms]`) — first-use autotune contamination on this
+group. Treat the ~8× ratio as a conservative floor; the tight b32 sibling
+(15.48 ms) and the sibling forward groups suggest the steady-state ratio is
+higher. A longer run (`--sample-size 50 --measurement-time 30`) would tighten it.
 
 **cuda: pending operator run on alc-2.** Command:
 `cargo bench --features "training,cuda" --bench trainer_throughput --warm-up-time 2 --measurement-time 10 -- nature_dqn`.
-Host: `sphere@alc-2` over Tailscale (Ubuntu 24.04, RTX 4090, CUDA 12.x). See the
+The bench code now includes the in-region `B::sync(device)` fix (issue #335), so
+this run will time full GPU work without the operator needing any change. Host:
+`sphere@alc-2` over Tailscale (Ubuntu 24.04, RTX 4090, CUDA 12.x). See the
 [cuda column (issue #219)](#cuda-column-issue-219-measured-2026-06-28) above for
 environment-setup reference. The operator fills in the cuda column, removes the
 placeholders, and updates the verdict below if the cuda result changes the
@@ -377,15 +393,19 @@ validation-run observations above.
 
 **The CNN workload flips the small-net conclusion — decisively, at both B=32 and
 B=256.** Where the 4–64-unit MLP groups had CPU winning by 4.4–9.5×, the
-Nature-DQN conv stack has wgpu/Metal winning by **~30–115×** on every group that
-stabilized (both forward passes, both Q-net rows, and — once the autotune floor
-is discounted — the policy train step too; see the † note). The crossover is not
-marginal and does not require B=256 to appear: even at the Nature-DQN paper batch
-of 32, `nature_dqn_policy_forward` is ~96× faster on the GPU and
-`nature_dqn_qnet_train_step` ~115× faster. Larger batch widens the absolute gap
-(CPU scales roughly linearly in batch — 181 ms → 1.45 s forward — while the GPU
-grows far more slowly, 1.9 ms → 13 ms) but the *sign* of the verdict is already
-settled at B=32. This is exactly the prediction the small-net Interpretation
+Nature-DQN conv stack has wgpu/Metal winning by **~7–64×** on every group
+(both forward passes, both Q-net rows, and — now that the in-region sync bounds
+its per-iteration cost — the policy train step too). These ratios are measured
+with the `B::sync(device)` fix (issue #335) in the timed region, so they reflect
+full GPU compute; they are lower than the original #328 forward-group figures
+precisely because the earlier run under-counted deferred kernel work. The
+crossover is not marginal and does not require B=256 to appear: even at the
+Nature-DQN paper batch of 32, `nature_dqn_policy_forward` is ~8× faster on the
+GPU and `nature_dqn_qnet_train_step` ~45× faster. Larger batch widens the gap
+(CPU scales roughly linearly in batch — 114 ms → 914 ms forward — while the GPU
+grows far more slowly, 13.7 ms → 35.7 ms), and it is the train-step groups
+(forward + backward + optimizer, the most arithmetic per launch) that show the
+largest advantage. This is exactly the prediction the small-net Interpretation
 made: raise arithmetic-per-launch above the dispatch-overhead floor — here via a
 convolutional trunk with ~1.69 M parameters over 84×84 frames — and the GPU's
 throughput advantage dominates.
@@ -396,7 +416,7 @@ For the Nature-DQN / Atari-scale image workloads that motivated Epic #306, the
 **wgpu** (Metal/Vulkan) — or **cuda** on Linux+NVIDIA — over NdArray. NdArray
 (CPU) remains the right default only for the small-MLP control tasks (CartPole,
 Pendulum) that dominate the rest of the suite; it is not competitive on the CNN
-policy (a 15.5 s CPU train step at B=256 versus a sub-second GPU step). The
+policy (a 9.9 s CPU train step at B=256 versus a sub-second, ~170 ms GPU step). The
 small-net default is unchanged; the large-net default is now GPU.
 
 **cuda status.** The large-net wgpu/Metal numbers above are measured and
