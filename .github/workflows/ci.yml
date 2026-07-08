@@ -49,6 +49,12 @@ jobs:
       # silently the way the base gate does for `training`.
       - name: cargo clippy --all-targets --features "training,env-bucket-brigade" -- -D warnings
         run: cargo clippy --all-targets --features "training,env-bucket-brigade" -- -D warnings
+      # Also lint the optional env-atari feature. Option D (subprocess via
+      # ale-py) adds no native dep, so this compiles safely on a bare runner
+      # with no ALE present; the live-emulator tests are runtime-skipped when
+      # ale-py is absent. See docs/ALE_BINDING_STRATEGY.md.
+      - name: cargo clippy --all-targets --features "training,env-atari" -- -D warnings
+        run: cargo clippy --all-targets --features "training,env-atari" -- -D warnings
 
   # Cheap "does it parse" check without the training stack.
   # `--no-default-features` drops the `training` feature (and thus `burn`).
@@ -174,7 +180,11 @@ jobs:
           cargo package --list --no-default-features --allow-dirty > /tmp/pkg-files.txt
           echo "Tarball contains $(wc -l < /tmp/pkg-files.txt) files:"
           cat /tmp/pkg-files.txt
-          if grep -E '(^|/)models/|\.safetensors$|\.pt$|\.onnx$|(^|/)web/|(^|/)envs/|(^|/)scripts/|(^|/)\.loom/|(^|/)\.claude/|(^|/)\.github/' /tmp/pkg-files.txt; then
+          # ROM binaries (.bin/.rom/.a26) must never enter the tarball either
+          # (env-atari, Option D). ROMs are copyrighted and are resolved at
+          # runtime from the user's ale-py environment — see
+          # docs/ALE_BINDING_STRATEGY.md.
+          if grep -E '(^|/)models/|\.safetensors$|\.pt$|\.onnx$|\.bin$|\.rom$|\.a26$|(^|/)web/|(^|/)envs/|(^|/)scripts/|(^|/)\.loom/|(^|/)\.claude/|(^|/)\.github/' /tmp/pkg-files.txt; then
             echo "::error::Publish tarball includes excluded non-library assets (see matches above). Fix the exclude = [...] list in Cargo.toml."
             exit 1
           fi

@@ -63,7 +63,12 @@ pub mod t_maze;
 #[cfg(feature = "env-bucket-brigade")]
 pub mod bucket_brigade;
 
+#[cfg(feature = "env-atari")]
+pub mod atari;
+
 // Re-export main types for convenience
+#[cfg(feature = "env-atari")]
+pub use atari::AtariEnv;
 #[cfg(feature = "env-bucket-brigade")]
 pub use bucket_brigade::BucketBrigadeMaEnv;
 pub use cartpole::CartPole;

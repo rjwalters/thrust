@@ -182,6 +182,12 @@ wasm = ["wasm-bindgen", "web-sys", "js-sys", "console_error_panic_hook"]  # Pure
 # gated and will simply be omitted from the published crate. Re-enable
 # locally by uncommenting both this line and the dependency above.
 env-bucket-brigade = ["bucket-brigade-core"]
+# Atari (ALE) env adapter. Option D (subprocess via ale-py) — see
+# docs/ALE_BINDING_STRATEGY.md. No native/path dependency: the emulator runs as
+# an external `ale-py` process invoked at runtime, so this is a pure compile-time
+# flag with no `[dependencies]` entry and no publish `sed` workaround. Compose
+# with `training`, e.g. `--features "training,env-atari"`.
+env-atari = []
 
 [dev-dependencies]
 criterion = "0.5"
