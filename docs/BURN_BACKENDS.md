@@ -186,6 +186,20 @@ groups appear once per compiled backend, side by side:
 | PPO full loop | `ppo_cartpole_steps_per_sec/ndarray` | …`/wgpu` | …`/cuda` |
 | DQN full loop | `dqn_cartpole_steps_per_sec/ndarray` | …`/wgpu` | …`/cuda` |
 | SAC full loop | `sac_pendulum_steps_per_sec/ndarray` | …`/wgpu` | …`/cuda` |
+| Nature-DQN policy forward | `nature_dqn_policy_forward/ndarray` | …`/wgpu` | …`/cuda` |
+| Nature-DQN Q-net forward | `nature_dqn_qnet_forward/ndarray` | …`/wgpu` | …`/cuda` |
+| Nature-DQN policy train step | `nature_dqn_policy_train_step/ndarray` | …`/wgpu` | …`/cuda` |
+| Nature-DQN Q-net train step | `nature_dqn_qnet_train_step/ndarray` | …`/wgpu` | …`/cuda` |
+
+The four `nature_dqn_*` groups are the large-net crossover benchmarks
+(issue #328). Unlike the small-net groups, each runs at **two** batch sizes —
+`b32` (Nature-DQN paper batch) and `b256` (Atari PPO minibatch upper range) —
+so their full benchmark ids are e.g. `nature_dqn_policy_forward/wgpu/b256`. The
+`*_forward` pair measures pure inference (no autograd); the `*_train_step` pair
+measures forward + backward + one Adam step. They feed synthetic NCHW
+`[B, 4, 84, 84]` observations straight to the Nature-DQN conv stack, decoupled
+from env stepping (per the Epic #306 Phase 1 spike) so the numbers reflect the
+*network*, not subprocess IPC.
 
 To compare a backend against the CPU baseline, read the matching `/ndarray` and
 `/wgpu` (or `/cuda`) groups from the same run. (The same fairness caveats as the
@@ -272,6 +286,71 @@ Vulkan, so it closes some of the gap to CPU but does not overturn the conclusion
 **NdArray (CPU) remains the right default**; cuda is the better GPU choice over wgpu
 on Linux+NVIDIA when a workload is large enough to want a GPU at all.
 
+### Measured large-net (Nature-DQN CNN) throughput (issue #328)
+
+The groups above are all small-net (4-input, 64-unit MLP) workloads. Issue #328
+adds the designated **large-net re-evaluation trigger**: the Nature-DQN
+convolutional stack (Mnih et al. 2015 — three conv layers + a 512-wide FC trunk,
+~1.69 M parameters), benchmarked in isolation on synthetic `[B, 4, 84, 84]`
+frames. This is the workload the [Interpretation](#interpretation) section named
+as "what would flip the conclusion."
+
+**Host setup**
+
+- macOS arm64 (Darwin 25.5).
+- Apple M3 Ultra (Metal backend selected by wgpu).
+- Rust stable, Burn 0.21.
+- CPU and wgpu columns measured **on this host**; cuda column pending (see below).
+
+**Command**
+
+```bash
+# CPU baseline (ndarray) and wgpu/Metal measured in separate runs on this host,
+# both with 10-sample criterion windows to bound wall-clock:
+cargo bench --features training --bench trainer_throughput \
+    -- --sample-size 10 --warm-up-time 2 --measurement-time 10 nature_dqn
+cargo bench --features "training,wgpu" --bench trainer_throughput \
+    -- --sample-size 10 --warm-up-time 2 --measurement-time 10 'nature_dqn.*wgpu'
+```
+
+Median per-iteration wall-clock, lower is better. "wgpu faster ×" is
+`ndarray / wgpu` — note the direction is **inverted** from the small-net tables
+above (there CPU won; here the GPU wins, often by two orders of magnitude):
+
+| Benchmark group | NdArray (CPU) | wgpu / Metal | cuda | wgpu faster × |
+| --- | --- | --- | --- | --- |
+| `nature_dqn_policy_forward` (b32) | 181.5 ms | 1.88 ms | **cuda: pending — run on alc-2** | ~96× |
+| `nature_dqn_policy_forward` (b256) | 1.449 s | 13.1 ms | **cuda: pending — run on alc-2** | ~110× |
+| `nature_dqn_qnet_forward` (b32) | 181.9 ms | 5.73 ms ‡ | **cuda: pending — run on alc-2** | ~32× |
+| `nature_dqn_qnet_forward` (b256) | 1.422 s | 19.5 ms | **cuda: pending — run on alc-2** | ~73× |
+| `nature_dqn_policy_train_step` (b32) | 1.968 s | 437 ms † | **cuda: pending — run on alc-2** | ~4.5× † |
+| `nature_dqn_policy_train_step` (b256) | 15.58 s | 737 ms † | **cuda: pending — run on alc-2** | ~21× † |
+| `nature_dqn_qnet_train_step` (b32) | 1.951 s | 16.9 ms | **cuda: pending — run on alc-2** | ~115× |
+| `nature_dqn_qnet_train_step` (b256) | 15.51 s | 219 ms | **cuda: pending — run on alc-2** | ~71× |
+
+† The `nature_dqn_policy_train_step/wgpu` rows did not stabilize at 10 samples —
+criterion reported very wide confidence intervals (b32 `[9.68 ms, 437 ms,
+1.28 s]`; b256 `[196 ms, 737 ms, 1.74 s]`), the same JIT-kernel / autotune
+contamination seen on the smallest cuda group in the #219 run above. The stable
+lower bounds (~10 ms at b32, ~196 ms at b256) line up with the sibling
+`qnet_train_step` numbers and the forward passes, so the true steady-state speedup
+is in the same ~70–200× band as the other train-step rows; treat the ~4.5×/~21×
+medians as autotune-inflated floors, not the real ratio. A longer run
+(`--sample-size 50 --measurement-time 30`) or a fixed-module optimizer that does
+not rebuild per iteration would tighten these.
+
+‡ `nature_dqn_qnet_forward/wgpu/b32` also showed a wider-than-usual interval
+(`[2.81 ms, 5.73 ms, 13.3 ms]`) — first-use autotune on the smallest batch. The
+b256 sibling (19.5 ms, tight) is the more reliable read.
+
+**cuda: pending operator run on alc-2.** Command:
+`cargo bench --features "training,cuda" --bench trainer_throughput --warm-up-time 2 --measurement-time 10 -- nature_dqn`.
+Host: `sphere@alc-2` over Tailscale (Ubuntu 24.04, RTX 4090, CUDA 12.x). See the
+[cuda column (issue #219)](#cuda-column-issue-219-measured-2026-06-28) above for
+environment-setup reference. The operator fills in the cuda column, removes the
+placeholders, and updates the verdict below if the cuda result changes the
+conclusion.
+
 ### Interpretation
 
 **The CPU NdArray backend wins every group by 4.4–9.5×.** This is the expected
@@ -293,6 +372,39 @@ direction, **NdArray (CPU) remains the right default**, and the GPU backends are
 best reserved for large-model / high-parallelism configurations. This is the
 quantified version of the [Performance note](#performance-note) and the
 validation-run observations above.
+
+#### Large-net verdict (Nature-DQN CNN)
+
+**The CNN workload flips the small-net conclusion — decisively, at both B=32 and
+B=256.** Where the 4–64-unit MLP groups had CPU winning by 4.4–9.5×, the
+Nature-DQN conv stack has wgpu/Metal winning by **~30–115×** on every group that
+stabilized (both forward passes, both Q-net rows, and — once the autotune floor
+is discounted — the policy train step too; see the † note). The crossover is not
+marginal and does not require B=256 to appear: even at the Nature-DQN paper batch
+of 32, `nature_dqn_policy_forward` is ~96× faster on the GPU and
+`nature_dqn_qnet_train_step` ~115× faster. Larger batch widens the absolute gap
+(CPU scales roughly linearly in batch — 181 ms → 1.45 s forward — while the GPU
+grows far more slowly, 1.9 ms → 13 ms) but the *sign* of the verdict is already
+settled at B=32. This is exactly the prediction the small-net Interpretation
+made: raise arithmetic-per-launch above the dispatch-overhead floor — here via a
+convolutional trunk with ~1.69 M parameters over 84×84 frames — and the GPU's
+throughput advantage dominates.
+
+**Recommendation update — image-env training should default to a GPU backend.**
+For the Nature-DQN / Atari-scale image workloads that motivated Epic #306, the
+[Picking the right backend](#picking-the-right-backend) guidance inverts: prefer
+**wgpu** (Metal/Vulkan) — or **cuda** on Linux+NVIDIA — over NdArray. NdArray
+(CPU) remains the right default only for the small-MLP control tasks (CartPole,
+Pendulum) that dominate the rest of the suite; it is not competitive on the CNN
+policy (a 15.5 s CPU train step at B=256 versus a sub-second GPU step). The
+small-net default is unchanged; the large-net default is now GPU.
+
+**cuda status.** The large-net wgpu/Metal numbers above are measured and
+available; the **cuda crossover verdict is pending the alc-2 operator run**. The
+#219 finding that cuda beats wgpu on the same 4090 suggests cuda will land at
+least as fast as these wgpu numbers (so the GPU-wins conclusion is very unlikely
+to reverse), but that is a prediction, not a measurement — the cuda column stays
+a placeholder until the operator fills it in.
 
 > **Mixed precision (FP16/BF16):** f16/bf16 autodiff is supported on the cubecl
 > GPU backends (wgpu/cuda) but **not** on NdArray (CPU), and pays off only in
