@@ -94,7 +94,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 # Random number generation. `rand 0.9` pulls `getrandom 0.3` transitively; the
 # wasm32 backend for getrandom is configured in the wasm-only target table near
 # the end of this file (see `[target.'cfg(target_arch = "wasm32")'.dependencies]`).
-rand = { version = "0.9" }
+# `small_rng` enables the fast, small-state `SmallRng` used by the Atari
+# preprocessing wrapper for reproducible, seed-controlled sticky actions.
+rand = { version = "0.9", features = ["small_rng"] }
 
 # Multi-threading and channels (not available in WASM)
 crossbeam-channel = { version = "0.5", optional = true }

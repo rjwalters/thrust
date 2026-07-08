@@ -71,6 +71,7 @@ pub struct AtariEnv {
     last_reward: f32,
     last_terminated: bool,
     last_truncated: bool,
+    last_lives: u32,
 }
 
 impl AtariEnv {
@@ -160,6 +161,7 @@ impl AtariEnv {
             last_reward: 0.0,
             last_terminated: false,
             last_truncated: false,
+            last_lives: 0,
         }
     }
 
@@ -173,6 +175,17 @@ impl AtariEnv {
     #[must_use]
     pub fn seed(&self) -> u64 {
         self.seed
+    }
+
+    /// Number of lives remaining as of the last observation (`ale.lives()`).
+    ///
+    /// Updated on every `reset`/`step`/`restore_state`. Used by the
+    /// [`AtariPreprocess`](super::AtariPreprocess) wrapper to implement
+    /// life-loss episode termination (Machado et al. 2018). Returns `0` before
+    /// the first observation.
+    #[must_use]
+    pub fn lives(&self) -> u32 {
+        self.last_lives
     }
 
     /// Send `cmd` and read the single response frame it elicits.
@@ -189,7 +202,7 @@ impl AtariEnv {
     /// `Error`/unexpected responses onto typed errors.
     fn apply_obs(&mut self, resp: Response) -> Result<(), AtariEnvError> {
         match resp {
-            Response::Obs { terminated, truncated, reward, pixels } => {
+            Response::Obs { terminated, truncated, reward, lives, pixels } => {
                 if pixels.len() != OBS_LEN {
                     return Err(AtariEnvError::Protocol(format!(
                         "expected {OBS_LEN} observation elements ({OBS_HEIGHT}×{OBS_WIDTH}×{OBS_CHANNELS}), got {}",
@@ -200,6 +213,7 @@ impl AtariEnv {
                 self.last_reward = reward;
                 self.last_terminated = terminated;
                 self.last_truncated = truncated;
+                self.last_lives = lives;
                 Ok(())
             }
             Response::Error(msg) => Err(AtariEnvError::from_worker_message(msg)),
