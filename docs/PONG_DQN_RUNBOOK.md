@@ -13,9 +13,16 @@ report is committed as a post-run follow-up per the #298 / #306 protocol.
 
 Pong's random floor is ≈ −21. **Any positive mean episode score beats random**
 and is the decisive success signal. Published baselines: DQN ≈ 18.9 (Mnih 2015,
-50M frames) / PPO ≈ 20.7. Pong typically crosses zero well within 10M frames per
-the spike analysis in `docs/ALE_BINDING_STRATEGY.md`; this run targets ≤10M
-frames to produce a *positive* score, not a ceiling score.
+50M **raw frames**) / PPO ≈ 20.7. Pong typically crosses zero well within ~10M
+**raw frames** per the spike analysis in `docs/ALE_BINDING_STRATEGY.md`.
+
+**Units — frames vs. wrapper steps.** `AtariPreprocess` applies **frame-skip 4**,
+so one wrapper `step()` = 4 raw ALE frames. The loop counts **wrapper steps**
+(`TOTAL_TIMESTEPS` is a wrapper-step budget), while the literature above counts
+**raw frames**. The default `TOTAL_TIMESTEPS=5_000_000` is therefore
+**5M wrapper steps = 20M raw frames**, which is ~2× the ~10M raw frames Pong
+needs to cross zero — conservatively over-budgeted for a *positive* score, not a
+ceiling score.
 
 ## Replay-buffer memory (honest f32 math)
 
@@ -34,9 +41,9 @@ If 100k (~21 GiB) is too large, set `BUFFER_CAPACITY=50000` (~10.5 GiB). A futur
 u8 frame store (before the 1/255 scale) would cut this 4× (~5.3 GiB at 100k) but
 requires a new buffer type — out of scope for this issue.
 
-## Hyperparameters (Mnih 2015 adapted for a ≤10M-frame budget)
+## Hyperparameters (Mnih 2015 adapted; budget = 5M wrapper steps ≈ 20M raw frames)
 
-| Parameter | Mnih 2015 (50M) | This run (5–10M) |
+| Parameter | Mnih 2015 (50M raw frames) | This run (5M wrapper steps ≈ 20M raw frames) |
 |---|---|---|
 | `learning_rate` | 2.5e-4 (RMSProp) | 2.5e-4 (Adam) |
 | `batch_size` | 32 | 32 |
@@ -48,14 +55,16 @@ requires a new buffer type — out of scope for this issue.
 | `epsilon_decay_steps` | 1M | 1_000_000 |
 | `max_grad_norm` | 10.0 | 10.0 |
 | `soft_update_tau` | None (hard sync) | None (hard sync) |
+| reward clipping | ±1 | n/a for Pong (rewards already ±1) |
 
-Frame budget default: `TOTAL_TIMESTEPS=5_000_000` (override via env var).
+Budget default: `TOTAL_TIMESTEPS=5_000_000` **wrapper steps** (= 20M raw frames;
+override via env var).
 
 ## Env-var knobs
 
 | Var | Default | Meaning |
 |---|---|---|
-| `TOTAL_TIMESTEPS` | `5_000_000` | Total env steps. |
+| `TOTAL_TIMESTEPS` | `5_000_000` | Total **wrapper steps** (frame-skip 4 → ≈ 4× raw frames). |
 | `BUFFER_CAPACITY` | `100_000` | Replay capacity (see RAM math). |
 | `MIN_BUFFER_SIZE` | `10_000` | Warmup transitions before updates. |
 | `LOG_INTERVAL` | `10_000` | Env-step period for stdout logs + CSV rows. |
@@ -112,14 +121,27 @@ cargo run --release \
 
 ### Throughput expectation
 
-CPU (NdArray) throughput on this stack is ~1 env-step/sec after warmup — a full
-1.6M-param CNN forward+backward per step (validated in the builder's smoke run),
-so the CPU path is smoke-test-only. On the RTX 4090, expect **~300–600
-frame/s** (i.e. ~75–150 ALE steps/s given frame-skip 4). The subprocess IPC
-overhead is amortized by the frame-skip. Validate actual throughput from the
-`fps=` field in the first few log lines; a 5M-frame run is roughly **2–5 hours**
-at that rate. If throughput is far below this band, the subprocess IPC is the
-suspect — profile before letting the full run continue.
+**Convention.** The code's `fps=` log field measures **wrapper steps/sec**
+(`total_env_steps / elapsed`), not raw frames/sec. Everything below is stated in
+that unit first, then converted; with frame-skip 4, raw frame/s = 4 × wrapper
+steps/s, and wall-clock = `5M wrapper_steps / (wrapper_steps_per_sec)`.
+
+CPU (NdArray) throughput on this stack is ~1 wrapper-step/sec after warmup — a
+full 1.6M-param CNN forward+backward per step (validated in the builder's smoke
+run), so the CPU path is smoke-test-only and its rate cannot predict the GPU
+rate. On the RTX 4090 the plausible band spans two cases:
+
+| Case | `fps=` (wrapper steps/s) | Raw frames/s (×4) | Wall-clock for 5M wrapper steps |
+|---|---|---|---|
+| Optimistic (GPU-bound) | 300–600 | 1_200–2_400 | ~2.5–5 h |
+| Conservative (IPC-bound) | 75–150 | 300–600 | ~9–18 h |
+
+The subprocess IPC overhead is partly amortized by the frame-skip, but whether
+the run lands GPU-bound (optimistic) or IPC-bound (conservative) is not something
+the CPU smoke run can tell you in advance. **Read the actual `fps=` value from
+the first few log lines and derive the wall-clock from the table above:** e.g.
+`fps=100` ⇒ ~14 h, `fps=400` ⇒ ~3.5 h. If `fps=` is far below the 75/s floor,
+the subprocess IPC is the suspect — profile before letting the full run continue.
 
 ### Where results land
 

@@ -21,7 +21,7 @@
 //!   (any-vendor GPU; Metal/Vulkan/DX12).
 //! - `--features "training,env-atari"` (no GPU feature) →
 //!   `Autodiff<NdArray<f32>>` (CPU — the smoke-test path; too slow for a full
-//!   5M-frame run).
+//!   5M-wrapper-step run).
 //!
 //! `env-atari` is the compile guard (`required-features` in `Cargo.toml`); the
 //! GPU features are additive run-time backend selectors.
@@ -53,9 +53,26 @@
 //! u8 frame store (before the 1/255 scale) would cut this 4× (~5.3 GiB at 100k)
 //! but requires a new buffer type — out of scope here.
 //!
-//! # Hyperparameters (Mnih 2015 adapted for a ≤10M-frame budget)
+//! # Frames vs. wrapper steps (read this before the budget table)
 //!
-//! | Parameter | Mnih 2015 (50M) | This run (5–10M) |
+//! `AtariPreprocess` applies **frame-skip 4**: each wrapper `step()` submits
+//! the chosen action to the inner ALE **4×** and returns one stacked
+//! observation. The training loop counts **wrapper steps**
+//! (`trainer.total_env_steps()`), and `TOTAL_TIMESTEPS` is a **wrapper-step**
+//! budget. So the default `TOTAL_TIMESTEPS=5_000_000` means:
+//!
+//! - **5M wrapper steps = 20M raw ALE frames** (`5M × 4`).
+//!
+//! The Mnih 2015 literature convention ("50M frames", "Pong crosses zero within
+//! ~10M frames") counts **raw frames**. To compare honestly, convert to a
+//! single convention: **5M wrapper steps = 20M raw frames ≈ 2× the ~10M raw
+//! frames the spike analysis says Pong needs to cross zero**. The budget is
+//! therefore conservatively *over*-provisioned for the "go positive" goal, not
+//! under it.
+//!
+//! # Hyperparameters (Mnih 2015 adapted; budget = 5M wrapper steps ≈ 20M raw frames)
+//!
+//! | Parameter | Mnih 2015 (50M raw frames) | This run (5M wrapper steps ≈ 20M raw frames) |
 //! |---|---|---|
 //! | `learning_rate` | 2.5e-4 (RMSProp) | 2.5e-4 (Adam) |
 //! | `batch_size` | 32 | 32 |
@@ -67,10 +84,12 @@
 //! | `epsilon_decay_steps` | 1M | 1_000_000 |
 //! | `max_grad_norm` | 10.0 | 10.0 |
 //! | `soft_update_tau` | None (hard sync) | None (hard sync) |
+//! | reward clipping | ±1 | n/a for Pong (rewards already ±1) |
 //!
-//! DQN reaches ~18.9 at 50M frames (Mnih 2015); Pong typically crosses zero
-//! well within 10M frames per the spike analysis in
-//! `docs/ALE_BINDING_STRATEGY.md`. This run targets ≤10M frames to produce a
+//! DQN reaches ~18.9 at 50M raw frames (Mnih 2015); Pong typically crosses zero
+//! well within ~10M raw frames per the spike analysis in
+//! `docs/ALE_BINDING_STRATEGY.md`. This run's 5M wrapper steps = 20M raw frames
+//! is ~2× that "cross zero" bar — conservatively over-budgeted, aimed at a
 //! *positive* score (beating the ~−21 random floor), not a ceiling score.
 //!
 //! # Usage
@@ -95,7 +114,8 @@
 //!
 //! # Env-var knobs
 //!
-//! - `TOTAL_TIMESTEPS` (default `5_000_000`) — total env steps.
+//! - `TOTAL_TIMESTEPS` (default `5_000_000`) — total **wrapper steps**
+//!   (frame-skip 4, so ≈ 4× that many raw ALE frames).
 //! - `BUFFER_CAPACITY` (default `100_000`) — replay capacity (see RAM math).
 //! - `MIN_BUFFER_SIZE` (default `10_000`) — warmup transitions before updates.
 //! - `CURVE_CSV` (unset) — path for the `env_steps,mean_episode_reward` CSV.
@@ -168,16 +188,22 @@ const DEFAULT_LOG_INTERVAL: usize = 10_000;
 fn main() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
-    let total_timesteps = env_usize("TOTAL_TIMESTEPS", DEFAULT_TIMESTEPS);
-    let buffer_capacity = env_usize("BUFFER_CAPACITY", DEFAULT_BUFFER_CAPACITY);
-    let min_buffer_size = env_usize("MIN_BUFFER_SIZE", DEFAULT_MIN_BUFFER_SIZE);
-    let checkpoint_interval = std::env::var("CHECKPOINT_INTERVAL")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&n| n > 0);
+    let total_timesteps = env_usize("TOTAL_TIMESTEPS", DEFAULT_TIMESTEPS)?;
+    let buffer_capacity = env_usize("BUFFER_CAPACITY", DEFAULT_BUFFER_CAPACITY)?;
+    let min_buffer_size = env_usize("MIN_BUFFER_SIZE", DEFAULT_MIN_BUFFER_SIZE)?;
+    // Unset → disabled; present-but-unparseable → hard error (operator surprise
+    // on a long run); `0` → treated as disabled.
+    let checkpoint_interval =
+        match std::env::var("CHECKPOINT_INTERVAL") {
+            Ok(s) => Some(s.parse::<usize>().map_err(|e| {
+                anyhow::anyhow!("CHECKPOINT_INTERVAL={s:?} is not a valid usize: {e}")
+            })?)
+            .filter(|&n| n > 0),
+            Err(_) => None,
+        };
     let checkpoint_dir =
         std::env::var("CHECKPOINT_DIR").unwrap_or_else(|_| DEFAULT_CHECKPOINT_DIR.to_string());
-    let log_interval = env_usize("LOG_INTERVAL", DEFAULT_LOG_INTERVAL).max(1);
+    let log_interval = env_usize("LOG_INTERVAL", DEFAULT_LOG_INTERVAL)?.max(1);
 
     tracing::info!("Starting Pong DQN Training (Burn backend: {})", BACKEND_LABEL);
 
@@ -372,10 +398,17 @@ fn buffer_gib(capacity: usize, obs_len: usize) -> f64 {
     (2 * obs_len * 4 * capacity) as f64 / (1024.0 * 1024.0 * 1024.0)
 }
 
-/// Parse a `usize` env var, falling back to `default` when unset or
-/// unparseable.
-fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+/// Parse a `usize` env var, falling back to `default` only when the var is
+/// **unset**. A present-but-unparseable value (e.g. `TOTAL_TIMESTEPS=abc` or a
+/// stray suffix like `5000000x`) is an operator error on a multi-hour run, so
+/// it fails loudly rather than silently reverting to the default.
+fn env_usize(key: &str, default: usize) -> Result<usize> {
+    match std::env::var(key) {
+        Ok(s) => s
+            .parse::<usize>()
+            .map_err(|e| anyhow::anyhow!("{key}={s:?} is not a valid usize: {e}")),
+        Err(_) => Ok(default),
+    }
 }
 
 /// Save the online Q-network weights to `<dir>/pong_dqn_<step>.bin`.
