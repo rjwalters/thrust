@@ -49,3 +49,8 @@ pub mod continuous_q;
 /// 3-conv + 2-fc CNN used by the Snake trainer.
 #[cfg(feature = "training")]
 pub mod snake_cnn;
+
+/// Nature-DQN-scale CNN policies (actor-critic + Q-network) for the Atari
+/// (ALE) workload.
+#[cfg(feature = "training")]
+pub mod atari_cnn;
