@@ -225,10 +225,10 @@ pub fn decode_response(payload: &[u8]) -> io::Result<Response> {
             if !pixel_bytes.len().is_multiple_of(4) {
                 return Err(invalid_data("OBS pixel byte count is not a multiple of 4"));
             }
-            let pixels = pixel_bytes
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
-                .collect();
+            // `pixel_bytes.len()` is guaranteed a multiple of 4 above, so the
+            // `as_chunks` remainder is always empty.
+            let (chunks, _rest) = pixel_bytes.as_chunks::<4>();
+            let pixels = chunks.iter().map(|c| f32::from_le_bytes(*c)).collect();
             Ok(Response::Obs { terminated, truncated, reward, pixels })
         }
         TAG_STATE => Ok(Response::State(rest.to_vec())),

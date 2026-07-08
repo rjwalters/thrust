@@ -114,8 +114,49 @@ def _resolve_rom(rom_id):
     raise FileNotFoundError("ALE_ROM_PATH '%s' is neither a file nor a directory" % path)
 
 
+def _resolve_rom_path(rom_id):
+    """Resolve the ROM file path for ``rom_id`` (env override or ale-py registry).
+
+    Raises ``FileNotFoundError`` with an actionable message if nothing resolves.
+    """
+    rom_path = _resolve_rom(rom_id)
+    if rom_path is not None:
+        return rom_path
+    # Defer to ale-py's bundled ROM resolution (AutoROM / packaged ROMs).
+    try:
+        from ale_py import roms as ale_roms
+    except Exception as exc:
+        raise RuntimeError(
+            "ROM '%s' could not be resolved and ale-py's ROM registry is "
+            "unavailable (%s). Set ALE_ROM_PATH or run "
+            "'AutoROM --accept-license'." % (rom_id, exc)
+        )
+    # ale-py exposes ROMs as attributes named in TitleCase (e.g. Pong).
+    attr = rom_id[:1].upper() + rom_id[1:]
+    rom_path = getattr(ale_roms, attr, None)
+    if rom_path is None and hasattr(ale_roms, "get_rom_path"):
+        rom_path = ale_roms.get_rom_path(rom_id)
+    if rom_path is None:
+        raise FileNotFoundError(
+            "ROM '%s' not found in ale-py's ROM registry. Set ALE_ROM_PATH "
+            "or run 'AutoROM --accept-license'." % rom_id
+        )
+    return rom_path
+
+
+def _load_rom(ale, rom_path, seed):
+    """(Re)load ``rom_path`` into ``ale`` with ``seed`` as the RNG seed.
+
+    ALE only applies ``random_seed`` at ``loadROM`` time, so the seed must be
+    set *before* the load. Callers reload the ROM whenever the seed changes so
+    that ``AtariEnv::new(game, seed)`` actually controls the emulator RNG.
+    """
+    ale.setInt("random_seed", int(seed) & 0x7FFFFFFF)
+    ale.loadROM(rom_path)
+
+
 def _load_ale(rom_id, seed):
-    """Import ale-py and return an initialised (ALEInterface, minimal_actions).
+    """Import ale-py and return ``(ALEInterface, minimal_actions, rom_path)``.
 
     Raises with an actionable message on any failure so the Rust side can turn
     it into a typed error.
@@ -128,55 +169,47 @@ def _load_ale(rom_id, seed):
         )
 
     ale = ALEInterface()
-    ale.setInt("random_seed", int(seed) & 0x7FFFFFFF)
-
-    rom_path = _resolve_rom(rom_id)
-    if rom_path is None:
-        # Defer to ale-py's bundled ROM resolution (AutoROM / packaged ROMs).
-        try:
-            from ale_py import roms as ale_roms
-        except Exception as exc:
-            raise RuntimeError(
-                "ROM '%s' could not be resolved and ale-py's ROM registry is "
-                "unavailable (%s). Set ALE_ROM_PATH or run "
-                "'AutoROM --accept-license'." % (rom_id, exc)
-            )
-        # ale-py exposes ROMs as attributes named in TitleCase (e.g. Pong).
-        attr = rom_id[:1].upper() + rom_id[1:]
-        rom_path = getattr(ale_roms, attr, None)
-        if rom_path is None and hasattr(ale_roms, "get_rom_path"):
-            rom_path = ale_roms.get_rom_path(rom_id)
-        if rom_path is None:
-            raise FileNotFoundError(
-                "ROM '%s' not found in ale-py's ROM registry. Set ALE_ROM_PATH "
-                "or run 'AutoROM --accept-license'." % rom_id
-            )
-
-    ale.loadROM(rom_path)
+    rom_path = _resolve_rom_path(rom_id)
+    _load_rom(ale, rom_path, seed)
     minimal_actions = list(ale.getMinimalActionSet())
-    return ale, minimal_actions
+    return ale, minimal_actions, rom_path
 
 
-def _screen_bytes(ale, np):
+def _screen_bytes(ale):
     """Return the current RGB screen as row-major little-endian f32 bytes."""
     screen = ale.getScreenRGB()  # numpy uint8 array, shape (H, W, 3)
     return screen.astype("<f4").tobytes()
 
 
 def _clone_state_bytes(ale):
-    """Serialise the full ALE system state to opaque bytes."""
+    """Serialise the full ALE system state to opaque bytes.
+
+    Current ale-py (>= 0.10) serialises via ``ALEState.serialize()``. Older
+    builds exposed a top-level ``encodeState``; keep it as a legacy fallback.
+    """
     state = ale.cloneSystemState()
-    # ale-py exposes several serialisation surfaces across versions; try the
-    # documented ones in order.
-    if hasattr(ale, "encodeState"):
-        return bytes(ale.encodeState(state))
     if hasattr(state, "serialize"):
         return bytes(state.serialize())
+    if hasattr(ale, "encodeState"):
+        return bytes(ale.encodeState(state))
     raise RuntimeError("this ale-py build exposes no state serialisation API")
 
 
 def _restore_state_bytes(ale, blob):
-    """Restore the ALE system state from opaque bytes produced by clone."""
+    """Restore the ALE system state from opaque bytes produced by clone.
+
+    Current ale-py reconstructs an ``ALEState`` from the serialised blob and
+    hands it to ``restoreSystemState``. Older builds exposed a top-level
+    ``decodeState``; keep it as a legacy fallback.
+    """
+    blob = bytes(blob)
+    try:
+        from ale_py import ALEState
+    except Exception:  # pragma: no cover - only on very old ale-py
+        ALEState = None
+    if ALEState is not None:
+        ale.restoreSystemState(ALEState(blob))
+        return
     if hasattr(ale, "decodeState"):
         ale.restoreSystemState(ale.decodeState(blob))
         return
@@ -190,11 +223,15 @@ def main():
     rom_id = sys.argv[1]
 
     try:
-        import numpy as np
-        ale, minimal_actions = _load_ale(rom_id, 0)
+        ale, minimal_actions, rom_path = _load_ale(rom_id, 0)
     except Exception as exc:
         send_error(str(exc))
         return 1
+
+    # Track the seed the ROM is currently loaded under so RESET only pays the
+    # reload cost when the seed actually changes (ALE applies random_seed at
+    # loadROM time only).
+    loaded_seed = 0
 
     while True:
         payload = read_frame()
@@ -209,9 +246,13 @@ def main():
         try:
             if tag == TAG_RESET:
                 (seed,) = struct.unpack("<Q", body)
-                ale.setInt("random_seed", int(seed) & 0x7FFFFFFF)
+                # ALE only honours random_seed at loadROM time, so reload the
+                # ROM whenever the requested seed differs from the loaded one.
+                if seed != loaded_seed:
+                    _load_rom(ale, rom_path, seed)
+                    loaded_seed = seed
                 ale.reset_game()
-                send_obs(ale.game_over(), False, 0.0, _screen_bytes(ale, np))
+                send_obs(ale.game_over(), False, 0.0, _screen_bytes(ale))
             elif tag == TAG_STEP:
                 (action_index,) = struct.unpack("<i", body)
                 if 0 <= action_index < len(minimal_actions):
@@ -220,12 +261,12 @@ def main():
                     action = minimal_actions[0]
                 reward = ale.act(action)
                 terminated = ale.game_over()
-                send_obs(terminated, False, reward, _screen_bytes(ale, np))
+                send_obs(terminated, False, reward, _screen_bytes(ale))
             elif tag == TAG_CLONE_STATE:
                 send_state(_clone_state_bytes(ale))
             elif tag == TAG_RESTORE_STATE:
                 _restore_state_bytes(ale, body)
-                send_obs(ale.game_over(), False, 0.0, _screen_bytes(ale, np))
+                send_obs(ale.game_over(), False, 0.0, _screen_bytes(ale))
             elif tag == TAG_CLOSE:
                 return 0
             else:
