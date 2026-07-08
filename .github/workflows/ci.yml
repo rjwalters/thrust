@@ -121,6 +121,41 @@ jobs:
           RAYON_NUM_THREADS: "1"
         run: cargo test --features training
 
+  # Optional advisory job: run the real ale-py integration tests.
+  # These 7 tests are runtime-skipped in the normal matrix (no Python/ale-py
+  # there); this job installs ale-py in a venv, sets ATARI_PYTHON, and verifies
+  # they all pass. Not in required-checks — promote after proving stable.
+  atari_integration:
+    name: Atari integration (real ale-py)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Create venv and install ale-py
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet "ale-py~=0.12.0"
+      - name: Run Atari integration tests
+        env:
+          ATARI_PYTHON: .venv/bin/python
+          RAYON_NUM_THREADS: "1"
+        run: |
+          set -euo pipefail
+          cargo test --features "training,env-atari" \
+            --test test_atari_env \
+            --test test_atari_preprocess \
+            -- --nocapture 2>&1 | tee /tmp/atari-test-output.txt
+          if grep -q "^SKIP:" /tmp/atari-test-output.txt; then
+            echo "::error::At least one integration test was skipped — ale-py setup failed."
+            grep "^SKIP:" /tmp/atari-test-output.txt
+            exit 1
+          fi
+
   # Documentation
   docs:
     name: Documentation
