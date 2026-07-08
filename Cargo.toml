@@ -344,6 +344,16 @@ name = "eval_pong"
 path = "examples/games/pong/eval_pong.rs"
 required-features = ["training"]
 
+# Nature-DQN on ALE Pong via the AtariPreprocess subprocess adapter
+# (Epic #306, Phase 4 -- issue #329). `env-atari` is the compile guard;
+# add `cuda` (NVIDIA) or `wgpu` (any GPU) at run time to select the GPU
+# backend via the `#[cfg]` type alias (see docs/BURN_BACKENDS.md). The
+# NdArray smoke run works CPU-only. Requires `ale-py` at run time.
+[[example]]
+name = "train_pong_dqn"
+path = "examples/games/atari/train_pong_dqn.rs"
+required-features = ["training", "env-atari"]
+
 # Bucket Brigade trainers (issue #115 / PR 4 of #117). Both gated
 # behind `env-bucket-brigade` (which is itself feature-gated off in
 # the published crate -- see the `[features]` block). The examples
