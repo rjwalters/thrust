@@ -43,7 +43,7 @@
 
 use anyhow::{Result, anyhow};
 use burn::{
-    module::AutodiffModule,
+    module::{AutodiffModule, list_param_ids},
     optim::{GradientsParams, Optimizer},
     prelude::ToElement,
     tensor::{Tensor, backend::AutodiffBackend},
@@ -349,6 +349,121 @@ where
         }))
     }
 
+    /// Loss-scaled Double-DQN train step for reduced-precision (f16)
+    /// backends.
+    ///
+    /// This is an **additive** sibling of [`DQNTrainerBurn::train_step`]
+    /// used only by the opt-in `training-fp16` example
+    /// (`examples/games/atari/train_pong_dqn_fp16.rs`). The full-precision
+    /// `train_step` above is left bit-identical to its pre-fp16 behavior —
+    /// callers that do not opt into loss scaling keep the exact same code
+    /// path.
+    ///
+    /// # Why loss scaling exists
+    ///
+    /// f16 has only a ~5-bit exponent (min normal ≈ 6.1e-5). Gradients that
+    /// backpropagate through the Nature-DQN's conv stack routinely fall below
+    /// that floor and underflow to zero, stalling learning. Multiplying the
+    /// loss by `loss_scale` before `.backward()` shifts every gradient up by
+    /// the same factor into f16's representable range; dividing the gradients
+    /// back down by `loss_scale` before the optimizer step recovers the true
+    /// update. bf16 (full f32 exponent range) would not need this, but bf16
+    /// matmul is unavailable on the wgpu/Metal runtime in Burn 0.21 (see #305)
+    /// — CUDA f16 is the verified path.
+    ///
+    /// # Overflow handling
+    ///
+    /// The caller owns the *dynamic* scale schedule (halve on overflow, grow
+    /// after a clean streak). This method reports back whether the step was
+    /// numerically clean so the caller can adjust:
+    ///
+    /// - Returns `Ok(None)` if the buffer has not reached `min_buffer_size`.
+    /// - Returns `Ok(Some((stats, applied)))` otherwise. `applied == false`
+    ///   means the *unscaled* loss was non-finite (NaN/inf): the optimizer step
+    ///   is **skipped** and the online network is left unchanged, so the caller
+    ///   should reduce the scale and retry on the next step. The host-side
+    ///   unscaled-loss scalar is the overflow proxy — Burn 0.21 exposes no
+    ///   per-gradient finiteness API, and a non-finite unscaled loss is the
+    ///   cheapest reliable signal that the scaled backward pass would produce
+    ///   non-finite gradients.
+    ///
+    /// `stats.td_loss` is always the **unscaled** loss (comparable to the f32
+    /// path's `td_loss`), regardless of `loss_scale`.
+    pub fn train_step_scaled<R: Rng, FOnline, FTarget>(
+        &mut self,
+        rng: &mut R,
+        loss_scale: f64,
+        forward_fn: FOnline,
+        forward_target_fn: FTarget,
+    ) -> Result<Option<(DQNStepStatsBurn, bool)>>
+    where
+        FOnline: Fn(&Q, Tensor<B, 2>) -> Tensor<B, 2>,
+        FTarget: Fn(&Q, Tensor<B, 2>) -> Tensor<B, 2>,
+    {
+        if !self.buffer.is_ready(self.config.min_buffer_size) {
+            return Ok(None);
+        }
+
+        let batch = sample(&self.buffer, self.config.batch_size, rng);
+        let buffer_len = self.buffer.len();
+
+        let t = batch.to_burn_tensors::<B>(&self.device);
+
+        let online = self
+            .online
+            .take()
+            .ok_or_else(|| anyhow!("online network is None; concurrent train_step calls?"))?;
+
+        let q_online_all = forward_fn(&online, t.observations);
+        let q_taken = gather_action_q(q_online_all.clone(), t.actions);
+
+        let next_q_online_all = forward_fn(&online, t.next_observations.clone());
+        let next_q_target_all = forward_target_fn(&self.target, t.next_observations);
+        let td_target = compute_td_target_double(
+            t.rewards,
+            t.dones,
+            next_q_online_all,
+            next_q_target_all,
+            self.config.gamma,
+        );
+
+        let td_loss = compute_loss(q_taken.clone(), td_target);
+        // Unscaled loss (comparable to the f32 path); the overflow proxy.
+        let td_loss_val: f64 = td_loss.clone().into_scalar().to_f64();
+        let mean_q_val: f64 = q_taken.mean().into_scalar().to_f64();
+
+        let stats = DQNStepStatsBurn {
+            td_loss: td_loss_val,
+            mean_q: mean_q_val,
+            epsilon: self.last_epsilon,
+            buffer_len,
+        };
+
+        // Overflow / non-finite guard: skip the optimizer step and leave the
+        // network untouched so the caller can shrink the scale and retry.
+        if !td_loss_val.is_finite() {
+            // Restore the online network we `take()`-en above (unmodified).
+            self.online = Some(online);
+            return Ok(Some((stats, false)));
+        }
+
+        // Scale the loss up before the backward pass so f16 gradients stay
+        // above the underflow floor, then unscale the gradients before the
+        // optimizer consumes them.
+        let scaled_loss = td_loss.mul_scalar(loss_scale as f32);
+        let grads = scaled_loss.backward();
+        let grads = GradientsParams::from_grads(grads, &online);
+        let grads = unscale_grads::<B, Q>(grads, &online, loss_scale);
+
+        let lr = self.optimizer.learning_rate();
+        let online = self.optimizer.inner_mut().step(lr, online, grads);
+        self.online = Some(online);
+
+        self.total_train_steps += 1;
+
+        Ok(Some((stats, true)))
+    }
+
     /// Vanilla-DQN train step (uses [`compute_td_target`] instead of
     /// the Double-DQN target). Exposed for completeness; the default
     /// `train_step` uses Double-DQN to match the tch trainer's default.
@@ -404,6 +519,35 @@ where
             buffer_len,
         }))
     }
+}
+
+/// Divide every gradient tensor in `grads` by `loss_scale`, recovering the
+/// true (unscaled) gradient after a loss-scaled backward pass.
+///
+/// Burn 0.21's [`GradientsParams`] is keyed by `ParamId` and its tensors are
+/// stored dimension-erased, so the unscale walks the module's parameter ids
+/// (via [`list_param_ids`]) and dispatches on the three tensor ranks the
+/// Nature-DQN uses: rank-1 (biases), rank-2 (`Linear` weights), and rank-4
+/// (`Conv2d` weights). Ids whose gradient is absent (e.g. a frozen param) or of
+/// an unexpected rank are passed through untouched. Uses the *inner*
+/// (non-autodiff) backend `B::InnerBackend`, since gradients are inner tensors.
+fn unscale_grads<B, Q>(mut grads: GradientsParams, module: &Q, loss_scale: f64) -> GradientsParams
+where
+    B: AutodiffBackend,
+    Q: AutodiffModule<B> + Clone,
+{
+    type Inner<B> = <B as AutodiffBackend>::InnerBackend;
+    let inv = (1.0 / loss_scale) as f32;
+    for id in list_param_ids(module) {
+        if let Some(g) = grads.remove::<Inner<B>, 1>(id) {
+            grads.register::<Inner<B>, 1>(id, g.mul_scalar(inv));
+        } else if let Some(g) = grads.remove::<Inner<B>, 2>(id) {
+            grads.register::<Inner<B>, 2>(id, g.mul_scalar(inv));
+        } else if let Some(g) = grads.remove::<Inner<B>, 4>(id) {
+            grads.register::<Inner<B>, 4>(id, g.mul_scalar(inv));
+        }
+    }
+    grads
 }
 
 #[cfg(test)]
@@ -487,5 +631,41 @@ mod tests {
         assert!(stats.is_some());
         let s = stats.unwrap();
         assert!(s.td_loss.is_finite());
+    }
+
+    /// The additive loss-scaled step (used by the `training-fp16` example)
+    /// runs the same Double-DQN update with a scale/unscale wrapper around the
+    /// backward pass. On the f32 NdArray backend it must produce a finite,
+    /// applied step and increment the train-step counter.
+    #[test]
+    fn dqn_trainer_burn_train_step_scaled_runs() {
+        let device = Default::default();
+        let online = MlpBurnPolicy::<B>::new(4, 2, 16, &device);
+        let inner_opt = AdamConfig::new().init();
+        let burn_opt = BurnOptimizer::new(inner_opt, 1e-3);
+        let mut trainer =
+            DQNTrainerBurn::new(small_config(), online, burn_opt, 4, 2, device).unwrap();
+
+        for i in 0..32 {
+            let phase = (i as f32) * 0.1;
+            let obs = [phase.sin(), phase.cos(), phase * 0.5, phase * -0.3];
+            let next_obs = [(phase + 0.1).sin(), (phase + 0.1).cos(), phase * 0.5, phase * -0.3];
+            let action = (i % 2) as i64;
+            let reward = if action == 0 { 1.0 } else { -1.0 };
+            let done = i % 8 == 7;
+            trainer.buffer_mut().push(&obs, action, reward, &next_obs, done);
+        }
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let forward_fn = |q: &MlpBurnPolicy<B>, o: Tensor<B, 2>| -> Tensor<B, 2> {
+            let (logits, _) = q.forward(o);
+            logits
+        };
+        let out = trainer.train_step_scaled(&mut rng, 32_768.0, forward_fn, forward_fn).unwrap();
+        assert!(out.is_some());
+        let (s, applied) = out.unwrap();
+        assert!(applied, "scaled step should apply on finite loss");
+        assert!(s.td_loss.is_finite());
+        assert_eq!(trainer.total_train_steps(), 1);
     }
 }
