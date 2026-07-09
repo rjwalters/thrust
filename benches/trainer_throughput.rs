@@ -1069,6 +1069,33 @@ fn benches(c: &mut Criterion) {
         type Gpu = Autodiff<Cuda<f32, i32>>;
         register_all::<Gpu>(c, &default_burn_device::<Gpu>(), "cuda");
     }
+
+    // Mixed-precision (f16) registrations (issue #272, epic #267). These reuse
+    // the exact same generic `register_all` bench bodies with the backend's
+    // float element pinned to `f16`, so they sit side-by-side with the `/cuda`
+    // (or `/wgpu`) f32 groups in one criterion run — the paired f16-vs-f32
+    // comparison. Only compiled when `training-fp16` is enabled, which is opt-in
+    // (see the `training-fp16` feature in Cargo.toml). The signal is in the four
+    // `nature_dqn_*` CNN groups; the small-MLP groups register too (harmless)
+    // and serve as a sanity check where no f16 win is expected.
+    //
+    // CUDA (NVIDIA Ampere+) is the runtime-verified f16 path — tensor cores make
+    // this the intended target. See #270 for the verified training run.
+    #[cfg(all(feature = "cuda", feature = "training-fp16"))]
+    {
+        type Fp16Cuda = Autodiff<Cuda<burn::tensor::f16, i32>>;
+        register_all::<Fp16Cuda>(c, &default_burn_device::<Fp16Cuda>(), "cuda-f16");
+    }
+
+    // wgpu/Metal f16 compiles but is NOT runtime-verified: Metal has no bf16
+    // matmul in Burn 0.21 and f16 on Metal is untested (see #305). Gated behind
+    // `not(feature = "cuda")` so a combined `cuda,wgpu,training-fp16` build
+    // measures the verified CUDA f16 path rather than registering both.
+    #[cfg(all(feature = "wgpu", not(feature = "cuda"), feature = "training-fp16"))]
+    {
+        type Fp16Wgpu = Autodiff<Wgpu<burn::tensor::f16, i32>>;
+        register_all::<Fp16Wgpu>(c, &default_burn_device::<Fp16Wgpu>(), "wgpu-f16");
+    }
 }
 
 criterion_group!(benches_group, benches);
