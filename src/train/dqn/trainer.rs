@@ -379,13 +379,22 @@ where
     ///
     /// - Returns `Ok(None)` if the buffer has not reached `min_buffer_size`.
     /// - Returns `Ok(Some((stats, applied)))` otherwise. `applied == false`
-    ///   means the *unscaled* loss was non-finite (NaN/inf): the optimizer step
-    ///   is **skipped** and the online network is left unchanged, so the caller
-    ///   should reduce the scale and retry on the next step. The host-side
-    ///   unscaled-loss scalar is the overflow proxy — Burn 0.21 exposes no
-    ///   per-gradient finiteness API, and a non-finite unscaled loss is the
-    ///   cheapest reliable signal that the scaled backward pass would produce
-    ///   non-finite gradients.
+    ///   means the step **overflowed** and was skipped (the online network is
+    ///   left unchanged); the caller should **halve** the scale and retry.
+    ///
+    /// # How overflow is detected (the important subtlety)
+    ///
+    /// The overflow that matters happens *inside the scaled backward pass*, not
+    /// in the raw loss. With an f16 backend the loss tensor is itself f16
+    /// (max ≈ 65504), so `loss × loss_scale` **overflows to ±inf on the
+    /// device** once the scale is large — and that inf then poisons the
+    /// gradients. A finiteness check on the *unscaled* loss would miss this
+    /// entirely (the unscaled loss is a small finite number). We therefore
+    /// compute the **scaled** loss on-device and read *its* host scalar: if
+    /// `loss × scale` is non-finite, the backward pass would produce
+    /// non-finite gradients, so we skip. We also guard the unscaled loss
+    /// for a genuine NaN in the forward pass. This is the cheapest reliable
+    /// overflow proxy — Burn 0.21 exposes no per-gradient finiteness API.
     ///
     /// `stats.td_loss` is always the **unscaled** loss (comparable to the f32
     /// path's `td_loss`), regardless of `loss_scale`.
@@ -428,8 +437,14 @@ where
         );
 
         let td_loss = compute_loss(q_taken.clone(), td_target);
-        // Unscaled loss (comparable to the f32 path); the overflow proxy.
-        let td_loss_val: f64 = td_loss.clone().into_scalar().to_f64();
+
+        // Scale the loss *on-device* first, then read back both the unscaled
+        // and scaled host scalars. `scaled_loss` overflows f16 to ±inf exactly
+        // when `loss × scale` exceeds the f16 max — this is the overflow we
+        // must catch before the backward pass poisons the gradients.
+        let scaled_loss = td_loss.clone().mul_scalar(loss_scale as f32);
+        let td_loss_val: f64 = td_loss.into_scalar().to_f64();
+        let scaled_loss_val: f64 = scaled_loss.clone().into_scalar().to_f64();
         let mean_q_val: f64 = q_taken.mean().into_scalar().to_f64();
 
         let stats = DQNStepStatsBurn {
@@ -440,17 +455,17 @@ where
         };
 
         // Overflow / non-finite guard: skip the optimizer step and leave the
-        // network untouched so the caller can shrink the scale and retry.
-        if !td_loss_val.is_finite() {
+        // network untouched so the caller can shrink the scale and retry. We
+        // require BOTH the unscaled loss (catches forward-pass NaN) and the
+        // scaled loss (catches the `loss × scale` f16 overflow) to be finite.
+        if !td_loss_val.is_finite() || !scaled_loss_val.is_finite() {
             // Restore the online network we `take()`-en above (unmodified).
             self.online = Some(online);
             return Ok(Some((stats, false)));
         }
 
-        // Scale the loss up before the backward pass so f16 gradients stay
-        // above the underflow floor, then unscale the gradients before the
-        // optimizer consumes them.
-        let scaled_loss = td_loss.mul_scalar(loss_scale as f32);
+        // Backward on the scaled loss so f16 gradients stay above the underflow
+        // floor, then unscale the gradients before the optimizer consumes them.
         let grads = scaled_loss.backward();
         let grads = GradientsParams::from_grads(grads, &online);
         let grads = unscale_grads::<B, Q>(grads, &online, loss_scale);

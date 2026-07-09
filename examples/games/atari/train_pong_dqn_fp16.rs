@@ -63,12 +63,18 @@
 //! additive trainer method; the f32 `train_step` is untouched); this binary
 //! owns the *dynamic* schedule:
 //!
-//! - Initial scale `2^15 = 32768`.
-//! - Each step: if the host-side **unscaled** loss scalar is non-finite
-//!   (NaN/inf — the overflow proxy, since Burn 0.21 exposes no per-gradient
-//!   finiteness API), **halve** the scale and **skip** the optimizer step.
+//! - Initial scale `2^12 = 4096`.
+//! - Each step: if the host-side **scaled** loss scalar `loss × scale` is
+//!   non-finite, **halve** the scale and **skip** the optimizer step. The check
+//!   is on the *scaled* loss, not the raw loss: with an f16 backend the loss
+//!   tensor is itself f16 (max ≈ 65504), so `loss × scale` is exactly what
+//!   overflows to ±inf and poisons the gradients — a raw-loss check would miss
+//!   it. (Burn 0.21 exposes no per-gradient finiteness API, so the scaled-loss
+//!   scalar is the overflow proxy.)
 //! - After `2000` consecutive clean (applied) steps, **double** the scale up to
-//!   a `2^24` ceiling — recovering headroom as the loss magnitude shrinks.
+//!   a `2^14 = 16384` ceiling. The ceiling is bounded by the f16 max: a scale
+//!   above ~`65504 / loss` would overflow every step, so growth is capped in a
+//!   sane band rather than climbing into guaranteed overflow.
 //! - Every scale change is logged.
 //!
 //! # Precision of parameters, activations, and Adam state (honest note)
@@ -123,7 +129,7 @@
 //! `BUFFER_CAPACITY`, `MIN_BUFFER_SIZE`, `CURVE_CSV`, `CHECKPOINT_INTERVAL`,
 //! `CHECKPOINT_DIR`, `LOG_INTERVAL`, `ATARI_PYTHON`), plus fp16-specific:
 //!
-//! - `LOSS_SCALE_INIT` (default `32768` = 2^15) — initial dynamic loss scale.
+//! - `LOSS_SCALE_INIT` (default `4096` = 2^12) — initial dynamic loss scale.
 //! - `LOSS_SCALE_GROWTH_INTERVAL` (default `2000`) — clean steps before the
 //!   scale doubles.
 
@@ -224,15 +230,29 @@ const SEED: u64 = 0;
 const DEFAULT_LOG_INTERVAL: usize = 10_000;
 
 // --- Dynamic loss-scaling constants (fp16 path) --------------------------
-/// Initial loss scale, 2^15. Large enough to lift conv-stack gradients out of
-/// the f16 underflow region; halved on the first overflow.
-const DEFAULT_LOSS_SCALE_INIT: f64 = 32_768.0;
+//
+// CRITICAL f16 constraint: the loss tensor is itself f16 (max ≈ 65504). The
+// scaler multiplies the loss on-device *before* backward, so `loss × scale`
+// must stay under the f16 max or it overflows to ±inf and poisons the
+// gradients. The DQN Smooth-L1 (Huber) loss is bounded but can reach a few
+// units early in training, so the scale ceiling is kept well below
+// 65504 / loss. `train_step_scaled` catches genuine overflows (scaled-loss
+// finiteness) and reports them so the dynamic scaler backs off; these bounds
+// just keep the scaler in a sane operating band rather than oscillating at the
+// f16 ceiling.
+//
+/// Initial loss scale, 2^12 = 4096. Lifts conv-stack gradients out of the f16
+/// underflow region while leaving headroom (`4096 × loss` stays < f16 max for
+/// loss up to ~16); halved on the first overflow.
+const DEFAULT_LOSS_SCALE_INIT: f64 = 4096.0;
 /// Consecutive clean steps before the scale doubles (recovering headroom as
 /// the loss magnitude shrinks over training).
 const DEFAULT_LOSS_SCALE_GROWTH_INTERVAL: usize = 2000;
-/// Upper bound on the loss scale, 2^24. Keeps `loss × scale` well inside f32
-/// host-scalar range and prevents runaway growth on a long clean streak.
-const LOSS_SCALE_MAX: f64 = 16_777_216.0;
+/// Upper bound on the loss scale, 2^14 = 16384. Chosen so `loss × scale` stays
+/// inside f16 range (max ≈ 65504) for a Huber loss up to ~4 — beyond this the
+/// on-device scaled loss would overflow f16 every step. Prevents the dynamic
+/// scaler from climbing into a guaranteed-overflow regime.
+const LOSS_SCALE_MAX: f64 = 16_384.0;
 /// Lower bound on the loss scale. Below this, scaling is not helping and the
 /// run is effectively broken; we clamp rather than collapse to zero.
 const LOSS_SCALE_MIN: f64 = 1.0;
