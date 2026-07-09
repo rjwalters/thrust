@@ -52,7 +52,7 @@ through libtorch. Linux + an NVIDIA GPU + CUDA toolkit required.
 | --- | --- |
 | CI / headless tests / numerical reproducibility | NdArray (default) |
 | Small-net control tasks (CartPole, Pendulum, bandits) | NdArray (default) — CPU wins 4.4–9.5× at these sizes |
-| Large-net / CNN / image-env training (e.g. Nature-DQN on Atari) | **GPU** — cuda on Linux+NVIDIA (fastest, 65–1230× over CPU), else wgpu |
+| Large-net / CNN / image-env training (e.g. Nature-DQN on Atari) | **GPU** — cuda on Linux+NVIDIA (fastest, 65–876× over CPU), else wgpu |
 | Local laptop GPU (any vendor) | wgpu |
 | Linux box with an NVIDIA GPU | **cuda** (beats wgpu on the same card; measured on the large-net suite) |
 | Browser-side inference / training | wgpu (compiles to WebGPU) |
@@ -401,11 +401,20 @@ Because cuda and the M3 CPU are different hosts, the honest speedup is
 | `nature_dqn_qnet_forward` (b256) | 3.86 ms | 1.10 s | ~285× |
 | `nature_dqn_policy_train_step` (b32) | 4.47 ms | 954 ms | ~213× |
 | `nature_dqn_policy_train_step` (b256) | 10.2 ms | 7.58 s | ~743× |
-| `nature_dqn_qnet_train_step` (b32) | 4.00 ms | 954 ms | ~310× |
-| `nature_dqn_qnet_train_step` (b256) | 8.65 ms | 7.58 s | ~1230× |
+| `nature_dqn_qnet_train_step` (b32) | 4.00 ms | 954 ms | ~238× |
+| `nature_dqn_qnet_train_step` (b256) | 8.65 ms | 7.58 s | ~876× |
+
+Ratios are `alc-2 CPU / cuda`, both from primary data (cuda from
+`cudabench2.log`, CPU `ndarray` from `cudabench.log`). Note the two
+`qnet_train_step` CPU cells (954 ms / 7.58 s) are the *qnet* `ndarray` times,
+which on alc-2 land within noise of the *policy* `ndarray` times (953.8 ms /
+7.577 s vs 954.2 ms / 7.578 s) — unlike the M3 wgpu run, where qnet CPU sat
+slightly above policy CPU. Both networks are the same Nature-CNN torso, so on a
+warm single-thread `ndarray` host the train-step CPU cost is effectively
+identical.
 
 The cuda crossover is **larger** than the wgpu/Metal one on every row: cuda wins
-by 65–1230× over the alc-2 CPU, versus wgpu's ~7–64× over the M3 CPU. The
+by 65–876× over the alc-2 CPU, versus wgpu's ~7–64× over the M3 CPU. The
 train-step groups (forward + backward + Adam — the most arithmetic per launch)
 show the largest advantage, and the gap widens with batch size (b256 > b32),
 exactly as predicted. This confirms the GPU-wins conclusion for image-env
@@ -484,7 +493,7 @@ small-net default is unchanged; the large-net default is now GPU.
 **cuda status — measured, verdict extended.** The cuda large-net column is now
 measured on alc-2 (RTX 4090); see the
 [cuda large-net column](#cuda-large-net-column-measured-on-alc-2) subsection. The
-prediction held: cuda wins by **65–1230×** over the alc-2 CPU across the eight
+prediction held: cuda wins by **65–876×** over the alc-2 CPU across the eight
 groups — an *even larger* crossover than the wgpu/Metal ~7–64×, and it beats
 wgpu's absolute wall-clock on every row (e.g. `policy_train_step/b256`
 10.2 ms cuda vs 169.5 ms wgpu). The GPU-wins conclusion for image-env training is

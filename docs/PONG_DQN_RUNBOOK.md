@@ -105,7 +105,8 @@ steps (first >−19 at 590k), −15 at the ε floor (~1M steps), plateau near �
 (~1.9–2.6M), then a climb toward −5.5. **Final `avg(last≤100) = −5.14 at exactly
 5M wrapper steps (20M raw frames)** — STILL IMPROVING at budget exhaustion; the
 last 400k window oscillates −6.3 → −3.9 → −5.1 with a rising envelope, best
-window **−3.89**, single best point −3.44 at 4.67M steps. **Did not cross zero**
+strict 400k-step trailing mean (40 logged points at 10k spacing) **−4.13**,
+single best logged 10k-step point −3.44 at 4.67M steps. **Did not cross zero**
 within budget (expected — see gap analysis). Stats: 2,289 episodes, 14.0 h wall
 clock, ~99 wrapper steps/s. Artifacts: `alc-2:~/pong_dqn_run2_lr6.25e-5/` (curve
 CSV, full log, 9 checkpoints).

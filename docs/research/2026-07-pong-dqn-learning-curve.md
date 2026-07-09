@@ -17,15 +17,16 @@ random floor it lifts off at ~200k wrapper steps, climbs through the ε-decay
 floor, and converges toward a rising envelope. With the corrected Atari-standard
 Adam learning rate (**6.25e-5**, Rainbow/Dopamine), run 2 arm A reaches
 `avg(last≤100) = −5.14` at the 5M wrapper-step (20M raw-frame) budget and is
-**still improving at budget exhaustion** (best 400k window: **−3.89**). It does
+**still improving at budget exhaustion** (best 400k-step trailing mean:
+**−4.13**; best single 10k-step logged point: **−3.44**). It does
 not cross zero within this budget.
 
 Three runs, one conclusion:
 
-| Run | Adam LR | Host | Final `avg(last≤100)` | Best 400k window | Verdict |
+| Run | Adam LR | Host | Final `avg(last≤100)` | Best 400k-step trailing mean | Verdict |
 |---|---|---|---|---|---|
 | Run 1 | 2.5e-4 | alc-2 | **−20.76** (stopped at 2.39M steps) | −20.42 | Negative result — wrong LR (Mnih RMSProp rate) |
-| Run 2 arm A | **6.25e-5** | alc-2 | **−5.14** at 5M steps | **−3.89** | Textbook curve, still rising at budget end |
+| Run 2 arm A | **6.25e-5** | alc-2 | **−5.14** at 5M steps | **−4.13** | Textbook curve, still rising at budget end |
 | Run 2 arm B | 1e-4 | alc-8 | **−7.21** at 5M steps | −6.73 | Learns, but repeated instability dips; ends worse than arm A |
 
 The gap to a zero-crossing is a **budget-and-buffer** story, not a code defect:
@@ -91,8 +92,10 @@ The corrected-LR rerun isolates a single variable (LR: 6.25e-5 vs run 1's
 - **Final `avg(last≤100) = −5.14` at exactly 5M wrapper steps (20M raw
   frames)** — and **still improving at budget exhaustion**. The last 400k-step
   window oscillates −6.3 → −3.9 → −5.1 with a **rising envelope**; the best
-  400k window mean is **−3.89** (starting ~4.48M steps) and the single best
-  logged point is **−3.44** at 4.67M steps.
+  strict 400k-step trailing mean (40 logged points at 10k-step spacing) is
+  **−4.13** (window starting ~4.48M steps) and the single best logged 10k-step
+  point is **−3.44** at 4.67M steps. (A narrower ~200–300k-step window peaks
+  around −3.8 to −4.0.)
 - **Stats:** 2,289 episodes, 14.0 h wall clock, ~99 wrapper steps/s.
 - **Artifacts:** `alc-2:~/pong_dqn_run2_lr6.25e-5/` (curve CSV, full log, 9
   checkpoints).
@@ -101,7 +104,8 @@ Curve: [`data/2026-07-pong-dqn-run2a-lr6.25e-5.csv`](data/2026-07-pong-dqn-run2a
 (500 rows).
 
 This is the honest headline result: the stack learns Pong, the curve is still
-rising at the budget wall, and the score at the wall (−5.14, best window −3.89)
+rising at the budget wall, and the score at the wall (−5.14, best 400k-step
+trailing mean −4.13)
 is bounded by the budget/buffer — not by any correctness defect.
 
 ## Run 2 arm B — Adam 1e-4 (parallel LR-stability arm)
@@ -136,8 +140,8 @@ multi-point instability dips** (three separate −8.5 to −10.9 excursions afte
 2M steps) and ends **worse (−7.21)** despite an extra hour of wall clock and more
 episodes. The takeaway: **6.25e-5 is the right default** — the Rainbow/Dopamine
 rate is not just conventional, it is empirically the more stable of the two on
-this stack, and arm A was still improving at budget exhaustion (best window
-−3.89) while arm B had already peaked and settled lower.
+this stack, and arm A was still improving at budget exhaustion (best 400k-step
+trailing mean −4.13) while arm B had already peaked and settled lower.
 
 ## Gap analysis — why zero was not crossed (and how to cross it)
 
@@ -148,7 +152,8 @@ raw-frame budget. This is expected and honest given the budget and buffer:
 **Budget.** Sticky-action (Machado et al. 2018, p=0.25) DQN baselines typically
 need **15–25M+ raw frames** to cross zero on Pong — later than the classic
 no-sticky curves. This run's 20M raw frames sits at the *low end* of that band.
-Arm A was **still improving at 20M frames** (rising envelope, best window −3.89),
+Arm A was **still improving at 20M frames** (rising envelope, best 400k-step
+trailing mean −4.13),
 consistent with a crossing that lands just beyond the current budget wall.
 
 **Replay buffer.** The in-tree `ReplayBuffer` stores frames as `f32`
