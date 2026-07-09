@@ -15,6 +15,103 @@ release procedure (tagging, GitHub Release creation, and `cargo publish`).
 
 Nothing yet.
 
+## [0.4.0] - 2026-07-09
+
+### Summary
+
+The Atari release. 0.4.0 lands the full pixel-observation stack — an
+opt-in `env-atari` feature wrapping the Arcade Learning Environment via a
+subprocess frame protocol, the Machado et al. (2018) preprocessing
+pipeline, and Nature-DQN-scale CNN policies — validated end-to-end by a
+20M-frame Pong DQN training campaign with an honest, committed
+learning-curve report. The large-net workload finally fired the backend
+re-evaluation triggers: GPU decisively flips the small-net CPU-wins
+finding (7–64× on Metal, 65–876× on an RTX 4090), and an opt-in
+`training-fp16` mixed-precision path ships with dynamic loss scaling
+(~1.3× end-to-end on the GPU training loop; isolated compute is
+dtype-neutral on this convolution-bound net — both results measured and
+reconciled in-tree). The CI-doc-tested tutorial series is complete
+(tutorials 1–7), and one negative result is documented in-tree: the
+Mnih-2015 RMSProp learning rate copied onto Adam does not train (flat
+−20.8 through 9.5M frames) — the committed default is the
+Rainbow/Dopamine 6.25e-5.
+
+### Added
+
+- **`env-atari` feature**: `AtariEnv` — a subprocess adapter to Farama
+  `ale-py` over a length-prefixed stdin/stdout frame protocol
+  (`envs/atari/ale_worker.py`; `ALE_ROM_PATH` resolution; no ROMs in the
+  repo or crate tarball, audited in CI), with seeded reset and full
+  `clone_state`/`restore_state` via opaque ALE state blobs (#325, #333).
+  Design note: `docs/ALE_BINDING_STRATEGY.md` (#324, #331).
+- **`AtariPreprocess`**: Machado et al. (2018) evaluation-protocol
+  preprocessing on top of `AtariEnv` — sticky actions (p=0.25, seeded),
+  frame-skip 4 with 2-frame max-pooling, BT.601 grayscale, bilinear
+  84×84 downsample, 4-frame stacking, configurable
+  episode-end-on-life-loss; the wrapper state round-trips through
+  `clone_state`/`restore_state` bit-identically (#326, #336).
+- **Nature-DQN CNN policies**: `NatureDqnBurnPolicy` (actor-critic) and
+  `NatureDqnQNetwork` (Mnih 2015 conv trunk, seeded FC init,
+  record-based target sync; 1.69M params at 4 actions) (#327, #332).
+- **`training-fp16` feature**: opt-in f16 mixed-precision GPU training
+  path (`Cuda<f16>`/`Wgpu<f16>` with a compile-time guard against
+  CPU-only builds), dynamic loss scaling with f16-range-safe capping,
+  and an additive `DQNTrainerBurn::train_step_scaled` — the f32 path is
+  bit-identical to 0.3.0. Verified by a 500k-step CUDA acceptance run
+  with zero overflows (#270, #347).
+- **Pong DQN training example + runbook**: `train_pong_dqn` (and
+  `train_pong_dqn_fp16`) with env-var knobs, learning-curve CSV output
+  and checkpointing; `docs/PONG_DQN_RUNBOOK.md` with an experiment log;
+  `docs/research/2026-07-pong-dqn-learning-curve.md` with all three
+  runs' committed curves (#329, #341, #343, #344).
+- **Large-net throughput benchmarks**: `nature_dqn_*` criterion groups
+  (forward and train-step, b32/b256) registered across ndarray, wgpu,
+  cuda, and — behind `training-fp16` — cuda-f16/wgpu-f16 (#328, #334,
+  #348).
+- **Memory-hard environment suite**: T-maze POMDP and burst-structured
+  flickering CartPole (#302, #315).
+- **Tutorial series complete**: CI-doc-tested tutorials 1–7 (getting
+  started, PPO, DQN, SAC, recurrent PPO/POMDPs, custom environments,
+  WASM deployment) (#303, #314, #319–#323).
+- **SignalingGame** protocol-emergence experiment and research writeup
+  (#308).
+- **CI**: advisory `atari_integration` job running the real-`ale-py`
+  integration tests (bundled Pong ROM, skip-detection guard) (#338,
+  #339).
+
+### Changed
+
+- **`PsroConfig` gains `serialize_br_updates: bool` (default `true`)** —
+  serializes per-agent best-response backward passes to avoid a
+  lock-order deadlock in burn-autodiff 0.21's graph mutexes under
+  rayon-parallel training. Breaking for exhaustive struct literals
+  (pre-1.0 minor per policy). The revert-on-upstream-fix is tracked in
+  #337 (#307, #317).
+- **`docs/BURN_BACKENDS.md` re-measured at large-net scale**: the CNN
+  workload flips the small-net CPU-wins finding — wgpu/Metal wins
+  7–64×, cuda (RTX 4090) 65–876×; timed regions now force an in-region
+  device sync for honest GPU numbers; f16-vs-f32 measured and the
+  end-to-end-vs-isolated discrepancy reconciled (#328, #335, #340,
+  #345, #348).
+- Atari worker protocol: `Obs` responses carry the ALE `lives` count
+  (coordinated protocol/worker/env change within the `env-atari`
+  feature) (#336).
+
+### Fixed
+
+- `FlickeringCartPole` burst mode now rejects
+  `flicker_prob > burst_len / (burst_len + 1)` at construction — the
+  previous clamp silently pinned the stationary blank rate below the
+  documented value in the extreme-p regime (#316, #318).
+- PSRO parallel best-response training no longer wedges on macOS arm64
+  (burn-autodiff graph-lock deadlock; see Changed) (#307, #317).
+- GPU benchmark timing under-reported deferred kernel work (missing
+  device sync inside the timed region); wgpu table refreshed with
+  honest numbers (#335, #340).
+- Doc-data corrections from post-merge audit: qnet cuda speedup ratios
+  and the learning-curve best-window figure recomputed from primary
+  logs (#345, #346).
+
 ## [0.3.0] - 2026-07-06
 
 ### Summary
@@ -255,7 +352,8 @@ relative to "no published version".
 - `bincode` dependency was removed to resolve RUSTSEC-2025-0141 (#37).
 - Misleading `target_synced` field on `DQNStepStats` (#66).
 
-[Unreleased]: https://github.com/rjwalters/thrust/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/rjwalters/thrust/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rjwalters/thrust/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/rjwalters/thrust/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/rjwalters/thrust/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/rjwalters/thrust/releases/tag/v0.1.0
