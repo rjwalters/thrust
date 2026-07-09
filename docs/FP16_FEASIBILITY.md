@@ -175,6 +175,31 @@ forward/backward path itself (loss scaling would be additive).
 
 ---
 
+## Measured on CUDA (2026-07)
+
+This spike predicted that "on NVIDIA cuda the large-net f16 win would be larger"
+than Metal's memory-bandwidth-bound ~1.9×/~4%. That prediction was tested once
+the opt-in path (#270) and a large-net workload (Nature-DQN CNN, #328) both
+landed: issue #272 benched paired f16-vs-f32 on the RTX 4090 (alc-2).
+
+**Outcome: the predicted tensor-core win did *not* materialize for the Nature-DQN
+convolutional workload.** On the 4090, f16 lands within run-to-run noise of f32
+across all four `nature_dqn_*` groups at both batch sizes (every train-step delta
+under ±0.5 %). The reason is workload shape, not a broken f16 path: the
+Nature-CNN torso is dominated by `8×8`/`4×4`/`3×3` **convolutions**, which cubecl
+0.21 does not route through the tensor-core (WMMA) path a large `f16` GEMM would
+hit — so halving the element width buys bandwidth but not tensor-core throughput.
+The spike's "larger on NVIDIA" prediction still holds for a *dense-matmul-bound*
+workload (wide MLP / attention torso); it simply does not apply to this CNN.
+
+On wgpu/Metal the f16 CNN groups would not even run to completion (OOM/SIGKILL),
+consistent with #305. Full paired tables, exact commands, the per-dtype-process
+OOM caveat, and the "when to flip `training-fp16` on" recommendation are in
+[`BURN_BACKENDS.md` → "FP16 benchmarks"](./BURN_BACKENDS.md#fp16-benchmarks-mixed-precision-issue-272)
+(issue #272).
+
+---
+
 ## Child issues
 
 Because at least one backend (wgpu) supports f16 autodiff end-to-end, the epic's
