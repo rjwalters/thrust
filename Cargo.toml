@@ -168,6 +168,22 @@ blas-threaded = ["dep:burn-ndarray", "burn-ndarray/multi-threads"]
 wgpu = ["burn?/wgpu"]
 # Burn CUDA backend — Linux/NVIDIA only. Compose with `training`.
 cuda = ["burn?/cuda"]
+# Opt-in mixed-precision (f16) GPU training path (issue #270, epic #267).
+# Marker feature: when it is on *and* a GPU backend feature is also on, the
+# fp16 example binary (`train_pong_dqn_fp16`) selects `f16` as the backend
+# float element instead of `f32`, and enables manual dynamic loss scaling.
+#
+# It pulls in `burn?/wgpu` so that `--all-features` (the CI `docs` job) always
+# has a GPU backend active — otherwise the `compile_error!` guard in the
+# example would fire during the docs build. The example itself emits a
+# `compile_error!` if `training-fp16` is enabled without `cuda` OR `wgpu`
+# (NdArray/CPU has no f16 support: `FloatNdArrayElement` is impl'd only for
+# f32/f64). The verified runtime path is CUDA (NVIDIA Ampere+); wgpu/Metal f16
+# compiles but is not runtime-verified and bf16 matmul is unavailable there
+# (see #305).
+#
+# Compose as `--features "training,env-atari,cuda,training-fp16"`.
+training-fp16 = ["burn?/wgpu"]
 # Burn collective ops (burn-collective) — in-process/cross-node all_reduce,
 # broadcast, reduce for data-parallel gradient sync. OFF by default and NOT in
 # the CI matrix: opt-in only, gated so the default/`training` builds stay lean.
@@ -352,6 +368,19 @@ required-features = ["training"]
 [[example]]
 name = "train_pong_dqn"
 path = "examples/games/atari/train_pong_dqn.rs"
+required-features = ["training", "env-atari"]
+
+# Mixed-precision (f16) Pong DQN (issue #270, epic #267). Same trainer /
+# hyperparameters as `train_pong_dqn`, but selects `Autodiff<Cuda<f16,i32>>`
+# (or `Wgpu<f16,i32>`) and wraps the backward pass in manual dynamic loss
+# scaling when `training-fp16` is on with a GPU backend. `required-features`
+# deliberately omits `cuda`/`training-fp16` so `cargo check --all-features`
+# type-checks the binary on GPU-less CI; the invalid feature combinations are
+# caught by a `compile_error!` inside the source. Verified runtime path: CUDA
+# (alc-2 RTX 4090). See docs/PONG_DQN_RUNBOOK.md.
+[[example]]
+name = "train_pong_dqn_fp16"
+path = "examples/games/atari/train_pong_dqn_fp16.rs"
 required-features = ["training", "env-atari"]
 
 # Bucket Brigade trainers (issue #115 / PR 4 of #117). Both gated
