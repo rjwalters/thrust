@@ -438,6 +438,125 @@ training holds — and holds *harder* — on cuda.
 > triage). The network benchmarks above isolate the CNN and so reflect the GPU's
 > true compute advantage.
 
+## FP16 benchmarks (mixed-precision, issue #272)
+
+Once the opt-in FP16 path landed (#270 / PR #347), the bench harness gained f16
+backend registrations (issue #272): `register_all` is now also called with the
+backend float element pinned to `f16`, producing `nature_dqn_*/cuda-f16` (and
+`/wgpu-f16`) groups side-by-side with the f32 `/cuda` (`/wgpu`) groups. This
+section reports the **paired f16-vs-f32** large-net comparison. The signal is in
+the four `nature_dqn_*` CNN groups; the small-MLP groups also register under the
+f16 suffix but show no meaningful delta (same kernel-launch-overhead story as
+f32 at that size) and are omitted here.
+
+**Enable with** `--features "training,cuda,training-fp16"` (CUDA, verified) or
+`--features "training,wgpu,training-fp16"` (wgpu — see the Metal caveat below).
+
+### cuda f16 vs f32 (measured on alc-2, RTX 4090)
+
+Measured on `sphere@alc-2` (RTX 4090, Ubuntu 24.04, CUDA 12.x), Burn 0.21, with
+the in-region `B::sync(device)` fix (#335) in place. Warm-autotune protocol:
+each dtype was run **in its own process** (see the OOM note below), twice — pass
+1 warms the autotune cache and is discarded, pass 2 is recorded. Sample-size 10,
+3 s warm-up / 8 s measurement. Raw criterion excerpts:
+`.loom/bench-logs/cuda-alc2-f16-record.clean.log` and
+`cuda-alc2-f32-record.clean.log` (medians quoted below are the pass-2 values).
+
+```bash
+# f32 baseline (own process):
+cargo bench --features "training,cuda" --bench trainer_throughput \
+    -- --warm-up-time 3 --measurement-time 8 --sample-size 10 "nature_dqn_.*cuda"
+# f16 (own process):
+cargo bench --features "training,cuda,training-fp16" --bench trainer_throughput \
+    -- --warm-up-time 3 --measurement-time 8 --sample-size 10 "nature_dqn_.*cuda-f16"
+```
+
+Median per-iteration wall-clock, lower is better. Delta is `(f16 − f32) / f32`
+(negative = f16 faster). The alc-2 CPU `ndarray` reference (from the #219/#328
+run, [cuda large-net column](#cuda-large-net-column-measured-on-alc-2)) is shown
+for context — it is not re-measured here.
+
+| Benchmark group | cuda f32 | cuda f16 | Δ (f16 vs f32) | alc-2 CPU (ndarray, ref) |
+| --- | --- | --- | --- | --- |
+| `nature_dqn_policy_forward` (b32) | 1.097 ms | 1.103 ms | +0.6 % | 138 ms |
+| `nature_dqn_policy_forward` (b256) | 3.777 ms | 3.483 ms | **−7.8 %** | 1.10 s |
+| `nature_dqn_qnet_forward` (b32) | 1.653 ms | 1.675 ms | +1.3 % | 138 ms |
+| `nature_dqn_qnet_forward` (b256) | 3.463 ms | 3.842 ms | +10.9 % | 1.10 s |
+| `nature_dqn_policy_train_step` (b32) | 4.489 ms | 4.471 ms | −0.4 % | 954 ms |
+| `nature_dqn_policy_train_step` (b256) | 25.81 ms | 25.86 ms | +0.2 % | 7.58 s |
+| `nature_dqn_qnet_train_step` (b32) | 3.886 ms | 3.883 ms | −0.1 % | 954 ms |
+| `nature_dqn_qnet_train_step` (b256) | 25.67 ms | 25.72 ms | +0.2 % | 7.58 s |
+
+**Finding: on the 4090, f16 is within run-to-run noise of f32 — the predicted
+tensor-core win did not materialize for this Nature-DQN workload.** Every
+train-step delta is under ±0.5 %; the forward deltas swing ±11 % but in *both*
+directions (b256 policy_forward faster, b256 qnet_forward slower), which is
+autotune/measurement scatter, not a systematic f16 advantage. Both dtypes still
+crush the CPU by 200–800× on the train-step groups — the GPU-wins conclusion is
+unchanged; only the *f16-over-f32* increment is absent.
+
+Why no tensor-core payoff here? The bottleneck in the Nature-DQN torso is the
+`8×8`/`4×4`/`3×3` **convolutions**, not large dense matmuls. cubecl 0.21's CUDA
+conv kernels do not route through the tensor-core (WMMA/`mma`) path the way a big
+`f16` GEMM would, so halving the element width buys bandwidth but not the ~8×
+throughput NVIDIA tensor cores give on tensor-core-eligible matmul shapes. The
+FP16 feasibility spike predicted a *larger* win on NVIDIA than on Metal; the
+measured outcome is that on *this convolutional* workload the win is ~nil on both
+(Metal couldn't even run it — see below). A dense-matmul-heavy workload (e.g. a
+wide MLP / transformer torso) is where f16 tensor cores would show the predicted
+gain; the Nature-CNN is not that shape.
+
+> **OOM caveat (why one process per dtype).** Registering *both* the f32 and f16
+> backends and running the full suite in a single process exhausts the 4090's
+> 24 GB VRAM partway through: cubecl 0.21's CUDA memory pool, combined with
+> autotune scratch buffers across twice the kernel set, fragments and fails with
+> `can't allocate buffer` → `Memory page 0 doesn't exist` panics (a
+> `[256,4,84,84]` f16 batch is only ~43 MB, so this is a pool/fragmentation
+> issue, not a genuine working-set limit). Splitting the run so each dtype gets
+> its own process — hence its own fresh memory pool — measures both cleanly. The
+> paired numbers above are therefore cross-*process* but same-*host*, same-day,
+> same-command; run-to-run f32 scatter between the two passes was <5 % on every
+> group, bounding the comparison error well below the deltas that would matter.
+
+### wgpu/Metal f16 — runtime unstable (not recorded)
+
+On the M3 Ultra (Metal via wgpu), the `nature_dqn_*/wgpu-f16` groups **do not run
+to completion**: the f32 `/wgpu` groups measured fine (e.g. `policy_forward/b32`
+= 11.9 ms), but the f16 pass drove the process into a memory blow-up —
+`qnet_forward/wgpu-f16/b32` reported a wildly unstable `[1.96 s, 3.45 s, 5.02 s]`
+interval before the OS `SIGKILL`ed it (OOM). This matches the
+[#305](https://github.com/rjwalters/thrust/issues/305) tracking note that f16 on
+Metal is untested / unsupported in Burn 0.21 (no bf16 matmul, f16 conv path
+unverified). The `wgpu-f16` registration is retained (it compiles) but is
+**marked runtime-unverified**; no wgpu-f16 numbers are recorded. Raw partial log:
+`.loom/bench-logs/wgpu-m3-f16-only.log`.
+
+### Recommendation: when to flip `training-fp16` on
+
+**Default: leave `training-fp16` off.** On the workloads Thrust has today it
+provides no measured speedup:
+
+- **CUDA + Nature-DQN CNN:** f16 ≈ f32 (within noise) — the conv torso does not
+  hit tensor cores. No reason to opt in for the throughput.
+- **wgpu/Metal:** f16 does not run reliably (OOM/SIGKILL). Do not use.
+- **CPU (NdArray):** f16 is unavailable at the type level (hard compile error).
+
+**Flip it on only when** a workload is *dense-matmul-bound on CUDA* (wide MLP /
+attention torso, large batched GEMMs) where NVIDIA tensor cores activate — that
+is the regime the feasibility spike predicted a real win, and it is not the
+convolutional Nature-DQN shape benched here. Even then, budget for f16's dynamic
+range: the #270 path needs the dynamic loss scaler, and the all-f16 optimizer
+state is a known accuracy risk (see `FP16_FEASIBILITY.md`).
+
+> **End-to-end context.** The #270 acceptance run showed ~132 vs ~100 wrapper
+> steps/s (≈1.3×) f16-vs-f32 on the *Pong* training loop — but that loop is
+> **environment-IPC-bound** (`ale-py` subprocess + frame preprocessing at ~60 %
+> GPU utilization), so that 1.3× reflects incidental scheduling/bandwidth
+> effects, not GPU compute. The isolated benchmarks here — which strip out env
+> stepping — show the *compute-only* f16 delta is ~nil on this CNN, consistent
+> with "the win, when it comes, comes from tensor-core matmul, and this workload
+> has none."
+
 ### Interpretation
 
 **The CPU NdArray backend wins every group by 4.4–9.5×.** This is the expected
