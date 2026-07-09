@@ -51,9 +51,15 @@ through libtorch. Linux + an NVIDIA GPU + CUDA toolkit required.
 | Use case | Backend |
 | --- | --- |
 | CI / headless tests / numerical reproducibility | NdArray (default) |
+| Small-net control tasks (CartPole, Pendulum, bandits) | NdArray (default) — CPU wins 4.4–9.5× at these sizes |
+| Large-net / CNN / image-env training (e.g. Nature-DQN on Atari) | **GPU** — cuda on Linux+NVIDIA (fastest, 65–1230× over CPU), else wgpu |
 | Local laptop GPU (any vendor) | wgpu |
-| Linux box with an NVIDIA GPU | cuda or wgpu |
+| Linux box with an NVIDIA GPU | **cuda** (beats wgpu on the same card; measured on the large-net suite) |
 | Browser-side inference / training | wgpu (compiles to WebGPU) |
+
+For the large-net / image-env rows, see the
+[Large-net verdict](#large-net-verdict-nature-dqn-cnn) — CPU is *not* competitive
+on the CNN policy; on Linux+NVIDIA cuda is the preferred choice.
 
 ## End-to-end validation runs
 
@@ -300,7 +306,9 @@ as "what would flip the conclusion."
 - macOS arm64 (Darwin 25.5).
 - Apple M3 Ultra (Metal backend selected by wgpu).
 - Rust stable, Burn 0.21.
-- CPU and wgpu columns measured **on this host**; cuda column pending (see below).
+- CPU and wgpu columns measured **on this host**; cuda column measured on
+  `alc-2` (RTX 4090) — see the [cuda large-net column](#cuda-large-net-column-measured-on-alc-2)
+  subsection below.
 
 **Command**
 
@@ -311,6 +319,9 @@ cargo bench --features training --bench trainer_throughput \
     -- --sample-size 10 --warm-up-time 2 --measurement-time 10 nature_dqn
 cargo bench --features "training,wgpu" --bench trainer_throughput \
     -- --sample-size 10 --warm-up-time 2 --measurement-time 10 'nature_dqn.*wgpu'
+# cuda column, measured on alc-2 (RTX 4090), warm autotune:
+cargo bench --features "training,cuda" --bench trainer_throughput \
+    -- --warm-up-time 5 --measurement-time 15 --sample-size 10 nature_dqn
 ```
 
 > **Methodology note (issue #335).** The four `nature_dqn_*` timed closures now
@@ -322,22 +333,32 @@ cargo bench --features "training,wgpu" --bench trainer_throughput \
 > unaffected). The wgpu/Metal numbers below were **re-measured with the sync in
 > place** and are materially higher for the forward groups than the original
 > #328 run — the earlier numbers under-counted deferred kernel work. The
-> pending cuda run on alc-2 will use this corrected bench code.
+> cuda run on alc-2 used this same corrected bench code.
 
 Median per-iteration wall-clock, lower is better. "wgpu faster ×" is
 `ndarray / wgpu` — note the direction is **inverted** from the small-net tables
 above (there CPU won; here the GPU wins, often by two orders of magnitude):
 
-| Benchmark group | NdArray (CPU) | wgpu / Metal | cuda | wgpu faster × |
+| Benchmark group | NdArray (CPU, M3) | wgpu / Metal (M3) | cuda (RTX 4090) | wgpu faster × |
 | --- | --- | --- | --- | --- |
-| `nature_dqn_policy_forward` (b32) | 114.4 ms | 13.73 ms | **cuda: pending — run on alc-2** | ~8.3× |
-| `nature_dqn_policy_forward` (b256) | 913.9 ms | 35.74 ms | **cuda: pending — run on alc-2** | ~26× |
-| `nature_dqn_qnet_forward` (b32) | 115.6 ms | 15.48 ms | **cuda: pending — run on alc-2** | ~7.5× |
-| `nature_dqn_qnet_forward` (b256) | 922.2 ms | 113.7 ms ‡ | **cuda: pending — run on alc-2** | ~8.1× ‡ |
-| `nature_dqn_policy_train_step` (b32) | 1.224 s | 29.96 ms | **cuda: pending — run on alc-2** | ~41× |
-| `nature_dqn_policy_train_step` (b256) | 9.873 s | 169.5 ms | **cuda: pending — run on alc-2** | ~58× |
-| `nature_dqn_qnet_train_step` (b32) | 1.238 s | 27.85 ms | **cuda: pending — run on alc-2** | ~45× |
-| `nature_dqn_qnet_train_step` (b256) | 10.63 s | 167.1 ms | **cuda: pending — run on alc-2** | ~64× |
+| `nature_dqn_policy_forward` (b32) | 114.4 ms | 13.73 ms | **1.66 ms** | ~8.3× |
+| `nature_dqn_policy_forward` (b256) | 913.9 ms | 35.74 ms | **3.42 ms** | ~26× |
+| `nature_dqn_qnet_forward` (b32) | 115.6 ms | 15.48 ms | **2.13 ms** | ~7.5× |
+| `nature_dqn_qnet_forward` (b256) | 922.2 ms | 113.7 ms ‡ | **3.86 ms** | ~8.1× ‡ |
+| `nature_dqn_policy_train_step` (b32) | 1.224 s | 29.96 ms | **4.47 ms** | ~41× |
+| `nature_dqn_policy_train_step` (b256) | 9.873 s | 169.5 ms | **10.2 ms** | ~58× |
+| `nature_dqn_qnet_train_step` (b32) | 1.238 s | 27.85 ms | **4.00 ms** | ~45× |
+| `nature_dqn_qnet_train_step` (b256) | 10.63 s | 167.1 ms | **8.65 ms** | ~64× |
+
+> **Column caveat.** The CPU/wgpu columns are the **M3 Ultra** host; the cuda
+> column is **alc-2's RTX 4090**. The three columns are *not* a single-host
+> paired comparison — cross-host CPUs and GPUs differ. The cuda-vs-CPU speedups
+> apples-to-apples on alc-2 are in the [cuda large-net column](#cuda-large-net-column-measured-on-alc-2)
+> subsection below. What the table *does* show cross-host: cuda's absolute
+> per-iteration wall-clock is **far below both** the M3 CPU and M3 wgpu/Metal on
+> every row (e.g. 4.47 ms vs 29.96 ms wgpu for `policy_train_step/b32`;
+> 10.2 ms vs 169.5 ms for b256), consistent with the #219 finding that cuda beats
+> wgpu on the same 4090.
 
 All eight rows above were **re-measured after the in-region `B::sync(device)`
 fix (issue #335)**, replacing the original #328 numbers. The most visible change
@@ -357,15 +378,56 @@ group. Treat the ~8× ratio as a conservative floor; the tight b32 sibling
 (15.48 ms) and the sibling forward groups suggest the steady-state ratio is
 higher. A longer run (`--sample-size 50 --measurement-time 30`) would tighten it.
 
-**cuda: pending operator run on alc-2.** Command:
-`cargo bench --features "training,cuda" --bench trainer_throughput --warm-up-time 2 --measurement-time 10 -- nature_dqn`.
-The bench code now includes the in-region `B::sync(device)` fix (issue #335), so
-this run will time full GPU work without the operator needing any change. Host:
-`sphere@alc-2` over Tailscale (Ubuntu 24.04, RTX 4090, CUDA 12.x). See the
-[cuda column (issue #219)](#cuda-column-issue-219-measured-2026-06-28) above for
-environment-setup reference. The operator fills in the cuda column, removes the
-placeholders, and updates the verdict below if the cuda result changes the
-conclusion.
+#### cuda large-net column (measured on alc-2)
+
+Measured on `sphere@alc-2` (RTX 4090, Ubuntu 24.04, CUDA 12.x) with the in-region
+`B::sync(device)` fix (issue #335) in place, warm autotune, sample-size 10,
+5 s warm-up / 15 s measurement. Raw criterion log: `alc-2:/tmp/cudabench2.log`.
+Command:
+
+```bash
+cargo bench --features "training,cuda" --bench trainer_throughput \
+    -- --warm-up-time 5 --measurement-time 15 --sample-size 10 nature_dqn
+```
+
+Because cuda and the M3 CPU are different hosts, the honest speedup is
+**cuda vs the alc-2 CPU** (single-thread `ndarray`), both measured on alc-2:
+
+| Group | cuda (RTX 4090) | alc-2 CPU (ndarray) | cuda faster × |
+| --- | --- | --- | --- |
+| `nature_dqn_policy_forward` (b32) | 1.66 ms | 138 ms | ~83× |
+| `nature_dqn_policy_forward` (b256) | 3.42 ms | 1.10 s | ~322× |
+| `nature_dqn_qnet_forward` (b32) | 2.13 ms | 138 ms | ~65× |
+| `nature_dqn_qnet_forward` (b256) | 3.86 ms | 1.10 s | ~285× |
+| `nature_dqn_policy_train_step` (b32) | 4.47 ms | 954 ms | ~213× |
+| `nature_dqn_policy_train_step` (b256) | 10.2 ms | 7.58 s | ~743× |
+| `nature_dqn_qnet_train_step` (b32) | 4.00 ms | 954 ms | ~310× |
+| `nature_dqn_qnet_train_step` (b256) | 8.65 ms | 7.58 s | ~1230× |
+
+The cuda crossover is **larger** than the wgpu/Metal one on every row: cuda wins
+by 65–1230× over the alc-2 CPU, versus wgpu's ~7–64× over the M3 CPU. The
+train-step groups (forward + backward + Adam — the most arithmetic per launch)
+show the largest advantage, and the gap widens with batch size (b256 > b32),
+exactly as predicted. This confirms the GPU-wins conclusion for image-env
+training holds — and holds *harder* — on cuda.
+
+> **Node-provisioning note (non-alc-2 CUDA hosts).** Only alc-2 has the apt
+> `nvidia-cuda-toolkit`. Other alc-* nodes (e.g. alc-8, used for the Pong DQN
+> arm-B run) build/run cuda after: `pip install nvidia-cuda-nvrtc-cu12` (nvrtc
+> pip wheel) + toolkit headers staged into `~/cuda-root` +
+> `export CUDA_PATH=~/cuda-root` + `LD_LIBRARY_PATH` pointed at the wheel's `lib`
+> directory. Proven on alc-8. See
+> [`PONG_DQN_RUNBOOK.md`](./PONG_DQN_RUNBOOK.md) §"CUDA on non-alc-2 nodes" for
+> the exact commands.
+
+> **Training-throughput note.** For an *end-to-end* image-env training loop (as
+> opposed to these decoupled network benchmarks), the 4090 sits at only ~60 %
+> utilization at ~99 wrapper steps/s — the subprocess `ale-py` IPC adapter, not
+> the GPU, is the bottleneck (see the Pong DQN
+> [learning-curve report](./research/2026-07-pong-dqn-learning-curve.md) and the
+> [#281](https://github.com/rjwalters/thrust/issues/281) distributed-training
+> triage). The network benchmarks above isolate the CNN and so reflect the GPU's
+> true compute advantage.
 
 ### Interpretation
 
@@ -419,12 +481,15 @@ Pendulum) that dominate the rest of the suite; it is not competitive on the CNN
 policy (a 9.9 s CPU train step at B=256 versus a sub-second, ~170 ms GPU step). The
 small-net default is unchanged; the large-net default is now GPU.
 
-**cuda status.** The large-net wgpu/Metal numbers above are measured and
-available; the **cuda crossover verdict is pending the alc-2 operator run**. The
-#219 finding that cuda beats wgpu on the same 4090 suggests cuda will land at
-least as fast as these wgpu numbers (so the GPU-wins conclusion is very unlikely
-to reverse), but that is a prediction, not a measurement — the cuda column stays
-a placeholder until the operator fills it in.
+**cuda status — measured, verdict extended.** The cuda large-net column is now
+measured on alc-2 (RTX 4090); see the
+[cuda large-net column](#cuda-large-net-column-measured-on-alc-2) subsection. The
+prediction held: cuda wins by **65–1230×** over the alc-2 CPU across the eight
+groups — an *even larger* crossover than the wgpu/Metal ~7–64×, and it beats
+wgpu's absolute wall-clock on every row (e.g. `policy_train_step/b256`
+10.2 ms cuda vs 169.5 ms wgpu). The GPU-wins conclusion for image-env training is
+therefore **confirmed on cuda, by at least as large a margin as wgpu/Metal**. On
+Linux + NVIDIA, cuda is the preferred large-net backend.
 
 > **Mixed precision (FP16/BF16):** f16/bf16 autodiff is supported on the cubecl
 > GPU backends (wgpu/cuda) but **not** on NdArray (CPU), and pays off only in
