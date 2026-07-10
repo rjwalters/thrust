@@ -164,14 +164,14 @@ impl SnakeCNNInference {
         x = self.conv2d(&x, &self.conv3_weight, &self.conv3_bias);
         self.relu(&mut x);
 
-        // Global average pooling: collapse each channel to its spatial mean.
-        // Mirrors the training model's adaptive_avg_pool2d([1,1]).
-        let num_conv3_out = self.conv3_weight.len();
-        let spatial_size = (self.grid_height * self.grid_width) as f32;
-        let mut flattened = Vec::with_capacity(num_conv3_out);
+        // Flatten conv3 output in [c][h][w] order, matching the training
+        // model's `reshape([batch, flat_size])` before fc_common.
+        let flat_size = self.conv3_weight.len() * grid_size;
+        let mut flattened = Vec::with_capacity(flat_size);
         for channel in &x {
-            let sum: f32 = channel.iter().flat_map(|row| row.iter().copied()).sum();
-            flattened.push(sum / spatial_size);
+            for row in channel {
+                flattened.extend_from_slice(row);
+            }
         }
 
         // FC common + ReLU — derive hidden size from actual weights
@@ -230,5 +230,56 @@ impl SnakeCNNInference {
         let json = std::fs::read_to_string(path)?;
         let model = serde_json::from_str(&json)?;
         Ok(model)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Identity 3x3 kernel (center tap only), one in/out channel.
+    fn identity_conv() -> Vec<Vec<Vec<Vec<f32>>>> {
+        let mut kernel = vec![vec![vec![vec![0.0; 3]; 3]; 1]; 1];
+        kernel[0][0][1][1] = 1.0;
+        kernel
+    }
+
+    /// Build a model whose logits read individual grid cells: with identity
+    /// convs and fc_common rows selecting flat positions 0 and 3, the argmax
+    /// must follow the hot cell. Any spatial pooling before fc_common (the
+    /// bug that made the web demo's snakes ignore food) collapses both
+    /// inputs to the same features and fails this test.
+    fn cell_selector_model() -> SnakeCNNInference {
+        SnakeCNNInference {
+            grid_width: 2,
+            grid_height: 2,
+            input_channels: 1,
+            num_actions: 2,
+            conv1_weight: identity_conv(),
+            conv1_bias: vec![0.0],
+            conv2_weight: identity_conv(),
+            conv2_bias: vec![0.0],
+            conv3_weight: identity_conv(),
+            conv3_bias: vec![0.0],
+            // Rows have flat_size = 1 channel * 2 * 2 columns, matching the
+            // training model's flatten -> fc_common layout.
+            fc_common_weight: vec![vec![1.0, 0.0, 0.0, 0.0], vec![0.0, 0.0, 0.0, 1.0]],
+            fc_common_bias: vec![0.0, 0.0],
+            fc_policy_weight: vec![vec![1.0, 0.0], vec![0.0, 1.0]],
+            fc_policy_bias: vec![0.0, 0.0],
+            fc_value_weight: vec![vec![0.0, 0.0]],
+            fc_value_bias: vec![0.0],
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn forward_flattens_conv_output_preserving_spatial_layout() {
+        let model = cell_selector_model();
+
+        // Hot cell at flat index 0 -> logit 0 wins.
+        assert_eq!(model.get_action(&[1.0, 0.0, 0.0, 0.0]), 0);
+        // Hot cell at flat index 3 -> logit 1 wins.
+        assert_eq!(model.get_action(&[0.0, 0.0, 0.0, 1.0]), 1);
     }
 }
