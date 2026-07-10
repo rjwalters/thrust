@@ -101,67 +101,81 @@ export function usePong(): UsePongResult {
 		if (!isRunning || isPaused || !envRef.current) return;
 
 		const targetFrameTime = 16.67 / speed;
+		// Display refresh caps rAF near 60Hz, so speeds above 1x need multiple
+		// simulation steps per animation frame. Cap the batch so a stalled or
+		// backgrounded tab doesn't fast-forward on return.
+		const maxStepsPerFrame = 20;
 
 		function gameLoop(currentTime: number) {
 			if (!envRef.current || !isRunning || isPaused) return;
 
-			fpsFrameTimesRef.current.push(currentTime);
-			if (fpsFrameTimesRef.current.length > 30) fpsFrameTimesRef.current.shift();
-			if (fpsFrameTimesRef.current.length >= 2) {
-				const span = currentTime - fpsFrameTimesRef.current[0];
-				setActualFps(
-					Math.round(((fpsFrameTimesRef.current.length - 1) / span) * 1000),
-				);
+			const elapsed = currentTime - lastFrameTimeRef.current;
+			let stepsToRun = Math.floor(elapsed / targetFrameTime);
+			if (stepsToRun > maxStepsPerFrame) {
+				stepsToRun = maxStepsPerFrame;
+				lastFrameTimeRef.current = currentTime;
+			} else if (stepsToRun > 0) {
+				lastFrameTimeRef.current += stepsToRun * targetFrameTime;
 			}
 
-			const elapsed = currentTime - lastFrameTimeRef.current;
-			if (elapsed >= targetFrameTime) {
-				lastFrameTimeRef.current = currentTime;
+			if (stepsToRun > 0) {
+				let next: PongState | null = null;
+				for (let i = 0; i < stepsToRun; i++) {
+					// Get action
+					let action = envRef.current.get_policy_action();
+					if (action === -1) {
+						// No policy — use heuristic based on current state
+						const cur = envRef.current.get_state();
+						const curState: PongState = {
+							ballX: cur[0], ballY: cur[1],
+							leftY: cur[2], rightY: cur[3],
+							leftScore: cur[4], rightScore: cur[5],
+							episode: 0, steps: 0, done: false,
+						};
+						action = heuristicAction(curState);
+					}
 
-				// Get action
-				let action = envRef.current.get_policy_action();
-				if (action === -1) {
-					// No policy — use heuristic based on current state
-					const cur = envRef.current.get_state();
-					const curState: PongState = {
-						ballX: cur[0], ballY: cur[1],
-						leftY: cur[2], rightY: cur[3],
-						leftScore: cur[4], rightScore: cur[5],
-						episode: 0, steps: 0, done: false,
+					const result = envRef.current.step(action);
+					const done = result[7] === 1.0 || result[8] === 1.0;
+
+					next = {
+						ballX: result[0],
+						ballY: result[1],
+						leftY: result[2],
+						rightY: result[3],
+						leftScore: result[4],
+						rightScore: result[5],
+						episode: envRef.current.get_episode(),
+						steps: envRef.current.get_steps(),
+						done,
 					};
-					action = heuristicAction(curState);
+					fpsFrameTimesRef.current.push(currentTime);
+
+					if (done) {
+						setTimeout(() => {
+							if (envRef.current) {
+								const s = envRef.current.reset();
+								setState({
+									ballX: s[0], ballY: s[1],
+									leftY: s[2], rightY: s[3],
+									leftScore: s[4], rightScore: s[5],
+									episode: envRef.current.get_episode(),
+									steps: envRef.current.get_steps(),
+									done: false,
+								});
+							}
+						}, 800);
+						break;
+					}
 				}
-
-				const result = envRef.current.step(action);
-				const done = result[7] === 1.0 || result[8] === 1.0;
-
-				const next: PongState = {
-					ballX: result[0],
-					ballY: result[1],
-					leftY: result[2],
-					rightY: result[3],
-					leftScore: result[4],
-					rightScore: result[5],
-					episode: envRef.current.get_episode(),
-					steps: envRef.current.get_steps(),
-					done,
-				};
 				setState(next);
 
-				if (done) {
-					setTimeout(() => {
-						if (envRef.current) {
-							const s = envRef.current.reset();
-							setState({
-								ballX: s[0], ballY: s[1],
-								leftY: s[2], rightY: s[3],
-								leftScore: s[4], rightScore: s[5],
-								episode: envRef.current.get_episode(),
-								steps: envRef.current.get_steps(),
-								done: false,
-							});
-						}
-					}, 800);
+				// Actual FPS = simulation steps per second, smoothed over a window
+				const times = fpsFrameTimesRef.current;
+				if (times.length > 60) times.splice(0, times.length - 60);
+				if (times.length >= 2) {
+					const span = currentTime - times[0];
+					if (span > 0) setActualFps(Math.round(((times.length - 1) / span) * 1000));
 				}
 			}
 

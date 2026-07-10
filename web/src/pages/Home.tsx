@@ -115,7 +115,7 @@ export default function Home() {
 					</Link>
 
 					<a
-						href="https://rjwalters.info/bucket-brigade/"
+						href="https://rjwalters.github.io/bucket-brigade/"
 						target="_blank"
 						rel="noopener noreferrer"
 						className="group bg-white/10 backdrop-blur-lg rounded-2xl p-8 hover:bg-white/20 transition-all hover:scale-105 border border-white/20"

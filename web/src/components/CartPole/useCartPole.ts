@@ -99,27 +99,24 @@ export function useCartPole(): UseCartPoleResult {
 		}
 
 		const targetFrameTime = 16.67 / speed; // Base: 60 FPS, scales with speed
+		// Display refresh caps rAF near 60Hz, so speeds above 1x need multiple
+		// simulation steps per animation frame. Cap the batch so a stalled or
+		// backgrounded tab doesn't fast-forward on return.
+		const maxStepsPerFrame = 20;
 
 		function gameLoop(currentTime: number) {
-		if (!envRef.current || !isRunning || isPaused) return;
+			if (!envRef.current || !isRunning || isPaused) return;
 
-		// Calculate actual FPS (smoothed over last 30 frames)
-		fpsFrameTimesRef.current.push(currentTime);
-		if (fpsFrameTimesRef.current.length > 30) {
-			fpsFrameTimesRef.current.shift();
-		}
-		if (fpsFrameTimesRef.current.length >= 2) {
-			const timeSpan = currentTime - fpsFrameTimesRef.current[0];
-			const frameCount = fpsFrameTimesRef.current.length - 1;
-			const fps = (frameCount / timeSpan) * 1000;
-			setActualFps(Math.round(fps));
-		}
-
-		const elapsed = currentTime - lastFrameTimeRef.current;
-
-			if (elapsed >= targetFrameTime) {
+			const elapsed = currentTime - lastFrameTimeRef.current;
+			let stepsToRun = Math.floor(elapsed / targetFrameTime);
+			if (stepsToRun > maxStepsPerFrame) {
+				stepsToRun = maxStepsPerFrame;
 				lastFrameTimeRef.current = currentTime;
+			} else if (stepsToRun > 0) {
+				lastFrameTimeRef.current += stepsToRun * targetFrameTime;
+			}
 
+			for (let i = 0; i < stepsToRun; i++) {
 				// Get action from the trained policy
 				const action = envRef.current.get_policy_action();
 
@@ -138,6 +135,7 @@ export function useCartPole(): UseCartPoleResult {
 					bestScore: envRef.current.get_best_score(),
 					done,
 				});
+				fpsFrameTimesRef.current.push(currentTime);
 
 				// Auto-reset for continuous demo
 				if (done) {
@@ -156,6 +154,17 @@ export function useCartPole(): UseCartPoleResult {
 							});
 						}
 					}, 500); // Brief pause before reset
+					break;
+				}
+			}
+
+			if (stepsToRun > 0) {
+				// Actual FPS = simulation steps per second, smoothed over a window
+				const times = fpsFrameTimesRef.current;
+				if (times.length > 60) times.splice(0, times.length - 60);
+				if (times.length >= 2) {
+					const span = currentTime - times[0];
+					if (span > 0) setActualFps(Math.round(((times.length - 1) / span) * 1000));
 				}
 			}
 
