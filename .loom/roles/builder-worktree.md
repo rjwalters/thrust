@@ -41,22 +41,65 @@ gh issue edit 84 --remove-label "loom:issue" --add-label "loom:building"
 # -> Creates: .loom/worktrees/issue-84
 # -> Branch: feature/issue-84
 
-# 3. Change to worktree directory
-cd .loom/worktrees/issue-84
+# 3. Capture the worktree ABSOLUTE path ONCE (see warning below)
+WORKTREE_ABS="$(cd .loom/worktrees/issue-84 && pwd)"
+# -> e.g. /Users/you/repo/.loom/worktrees/issue-84
 
-# 4. Do your work (implement, test, commit)
+# 3a. Assert it's really a managed worktree BEFORE any edit — the same two
+#     checks guard-worktree-paths.sh applies to every Edit/Write/Bash write
+#     it confines (#4178):
+[[ -f "$WORKTREE_ABS/.loom-managed" ]] || echo "FATAL: no .loom-managed sentinel"
+[[ "$(git -C "$WORKTREE_ABS" rev-parse --show-toplevel)" == "$WORKTREE_ABS" ]] || echo "FATAL: toplevel mismatch"
+
+# 4. Do your work using ABSOLUTE paths (implement, test, commit)
+#    - Write/Edit: pass "$WORKTREE_ABS/<file>"
+#    - Bash:       git -C "$WORKTREE_ABS" ...  OR  cd "$WORKTREE_ABS" && <cmd>
 # ... work work work ...
 
-# 5. Push and create PR from worktree
-git push -u origin feature/issue-84
+# 5. Push and create PR from the worktree
+git -C "$WORKTREE_ABS" push -u origin feature/issue-84
 gh pr create --label "loom:review-requested"
 
-# 6. Return to main workspace
-cd ../..  # Back to workspace root
-
-# 7. Worktree cleanup is automatic - DO NOT manually delete worktrees
+# 6. Worktree cleanup is automatic - DO NOT manually delete worktrees
 # Worktrees are cleaned up automatically when PRs merge or by loom-clean
 ```
+
+### CRITICAL: `cd` Does NOT Persist Across Tool Calls
+
+**The harness resets your working directory between tool calls.** A `cd
+.loom/worktrees/issue-N` in one Bash call does **not** carry over to the next
+Write, Edit, or Bash call — the next call starts back at the main repo root.
+If you rely on a persisted `cd` and then use a repo-relative path, your file
+operation lands in the **main worktree** instead of your issue worktree,
+silently contaminating main (#3513, recurrence of #2802).
+
+**Do this instead:**
+
+1. Capture the worktree's absolute path **once**, right after creating it:
+   ```bash
+   WORKTREE_ABS="$(cd .loom/worktrees/issue-N && pwd)"
+   ```
+2. Use absolute paths for **every** file-mutating operation thereafter:
+   - **Write / Edit tools** — pass the full path `"$WORKTREE_ABS/path/to/file"`.
+     These tools have no cwd; the path you give is the path written.
+   - **Bash** — either re-assert `cd "$WORKTREE_ABS" &&` at the **start of each
+     file-mutating invocation**, or use `git -C "$WORKTREE_ABS" ...` and
+     absolute paths. Never assume an earlier `cd` is still in effect.
+3. Before committing, verify your changes are in the worktree and main is clean:
+   ```bash
+   git -C "$WORKTREE_ABS" status        # changes should be HERE
+   ./.loom/scripts/check-main-clean.sh  # backstop: exits 3 if main is dirty
+   ```
+
+**A guard denial is not a signal to retry via a different tool.** Two
+independent PreToolUse guards confine writes to your worktree while any
+managed worktree exists: `guard-worktree-paths.sh` on the Edit/Write matcher,
+and `guard-destructive-generic.sh` on the Bash matcher for the common write
+idioms (`>`/`>>` redirection, `tee`, `sed -i`, `cp`/`mv`) (#4178). If one
+denies, the fix is always to re-derive `$WORKTREE_ABS` and use it — never to
+fall back from Edit/Write to a Bash write (or vice versa) for the same target.
+That fallback is exactly how sweep #4063 escaped worktree isolation and edited
+live guard hooks in the main checkout.
 
 ### Collision Detection
 
@@ -312,7 +355,7 @@ done
 ### When to Use Parallel Mode
 
 **Use atomic claiming when:**
-- Multiple Builder agents run simultaneously (Daemon Mode with shepherd pool)
+- Multiple Builder agents run simultaneously (Daemon Mode dispatching parallel sweeps)
 - Risk of two agents picking the same issue
 - Need graceful shutdown capability
 

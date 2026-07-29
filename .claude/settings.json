@@ -88,7 +88,9 @@
       "Bash(shuf:*)",
       "WebSearch",
       "Read(/tmp/**)",
-      "Edit(/tmp/**)"
+      "Edit(/tmp/**)",
+      "Read(/private/tmp/**)",
+      "Edit(/private/tmp/**)"
     ]
   }
 }

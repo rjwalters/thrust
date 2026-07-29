@@ -1,0 +1,366 @@
+#!/usr/bin/env bash
+# guard-loom-workflow.sh - PreToolUse hook for Loom-workflow-specific Bash guards
+#
+# Claude Code PreToolUse hook that intercepts Bash commands before execution.
+# Receives JSON on stdin with tool_input.command and cwd fields.
+#
+# This hook carries the Loom-workflow-specific guards that were extracted from
+# guard-destructive.sh (issue #3604), plus later Loom-specific additions:
+#
+#   1. LOOM: Prefer merge-pr.sh over 'gh pr merge'
+#   2. LOOM: Block 'pip install -e' inside worktrees (issue #2495)
+#   3. LOOM: Ask before real-registry-mutating `loom-daemon workspace
+#      add|remove|set-priority` (issue #4326)
+#
+# The generic repository-hygiene guards (catastrophic denies, SQL/cloud toggles,
+# ASK patterns) live in guard-destructive.sh and are being migrated toward Repo
+# Skills (rjwalters/repo#13). This file stays Loom-owned because these guards
+# are specific to the Loom worktree/merge/daemon workflow.
+#
+# IMPORTANT: This hook only fires when Claude Code is invoked with:
+#   --dangerously-skip-permissions  ← hooks FIRE (used by Loom agents)
+#
+# It does NOT fire with:
+#   --permission-mode bypassPermissions  ← hooks SKIPPED entirely
+#
+# Output format (Claude Code hooks spec):
+#   { "hookSpecificOutput": { "hookEventName": "PreToolUse", "permissionDecision": "deny|ask", "permissionDecisionReason": "..." } }
+#
+# NOTE: The "hookEventName": "PreToolUse" field is REQUIRED by Claude Code's
+# PreToolUse hook schema. Without it, Claude Code silently discards the
+# decision and the guard becomes inert (see issue #3550).
+#
+# Error handling: This script MUST never exit with a non-zero code or produce
+# invalid output. Any internal error is caught by the trap, logged for
+# diagnostics, and results in an "allow" decision to prevent infinite retry
+# loops in Claude Code.
+
+# Determine log directory relative to this script's location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null || echo ".")"
+HOOK_ERROR_LOG="${SCRIPT_DIR}/../logs/hook-errors.log"
+
+# Decision telemetry log (issue #3771 / #3898) — a SEPARATE JSONL file from
+# HOOK_ERROR_LOG, sharing the SAME schema + stable rule tags as
+# guard-destructive.sh so a single reader (#3772 / the standing per-trigger
+# review policy) aggregates BOTH guards' fires. At runtime SCRIPT_DIR is the
+# installed hook's own dir (.loom/hooks/), so this resolves to
+# .loom/logs/guard-decisions.log. LOOM_GUARD_DECISION_LOG_FILE overrides the
+# path (test seam / operator override). Off by default — see
+# decision_log_enabled() below.
+DECISION_LOG="${LOOM_GUARD_DECISION_LOG_FILE:-${SCRIPT_DIR}/../logs/guard-decisions.log}"
+
+# Shared config-tier resolver (#4063). Source defaults/scripts/lib/config-resolver.sh
+# so decision_log_enabled() below reads the full config tier chain through the
+# same code path as guard-destructive-generic.sh (kept consistent between the two
+# guards). At runtime SCRIPT_DIR is .loom/hooks/ and .loom/scripts is a symlink to
+# defaults/scripts, so ../scripts/lib resolves. Best-effort: a missing/unsourceable
+# lib leaves loom_config_get undefined and the reader's `|| raw=false` fallback
+# preserves the guard-OFF default.
+if [[ -f "$SCRIPT_DIR/../scripts/lib/config-resolver.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "$SCRIPT_DIR/../scripts/lib/config-resolver.sh" 2>/dev/null || true
+fi
+
+# Log a diagnostic error message (best-effort, never fails the script)
+log_hook_error() {
+    local msg="$1"
+    # Ensure log directory exists
+    mkdir -p "$(dirname "$HOOK_ERROR_LOG")" 2>/dev/null || true
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] [guard-loom-workflow] $msg" >> "$HOOK_ERROR_LOG" 2>/dev/null || true
+}
+
+# Redact the quoted VALUES of known text-carrying flags (--body, -m/--message,
+# --title, --notes, --comment). A trimmed-down mirror of guard-destructive.sh's
+# strip_literal_text() so the decision log persists no raw --body/-m secret
+# value. Multi-line quoted spans are handled by slurping the whole command
+# first (#3898). Best-effort: any failure falls back to the raw command.
+strip_literal_text() {
+    printf '%s' "$1" | awk '
+    BEGIN {
+        SQ = sprintf("%c", 39)   # single quote
+        DQ = sprintf("%c", 34)   # double quote
+        re = "(^|[ \t\n])(--message|--body|--notes|--title|--comment|-m)[ \t]*=?[ \t]*(" \
+             DQ "[^" DQ "]*" DQ "|" SQ "[^" SQ "]*" SQ ")"
+        buf = ""
+    }
+    { buf = buf (NR > 1 ? "\n" : "") $0 }
+    END {
+        s = buf
+        out = ""
+        while (match(s, re)) {
+            pre     = substr(s, 1, RSTART - 1)
+            matched = substr(s, RSTART, RLENGTH)
+            s       = substr(s, RSTART + RLENGTH)
+            qpos = 0
+            for (i = 1; i <= length(matched); i++) {
+                c = substr(matched, i, 1)
+                if (c == DQ || c == SQ) { qpos = i; break }
+            }
+            head  = substr(matched, 1, qpos)
+            qchar = substr(matched, qpos, 1)
+            inner = substr(matched, qpos + 1, length(matched) - qpos - 1)
+            if (index(inner, "$(") == 0 && index(inner, "`") == 0) {
+                gsub(/./, "X", inner)
+            }
+            out = out pre head inner qchar
+        }
+        out = out s
+        printf "%s", out
+    }'
+}
+
+# =============================================================================
+# DECISION TELEMETRY (issue #3771 / #3898) — one JSONL record per deny decision,
+# identical schema + toggle semantics to guard-destructive.sh so both guards'
+# fires land in the SAME .loom/logs/guard-decisions.log for the standing
+# per-trigger review policy. Off by default (guards.decisionLog /
+# LOOM_GUARD_DECISION_LOG, inverse polarity — only an explicit true/1 enables).
+# `allow` is never logged. Fail-open: a write failure never changes the decision
+# and never causes a non-zero exit.
+#
+# Schema (STABLE — matches guard-destructive.sh):
+#   {"ts","decision":"deny","pattern":"<tag>","tier":"catastrophic","command":"<redacted>"}
+# =============================================================================
+_DECISION_LOG_CACHE=""
+decision_log_enabled() {
+    if [[ -z "$_DECISION_LOG_CACHE" ]]; then
+        local enabled=false raw
+        if [[ -n "$REPO_ROOT" ]]; then
+            # Migrated to the shared tier resolver (#4063), kept consistent with
+            # guard-destructive-generic.sh's decision_log_enabled(). INVERSE
+            # polarity: only an explicit boolean `true` enables; a missing/null
+            # key, a non-boolean value, or malformed JSON stays OFF via the
+            # "false" default and the `|| raw=false` fallback.
+            raw=$(loom_config_get "$REPO_ROOT" "guards.decisionLog" "false" 2>/dev/null) || raw=false
+            [[ "$raw" == "true" ]] && enabled=true
+        fi
+        # Env override wins over config.
+        case "${LOOM_GUARD_DECISION_LOG:-}" in
+            0|false|no|off)   enabled=false ;;
+            1|true|yes|on)    enabled=true ;;
+        esac
+        _DECISION_LOG_CACHE="$enabled"
+    fi
+    [[ "$_DECISION_LOG_CACHE" == "true" ]]
+}
+
+# =============================================================================
+# Workspace-registry guard toggle — default ON (issue #4326).
+#
+# The `loom-daemon workspace add|remove|set-priority` ask (below) is a useful
+# default backstop against accidentally mutating the operator's real
+# ~/.loom/workspaces.json, but — like every other category guard in this
+# file — a repo/session can opt out via the same
+# `guards.<name>` config key + `LOOM_GUARD_<NAME>` env override convention
+# used throughout `guard-destructive-generic.sh` (sql_guard_enabled(),
+# cloud_guard_enabled(), …). This is INDEPENDENT of `LOOM_WORKSPACES_PATH`
+# (the sanctioned scratch-registry seam that allows a specific mutating
+# command through regardless of this toggle) — this toggle instead disables
+# the ask machinery entirely, for an operator who finds it pure friction.
+#
+# Resolution order (highest precedence first):
+#   1. LOOM_GUARD_WORKSPACE_REGISTRY env var (0/false/no disables, 1/true/yes
+#      forces on). Overrides config.
+#   2. .loom/config.json (or a higher config-resolver tier) ->
+#      guards.workspaceRegistry (default true when absent)
+#   3. Default: true (guard on)
+#
+# Resolved LAZILY (only once a mutating `workspace` subcommand has already
+# matched) and cached, mirroring every other toggle in this file. The config
+# read is best-effort: any parse failure falls through to guard-ON.
+# =============================================================================
+_WORKSPACE_REGISTRY_GUARD_CACHE=""
+workspace_registry_guard_enabled() {
+    if [[ -z "$_WORKSPACE_REGISTRY_GUARD_CACHE" ]]; then
+        local enabled=true raw
+        if [[ -n "$REPO_ROOT" ]]; then
+            raw=$(loom_config_get "$REPO_ROOT" "guards.workspaceRegistry" "true" 2>/dev/null) || raw=true
+            [[ "$raw" == "false" ]] && enabled=false
+        fi
+        case "${LOOM_GUARD_WORKSPACE_REGISTRY:-}" in
+            0|false|no)  enabled=false ;;
+            1|true|yes)  enabled=true ;;
+        esac
+        _WORKSPACE_REGISTRY_GUARD_CACHE="$enabled"
+    fi
+    [[ "$_WORKSPACE_REGISTRY_GUARD_CACHE" == "true" ]]
+}
+
+log_guard_decision() {
+    # Args: <decision> <tier> <pattern-tag>. Command read from global $COMMAND
+    # and redacted here. Returns 0 unconditionally.
+    decision_log_enabled || return 0
+    local decision="$1" tier="$2" tag="${3:-$1}"
+    local ts redacted line
+    ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) || ts=""
+    redacted=$(strip_literal_text "$COMMAND" 2>/dev/null) || redacted=""
+    [[ -n "$redacted" ]] || redacted="$COMMAND"
+    line=$(jq -cn \
+        --arg ts "$ts" \
+        --arg decision "$decision" \
+        --arg pattern "$tag" \
+        --arg tier "$tier" \
+        --arg command "$redacted" \
+        '{ts:$ts, decision:$decision, pattern:$pattern, tier:$tier, command:$command}' \
+        2>/dev/null) || return 0
+    [[ -n "$line" ]] || return 0
+    mkdir -p "$(dirname "$DECISION_LOG")" 2>/dev/null || true
+    { printf '%s\n' "$line" >> "$DECISION_LOG"; } 2>/dev/null || true
+    return 0
+}
+
+# Top-level error trap: on ANY unexpected error, output valid JSON "allow"
+# and log the failure for debugging. This prevents Claude Code from showing
+# "PreToolUse:Bash hook error" which causes infinite retry loops.
+trap 'log_hook_error "Unexpected error on line ${LINENO}: ${BASH_COMMAND:-unknown} (exit=$?)"; exit 0' ERR
+
+# Read stdin safely — if cat or jq fails, the ERR trap fires and we allow
+INPUT=$(cat 2>/dev/null) || INPUT=""
+
+# Verify jq is available before attempting to parse
+if ! command -v jq &>/dev/null; then
+    log_hook_error "jq not found in PATH — allowing command (cannot parse input)"
+    exit 0
+fi
+
+COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null) || COMMAND=""
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null) || CWD=""
+
+# If no command to check, allow
+if [[ -z "$COMMAND" ]]; then
+    exit 0
+fi
+
+# Resolve repo root from cwd (handles worktree paths safely)
+REPO_ROOT=""
+if [[ -n "$CWD" ]] && [[ -d "$CWD" ]]; then
+    REPO_ROOT=$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || true)
+elif [[ -n "$CWD" ]]; then
+    # CWD doesn't exist (e.g., deleted worktree) — log but continue without repo root
+    log_hook_error "cwd does not exist: $CWD — skipping repo root resolution"
+fi
+
+# Helper: output a deny decision and exit
+#
+# Optional second arg is a short, STABLE rule tag (issue #3771 / #3898) recorded
+# as the decision log's `pattern` field; defaults to "deny" for back-compat.
+# Telemetry is emitted BEFORE the JSON decision (so a logging hiccup can never
+# suppress the deny) and `|| true` guarantees it never trips the ERR trap. Deny
+# is always the "catastrophic" tier.
+deny() {
+    local reason="$1"
+    local tag="${2:-deny}"
+    log_guard_decision "deny" "catastrophic" "$tag" || true
+    if jq -n --arg reason "$reason" '{
+        hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: $reason
+        }
+    }' 2>/dev/null; then
+        exit 0
+    fi
+    # jq failed — emit raw JSON as fallback
+    local escaped_reason
+    escaped_reason=$(echo "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\n/\\n/g')
+    echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"${escaped_reason}\"}}"
+    exit 0
+}
+
+# Helper: output an ask decision and exit
+ask() {
+    local reason="$1"
+    if jq -n --arg reason "$reason" '{
+        hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "ask",
+            permissionDecisionReason: $reason
+        }
+    }' 2>/dev/null; then
+        exit 0
+    fi
+    # jq failed — emit raw JSON as fallback
+    local escaped_reason
+    escaped_reason=$(echo "$reason" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\n/\\n/g')
+    echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"${escaped_reason}\"}}"
+    exit 0
+}
+
+# =============================================================================
+# LOOM: Prefer merge-pr.sh over gh pr merge
+# =============================================================================
+
+if echo "$COMMAND" | grep -qE 'gh\s+pr\s+merge'; then
+    # Resolve the merge-pr.sh path for the current repo context. Prefer an
+    # in-repo installed copy (./.loom/scripts/merge-pr.sh); fall back to the
+    # loom-checkout copy under defaults/scripts/ (via $LOOM_HOME) when the repo
+    # runs scripts directly from the checkout rather than an installed copy.
+    MERGE_SCRIPT="./.loom/scripts/merge-pr.sh"
+    if [[ -n "$REPO_ROOT" ]] && [[ ! -x "$REPO_ROOT/.loom/scripts/merge-pr.sh" ]]; then
+        if [[ -n "${LOOM_HOME:-}" ]] && [[ -x "$LOOM_HOME/defaults/scripts/merge-pr.sh" ]]; then
+            MERGE_SCRIPT="$LOOM_HOME/defaults/scripts/merge-pr.sh"
+        elif [[ -x "$REPO_ROOT/defaults/scripts/merge-pr.sh" ]]; then
+            MERGE_SCRIPT="$REPO_ROOT/defaults/scripts/merge-pr.sh"
+        fi
+    fi
+    deny "Use $MERGE_SCRIPT <PR_NUMBER> instead of 'gh pr merge'. The script merges via the GitHub API without local checkout, which avoids worktree errors." "loom:gh-pr-merge-redirect"
+fi
+
+# =============================================================================
+# LOOM: Block pip install -e inside worktrees (issue #2495)
+#
+# Editable pip installs overwrite a global .pth file in site-packages.
+# When multiple builders run in parallel worktrees, each 'pip install -e .'
+# clobbers the .pth to point at its own worktree, causing all other Python
+# processes to import from the wrong source tree.
+#
+# PYTHONPATH is already set by agent-spawn.sh and _build_worktree_env()
+# so editable installs are unnecessary inside worktrees.
+# =============================================================================
+
+WORKTREE_PATH="${LOOM_WORKTREE_PATH:-}"
+if [[ -n "$WORKTREE_PATH" ]]; then
+    if echo "$COMMAND" | grep -qE '(pip|pip3|uv pip)\s+install\s+.*-e\s' || \
+       echo "$COMMAND" | grep -qE '(pip|pip3|uv pip)\s+install\s+.*--editable\s'; then
+        deny "BLOCKED: 'pip install -e' is not allowed inside worktrees. Editable installs overwrite the global .pth file, breaking parallel builders (see issue #2495). PYTHONPATH is already configured for this worktree — imports resolve correctly without editable installs." "loom:pip-install-editable-worktree"
+    fi
+fi
+
+# =============================================================================
+# LOOM: Ask before registry-mutating `loom-daemon workspace` commands
+# (Issue #4326)
+#
+# `loom-daemon workspace add|remove|set-priority` mutate the machine-level
+# workspace registry (Issue #3926), normally `~/.loom/workspaces.json` — a
+# SHARED file, not scoped to any one repo/worktree/session. An ad-hoc
+# verification step (a builder/auditor sweep exercising registry behavior)
+# that invokes the real CLI without redirecting it leaves stray/incorrect
+# entries in the OPERATOR's actual registry: #4326 found a leaked
+# `/private/tmp/mig-test` entry sitting at dispatch priority 3 — ahead of
+# every real managed repo — for most of a day, because the directory was
+# deleted after registration without a matching `workspace remove`.
+#
+# `LOOM_WORKSPACES_PATH` (`loom-daemon/src/workspace_registry.rs`) already
+# exists as the sanctioned scratch-registry seam — every daemon unit test
+# points at it instead of the real file (see
+# `defaults/docs/machine-dispatcher.md`). So this guard ASKS (never a hard
+# deny — an operator legitimately managing their own real registry must still
+# be able to proceed) whenever a mutating `workspace` subcommand runs with
+# NEITHER the env var already set in the environment NOR an inline
+# `LOOM_WORKSPACES_PATH=` assignment on the same command line. `workspace
+# list` is read-only and is NEVER matched by this guard.
+# =============================================================================
+
+if echo "$COMMAND" | grep -qE '(^|[/[:space:];&|])loom-daemon[[:space:]]+workspace[[:space:]]+(add|remove|set-priority)([[:space:]]|$)'; then
+    if workspace_registry_guard_enabled; then
+        if [[ -z "${LOOM_WORKSPACES_PATH:-}" ]] && ! echo "$COMMAND" | grep -qE 'LOOM_WORKSPACES_PATH='; then
+            ask "This mutates the machine-level workspace registry ('loom-daemon workspace add/remove/set-priority') — by default that is the operator's REAL ~/.loom/workspaces.json, shared across every repo/session (Issue #4326: a leaked test entry once sat at top dispatch priority for most of a day). If this is a test/verification step, prefix the command with LOOM_WORKSPACES_PATH=<scratch-file> to isolate it from the real registry. If this IS an intentional real-registry change, confirm to proceed."
+        fi
+    fi
+fi
+
+# =============================================================================
+# ALLOW - Everything else passes through
+# =============================================================================
+
+exit 0

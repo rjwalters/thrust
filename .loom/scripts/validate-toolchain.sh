@@ -2,12 +2,12 @@
 # validate-toolchain.sh - Validate loom-tools commands are available
 #
 # Validates that essential loom-tools commands are installed and accessible
-# before the spawn loop (Tier 2) enters its main loop. Provides tiered
-# validation with critical vs optional commands.
+# before Tier 2 dispatch (/loom:sweep / loom-daemon) drives worker roles.
+# Provides tiered validation with critical vs optional commands.
 #
 # Exit codes:
 #   0 - All critical commands available (optional warnings may exist)
-#   1 - Critical commands missing (spawn loop cannot start)
+#   1 - Critical commands missing (dispatch cannot start)
 #   2 - Invalid arguments
 #
 # Usage:
@@ -18,17 +18,25 @@
 
 set -euo pipefail
 
-# Critical commands - spawn loop cannot function without these
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/locate-daemon-bin.sh
+source "$SCRIPT_DIR/lib/locate-daemon-bin.sh"
+
+# Critical commands - /loom:sweep / loom-daemon dispatch cannot function without these
+# Issue #4272 (epic #4081 Phase 3 family 2): `loom-cleanup` and
+# `loom-recover-orphans` are now native `loom-daemon` subcommands
+# (`cleanup logs` / `recover-orphans`) — see `daemon_subcommand_available`
+# below. `loom-recover-orphans` replaces the historical `loom-orphan-recovery`
+# entry, which never existed as a console script name (pyproject always
+# shipped `loom-recover-orphans`; the old entry only ever validated via a
+# bare Python-module-import fallback).
 CRITICAL_COMMANDS=(
     "loom-cleanup"
-    "loom-orphan-recovery"
+    "loom-recover-orphans"
 )
 
 # Optional commands - degraded functionality without these
 OPTIONAL_COMMANDS=(
-    "loom-stuck-detection"
-    "loom-status"
-    "loom-health-monitor"
     "loom-agent-wait"
     "loom-agent-spawn"
 )
@@ -57,12 +65,9 @@ OPTIONS:
 
 CRITICAL COMMANDS (required):
     loom-cleanup          - Log archival and lock-dir cleanup
-    loom-orphan-recovery  - Recover orphaned tasks after spawn-loop crash
+    loom-recover-orphans  - Recover orphaned tasks after a sweep crash
 
 OPTIONAL COMMANDS (degraded without):
-    loom-stuck-detection  - Detect stuck sweep children
-    loom-status           - Show spawn-loop / pipeline status
-    loom-health-monitor   - Health monitoring
     loom-agent-wait       - Wait for agent completion
     loom-agent-spawn      - Spawn agent sessions
 
@@ -95,24 +100,47 @@ EXAMPLES:
 EOF
 }
 
+# Native `loom-daemon` capability check (issue #4272): `loom-cleanup` and
+# `loom-recover-orphans` are ported to `loom-daemon cleanup logs` /
+# `loom-daemon recover-orphans`. Resolve the daemon binary once and probe its
+# `--help` for the relevant subcommand — cheap, side-effect-free, and detects
+# a stale pre-#4272 binary the same way `probe-tokens.sh` does for `tokens`.
+_VALIDATE_TOOLCHAIN_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+_VALIDATE_TOOLCHAIN_DAEMON_BIN="$(loom_locate_daemon_bin "$_VALIDATE_TOOLCHAIN_REPO_ROOT")"
+
+daemon_subcommand_available() {
+    local cmd="$1"
+    [[ -n "$_VALIDATE_TOOLCHAIN_DAEMON_BIN" ]] || return 1
+    case "$cmd" in
+        loom-cleanup) "$_VALIDATE_TOOLCHAIN_DAEMON_BIN" cleanup logs --help >/dev/null 2>&1 ;;
+        loom-recover-orphans) "$_VALIDATE_TOOLCHAIN_DAEMON_BIN" recover-orphans --help >/dev/null 2>&1 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Check if a command exists
 command_exists() {
     local cmd="$1"
 
-    # First try: check if command is in PATH
+    # First try: native loom-daemon subcommand (issue #4272).
+    if daemon_subcommand_available "$cmd"; then
+        return 0
+    fi
+
+    # Second try: check if command is in PATH (installed console script or
+    # PATH shim next to loom-daemon).
     if command -v "$cmd" >/dev/null 2>&1; then
         return 0
     fi
 
-    # Second try: check if Python module can be invoked
+    # Third try: check if a Python module can be invoked. Only for commands
+    # whose Python implementation still exists — `loom-cleanup` and
+    # `loom-recover-orphans` had theirs deleted in issue #4272 (native-only
+    # now), so they are intentionally absent from this map: the first two
+    # tiers above are their only paths to "found".
     # Map command names to module paths
     local module_name
     case "$cmd" in
-        loom-cleanup) module_name="loom_tools.cleanup" ;;
-        loom-orphan-recovery) module_name="loom_tools.orphan_recovery" ;;
-        loom-stuck-detection) module_name="loom_tools.stuck_detection" ;;
-        loom-status) module_name="loom_tools.status" ;;
-        loom-health-monitor) module_name="loom_tools.health_monitor" ;;
         loom-agent-wait) module_name="loom_tools.agent_wait" ;;
         loom-agent-spawn) module_name="loom_tools.agent_spawn" ;;
         *) return 1 ;;
@@ -306,13 +334,13 @@ output_text() {
         degraded)
             echo -e "${YELLOW}Status: DEGRADED${NC} - Optional commands missing"
             echo ""
-            echo "The spawn loop will continue with degraded functionality."
+            echo "Dispatch will continue with degraded functionality."
             echo "Some features (stuck detection, health monitoring) may not work."
             ;;
         critical)
             echo -e "${RED}Status: CRITICAL${NC} - Essential commands missing"
             echo ""
-            echo "The spawn loop cannot start without these commands."
+            echo "Dispatch cannot start without these commands."
             echo ""
             echo "To install loom-tools, run:"
             echo "  pip install -e ./loom-tools"
