@@ -47,13 +47,11 @@
 //!   accepted connection decodes `Experience` frames and forwards them onto a
 //!   shared crossbeam sender feeding the single `experience_rx`
 //!   [`learner_loop`](super::actor_learner::learner_loop) already consumes.
-//!   That reader thread *is* the resulting
-//!   [`ActorHandle`]'s join handle: it
-//!   returns best-effort [`ActorStats`]
-//!   (steps/episodes forwarded) once the remote actor disconnects, so an actor
-//!   dying mid-training surfaces the same way a local actor panic would — the
-//!   learner's fill loop simply stops receiving from that column and the others
-//!   continue.
+//!   That reader thread *is* the resulting [`ActorHandle`]'s join handle: it
+//!   returns best-effort [`ActorStats`] (steps/episodes forwarded) once the
+//!   remote actor disconnects, so an actor dying mid-training surfaces the same
+//!   way a local actor panic would — the learner's fill loop simply stops
+//!   receiving from that column and the others continue.
 //!
 //! # Loopback verification
 //!
