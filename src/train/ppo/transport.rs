@@ -5,7 +5,7 @@
 //! experience sender
 //! ([`ActorChannels::experience_tx`](super::actor_learner::ActorChannels))
 //! and the learner→actor broadcast/control senders
-//! ([`ActorHandle`](super::actor_learner::ActorHandle)'s `BR`/`CTRL` type
+//! ([`ActorHandle`]'s `BR`/`CTRL` type
 //! parameters). Both default to the in-process `crossbeam_channel` types
 //! every pre-#281 caller already used — **that path is unchanged, still the
 //! default, and every Phase 2/3 test keeps exercising it verbatim.**
@@ -21,7 +21,7 @@
 //!
 //! Every frame is one [`WireMessage`] value, `bincode`-encoded
 //! ([`bincode::config::standard`] via `bincode`'s `serde` integration — see
-//! [`write_message`] / [`read_message`]) and length-prefixed with a 4-byte
+//! `write_message` / `read_message`) and length-prefixed with a 4-byte
 //! big-endian `u32`. `Experience`/`PolicyBroadcast`/`ControlMessage` derive
 //! `Serialize`/`Deserialize` directly (`PolicyBroadcast`'s `Arc<Vec<u8>>`
 //! payload via serde's `rc` feature — see `src/multi_agent/messages.rs`), so
@@ -48,8 +48,8 @@
 //!   shared crossbeam sender feeding the single `experience_rx`
 //!   [`learner_loop`](super::actor_learner::learner_loop) already consumes.
 //!   That reader thread *is* the resulting
-//!   [`ActorHandle`](super::actor_learner::ActorHandle)'s join handle: it
-//!   returns best-effort [`ActorStats`](super::actor_learner::ActorStats)
+//!   [`ActorHandle`]'s join handle: it
+//!   returns best-effort [`ActorStats`]
 //!   (steps/episodes forwarded) once the remote actor disconnects, so an actor
 //!   dying mid-training surfaces the same way a local actor panic would — the
 //!   learner's fill loop simply stops receiving from that column and the others
@@ -101,7 +101,7 @@ pub trait ExperienceSender: Send {
 
 /// Learner-side sender half of one actor's broadcast channel.
 ///
-/// [`ActorHandle`](super::actor_learner::ActorHandle)'s `BR` bound.
+/// [`ActorHandle`]'s `BR` bound.
 /// Implemented for [`crossbeam_channel::Sender<PolicyBroadcast>`] (default)
 /// and [`TcpPeerSender`] (networked).
 pub trait BroadcastSender: Send {
@@ -112,7 +112,7 @@ pub trait BroadcastSender: Send {
 
 /// Learner-side sender half of one actor's control channel.
 ///
-/// [`ActorHandle`](super::actor_learner::ActorHandle)'s `CTRL` bound.
+/// [`ActorHandle`]'s `CTRL` bound.
 /// Implemented for [`crossbeam_channel::Sender<ControlMessage>`] (default)
 /// and [`TcpPeerSender`] (networked).
 pub trait ControlSender: Send {
