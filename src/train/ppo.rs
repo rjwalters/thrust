@@ -20,6 +20,9 @@
 //!   (Burn's optimizer-consumes-module ownership model) and exposes a
 //!   `train_step` that runs the surrogate-loss / gradient-step / KL early stop
 //!   logic.
+//! - [`transport`] — the networked (TCP) actor-learner transport, an
+//!   interchangeable alternative to `actor_learner`'s default in-process
+//!   `crossbeam_channel` path (Phase 4 of the distributed-training epic #265).
 
 pub mod actor_learner;
 pub mod config;
@@ -27,6 +30,7 @@ pub mod loss;
 pub mod recurrent_trainer;
 pub mod stats;
 pub mod trainer;
+pub mod transport;
 
 pub use actor_learner::{
     ActorChannels, ActorHandle, ActorStats, AsyncActorLearnerConfig, LearnerReport, actor_thread,
@@ -40,3 +44,7 @@ pub use loss::{
 pub use recurrent_trainer::RecurrentPPOTrainer;
 pub use stats::{AggregatedStats, TrainingStats};
 pub use trainer::PPOTrainerBurn;
+pub use transport::{
+    BroadcastSender, ControlSender, ExperienceSender, TcpActorHandle, TcpExperienceSender,
+    TcpPeerSender, WireMessage, accept_actors_over_tcp, connect_actor_transport,
+};

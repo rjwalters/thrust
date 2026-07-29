@@ -17,6 +17,8 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 /// Unique identifier for an agent across a multi-agent training run.
 pub type AgentId = usize;
 
@@ -26,7 +28,12 @@ pub type AgentId = usize;
 /// replaced with plain `Vec<f32>` host buffers. Construct Burn tensors at
 /// the learner-side rollout buffer with `Tensor::from_floats(...)` once
 /// the buffer is full.
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` back the networked actor-learner transport's
+/// wire encoding ([`crate::train::ppo::transport`], issue #281 / epic #265
+/// Phase 4) — the in-process `crossbeam_channel` path never touches these
+/// impls, it passes `Experience` values directly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Experience {
     /// Agent that generated this experience.
     pub agent_id: AgentId,
@@ -125,7 +132,12 @@ pub struct PolicyUpdate {
 /// `crossbeam_channel` broadcast channel after a learner update. The
 /// payload representation is chosen by the learner implementation; the
 /// actor side stays agnostic by matching on the variant.
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` (via serde's `rc` feature for the `Arc<Vec<u8>>`
+/// payload) back the networked actor-learner transport's wire encoding
+/// ([`crate::train::ppo::transport`], issue #281 / epic #265 Phase 4). The
+/// in-process `crossbeam_channel` path never touches these impls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PolicyBroadcast {
     /// Serialized Burn module record bytes, produced by
     /// [`burn::record::BinBytesRecorder`] with
@@ -135,7 +147,10 @@ pub enum PolicyBroadcast {
     /// raw module clones, whose `Send`-ness depends on the backend's
     /// tensor primitives), and the [`Arc`] keeps the N-actor fan-out
     /// allocation-free — each actor channel receives a cheap pointer
-    /// clone of the same serialized blob.
+    /// clone of the same serialized blob. Over the wire, deserializing
+    /// allocates a fresh `Arc` per remote actor (no sharing across the
+    /// network), which is the correct behavior for a byte payload received
+    /// independently by each connection.
     Bytes {
         /// Monotonically increasing policy version. Incremented by the
         /// learner once per broadcast so actors (and tests) can observe
@@ -206,7 +221,12 @@ impl Default for TrainingStats {
 /// surface, but a runner that wants to support checkpointing and
 /// learning-rate scheduling can plumb this enum through its channel
 /// network.
-#[derive(Debug, Clone)]
+///
+/// `Serialize`/`Deserialize` back the networked actor-learner transport's
+/// wire encoding ([`crate::train::ppo::transport`], issue #281 / epic #265
+/// Phase 4). The in-process `crossbeam_channel` path never touches these
+/// impls.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ControlMessage {
     /// Stop training and shut down.
     Shutdown,

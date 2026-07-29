@@ -88,7 +88,11 @@ use burn::{
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, TryRecvError, unbounded};
 use rand::{SeedableRng, rngs::StdRng};
 
-use super::{stats::TrainingStats, trainer::PPOTrainerBurn};
+use super::{
+    stats::TrainingStats,
+    trainer::PPOTrainerBurn,
+    transport::{BroadcastSender, ControlSender, ExperienceSender},
+};
 use crate::{
     buffer::rollout::{RolloutBatch, RolloutBuffer, compute_advantages},
     env::Environment,
@@ -333,9 +337,22 @@ impl ActorThrottle {
 ///
 /// Constructed by [`spawn_actor`]; exposed publicly so callers with
 /// bespoke threading can wire [`actor_thread`] themselves.
-pub struct ActorChannels {
-    /// Cloned sender half of the shared actors→learner MPSC channel.
-    pub experience_tx: Sender<Experience>,
+///
+/// Generic over the actor→learner experience sender (`EXP`), defaulting to
+/// the in-process [`crossbeam_channel::Sender`] every existing caller uses
+/// unchanged. This is the transport seam (issue #281 / epic #265 Phase 4):
+/// [`crate::train::ppo::transport::connect_actor_transport`] builds the same
+/// struct with a TCP-backed `EXP` so [`actor_thread`] runs identically
+/// whether the learner is in-process or across the network. `broadcast_rx` /
+/// `control_rx` stay the concrete crossbeam types in both cases — a
+/// networked transport bridges incoming broadcast/control frames onto an
+/// ordinary local crossbeam channel (see the transport module docs), so only
+/// the experience direction needs to be generic.
+pub struct ActorChannels<EXP: ExperienceSender = Sender<Experience>> {
+    /// Sender half of the actors→learner experience stream. The in-process
+    /// default is a cloned [`crossbeam_channel::Sender`]; a networked
+    /// transport supplies a type that writes wire-encoded frames instead.
+    pub experience_tx: EXP,
     /// Receive half of this actor's learner→actor broadcast channel.
     pub broadcast_rx: Receiver<PolicyBroadcast>,
     /// Receive half of this actor's control channel (shutdown etc.).
@@ -358,24 +375,54 @@ pub struct ActorStats {
     pub last_policy_version: u64,
 }
 
-/// Handle to a spawned actor thread.
+/// Handle to a spawned actor thread — or, for the networked transport, to
+/// the learner-side connection-handler thread for one remote actor.
 ///
 /// The learner uses [`ActorHandle::send_broadcast`] /
 /// [`ActorHandle::send_shutdown`]; the orchestrating caller consumes the
 /// handle with [`ActorHandle::join`] after [`learner_loop`] returns.
-pub struct ActorHandle {
+///
+/// Generic over the broadcast (`BR`) and control (`CTRL`) senders, defaulting
+/// to the in-process [`crossbeam_channel::Sender`] every existing caller uses
+/// unchanged. This is the learner-side half of the transport seam (issue
+/// #281 / epic #265 Phase 4):
+/// [`crate::train::ppo::transport::accept_actors_over_tcp`] builds this same
+/// struct with a TCP-backed `BR`/`CTRL` pair per remote actor connection, so
+/// [`learner_loop`] broadcasts/shuts down local and remote actors through the
+/// exact same call sites. `join` stays a plain
+/// `thread::JoinHandle<Result<ActorStats>>` in both cases: for a local actor
+/// it is [`spawn_actor`]'s env-stepping thread; for a remote one it is the
+/// background reader thread that decodes incoming experience frames off the
+/// socket (see the transport module).
+pub struct ActorHandle<
+    BR: BroadcastSender = Sender<PolicyBroadcast>,
+    CTRL: ControlSender = Sender<ControlMessage>,
+> {
     /// Which actor this handle controls.
     pub actor_id: AgentId,
     join: thread::JoinHandle<Result<ActorStats>>,
-    broadcast_tx: Sender<PolicyBroadcast>,
-    control_tx: Sender<ControlMessage>,
+    broadcast_tx: BR,
+    control_tx: CTRL,
 }
 
-impl ActorHandle {
+impl<BR: BroadcastSender, CTRL: ControlSender> ActorHandle<BR, CTRL> {
+    /// Build a handle from its parts. `pub(crate)` because the fields stay
+    /// private to external callers — only [`spawn_actor`] (in-process) and
+    /// [`crate::train::ppo::transport`] (networked) construct these.
+    pub(crate) fn from_parts(
+        actor_id: AgentId,
+        join: thread::JoinHandle<Result<ActorStats>>,
+        broadcast_tx: BR,
+        control_tx: CTRL,
+    ) -> Self {
+        Self { actor_id, join, broadcast_tx, control_tx }
+    }
+
     /// Send a policy broadcast to this actor. Returns `false` when the
-    /// actor has already exited (its receiver is disconnected).
+    /// actor has already exited (its receiver is disconnected, or — for a
+    /// networked actor — the connection is gone).
     pub fn send_broadcast(&self, broadcast: PolicyBroadcast) -> bool {
-        self.broadcast_tx.send(broadcast).is_ok()
+        self.broadcast_tx.send(broadcast)
     }
 
     /// Ask this actor to shut down (best-effort; a dead actor is fine).
@@ -385,11 +432,25 @@ impl ActorHandle {
 
     /// Wait for the actor thread to exit and return its stats.
     ///
+    /// Drops `broadcast_tx`/`control_tx` *before* blocking on the thread
+    /// join. This is a no-op for the in-process crossbeam path (dropping a
+    /// `Sender` just marks the channel disconnected). It is load-bearing
+    /// for the networked transport: [`crate::train::ppo::transport`]'s
+    /// learner-side reader thread only exits on a clean socket EOF, and a
+    /// socket whose file descriptor is duplicated across a reader clone and
+    /// a writer clone (`TcpStream::try_clone`) never reaches EOF while
+    /// *any* clone stays open — so joining first and dropping the sender
+    /// after (the naive order) would hold the writer clone open for the
+    /// entire blocking join, deadlocking forever.
+    ///
     /// # Errors
     /// Returns an error when the actor thread panicked or itself
     /// returned an error (e.g. a malformed policy broadcast).
     pub fn join(self) -> Result<ActorStats> {
-        self.join.join().map_err(|_| anyhow!("actor thread panicked"))?
+        let ActorHandle { actor_id: _, join, broadcast_tx, control_tx } = self;
+        drop(broadcast_tx);
+        drop(control_tx);
+        join.join().map_err(|_| anyhow!("actor thread panicked"))?
     }
 }
 
@@ -474,14 +535,21 @@ where
 /// Most callers should use [`spawn_actor`] instead of calling this
 /// directly.
 ///
+/// Generic over the experience sender `EXP` (see [`ActorChannels`]) so this
+/// same function body runs identically whether `channels` was built by
+/// [`spawn_actor`] (in-process `crossbeam_channel`) or
+/// [`crate::train::ppo::transport::connect_actor_transport`] (TCP) — the
+/// transport seam for issue #281 / epic #265 Phase 4. `EXP` defaults to the
+/// crossbeam type, so every pre-existing caller compiles unchanged.
+///
 /// # Errors
 /// Returns an error when a policy broadcast fails to decode.
 #[allow(clippy::too_many_arguments)] // mirror of spawn_actor; bundling hides the wiring
-pub fn actor_thread<B2, M, E, F>(
+pub fn actor_thread<B2, M, E, F, EXP>(
     actor_id: AgentId,
     mut env: E,
     mut policy: M,
-    channels: ActorChannels,
+    channels: ActorChannels<EXP>,
     device: B2::Device,
     seed: u64,
     throttle: ActorThrottle,
@@ -492,6 +560,7 @@ where
     M: Module<B2>,
     E: Environment<Action = i64>,
     F: FnMut(&M, &[f32], &mut StdRng) -> (i64, f32, f32),
+    EXP: ExperienceSender,
 {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut stats = ActorStats { actor_id, ..Default::default() };
@@ -548,7 +617,7 @@ where
             value,
             log_prob,
         );
-        if channels.experience_tx.send(experience).is_err() {
+        if !channels.experience_tx.send(experience) {
             break; // learner is gone; nothing left to do
         }
         stats.steps_sent += 1;
@@ -592,12 +661,12 @@ where
     let join = thread::Builder::new()
         .name(format!("thrust-actor-{actor_id}"))
         .spawn(move || {
-            actor_thread::<B2, M, E, F>(
+            actor_thread::<B2, M, E, F, _>(
                 actor_id, env, policy, channels, device, seed, throttle, act_fn,
             )
         })
         .expect("failed to spawn actor thread");
-    ActorHandle { actor_id, join, broadcast_tx, control_tx }
+    ActorHandle::from_parts(actor_id, join, broadcast_tx, control_tx)
 }
 
 /// Summary returned by [`learner_loop`] alongside the trained
@@ -668,13 +737,13 @@ impl LearnerReport {
 /// experience carries an out-of-range `agent_id`, or when a
 /// `train_step` / policy serialization fails.
 #[allow(clippy::too_many_arguments)] // trainer + channels + two closures; same shape as train_step
-pub fn learner_loop<B, P, O, F, G>(
+pub fn learner_loop<B, P, O, F, G, BR, CTRL>(
     config: &AsyncActorLearnerConfig,
     mut trainer: PPOTrainerBurn<B, P, O>,
     obs_dim: usize,
     device: &B::Device,
     experience_rx: &Receiver<Experience>,
-    actors: &[ActorHandle],
+    actors: &[ActorHandle<BR, CTRL>],
     mut evaluate_fn: F,
     mut value_fn: G,
 ) -> Result<(PPOTrainerBurn<B, P, O>, LearnerReport)>
@@ -684,6 +753,8 @@ where
     O: Optimizer<P, B>,
     F: FnMut(&P, Tensor<B, 2>, Tensor<B, 1, Int>) -> (Tensor<B, 1>, Tensor<B, 1>, Tensor<B, 1>),
     G: FnMut(&P, Tensor<B, 2>) -> Vec<f32>,
+    BR: BroadcastSender,
+    CTRL: ControlSender,
 {
     config.validate()?;
     let num_actors = config.num_actors;
