@@ -2,7 +2,7 @@
 name = "thrust-rl"
 version = "0.4.0"
 edition = "2024"
-authors = ["Robb Walters <agent-4@spheresemi.com>"]
+authors = ["Robb Walters <rjwalters@users.noreply.github.com>"]
 license = "MIT OR Apache-2.0"
 description = "High-performance reinforcement learning in Rust with the Burn tensor backend"
 repository = "https://github.com/rjwalters/thrust"
