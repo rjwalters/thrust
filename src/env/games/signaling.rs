@@ -225,7 +225,7 @@ impl MultiAgentEnvironment for SignalingGame {
 
     fn agent_action_space(&self, agent_id: usize) -> Vec<usize> {
         match agent_id {
-            // Speaker has no task action — only the message dim (see `message_vocab`).
+            // Speaker only has a message dimension (see `message_vocab`).
             SPEAKER => Vec::new(),
             // Listener's task action is its guess over the vocabulary.
             LISTENER => vec![self.vocab],
@@ -236,8 +236,9 @@ impl MultiAgentEnvironment for SignalingGame {
     fn step_multi(&mut self, actions: &[Vec<i64>]) -> MultiAgentResult {
         assert_eq!(actions.len(), Self::NUM_AGENTS, "signaling game requires 2 action vectors");
 
-        // Peel the message dims off each agent's action using the shared helper.
-        // Speaker: task_len 0 -> the whole action is its message token.
+        // Peel the message dims off each agent's action using the shared
+        // helper. Speaker: task_len 0 -> the whole action is its
+        // message token.
         let (_speaker_task, speaker_msg) =
             split_action(&actions[SPEAKER], self.agent_action_space(SPEAKER).len());
         // Listener: task_len == vocab dims -> its guess; it sends no message.
@@ -248,7 +249,8 @@ impl MultiAgentEnvironment for SignalingGame {
         debug_assert!(self.delivery().reaches(SPEAKER, LISTENER));
         self.received = speaker_msg.first().copied().unwrap_or(-1);
 
-        // Reward: both agents win iff the listener's guess matches the hidden token.
+        // Reward: both agents win iff the listener's guess matches the hidden
+        // token.
         let guess = listener_task.first().copied().unwrap_or(-1);
         let correct = guess == self.hidden;
         let reward = if correct { 1.0_f32 } else { 0.0 };

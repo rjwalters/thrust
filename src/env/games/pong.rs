@@ -174,9 +174,10 @@ impl Pong {
             reward = 0.1;
         }
 
-        // Right paddle collision: ball's right edge crosses RIGHT_X this step and
-        // the paddle is in range. A crossing with the paddle out of range lets the
-        // agent score when the ball hits the right wall below.
+        // Right paddle collision: ball's right edge crosses RIGHT_X this step
+        // and the paddle is in range. A crossing with the paddle out of
+        // range lets the agent score when the ball hits the right wall
+        // below.
         if old_bx + BALL_R <= RIGHT_X
             && self.ball_x + BALL_R > RIGHT_X
             && self.ball_dx > 0.0
@@ -304,9 +305,10 @@ impl Environment for Pong {
             reward = 0.1;
         }
 
-        // Right paddle collision: ball's right edge crosses RIGHT_X this step and
-        // the paddle is in range. A crossing with the paddle out of range lets the
-        // agent score when the ball hits the right wall below.
+        // Right paddle collision: ball's right edge crosses RIGHT_X this step
+        // and the paddle is in range. A crossing with the paddle out of
+        // range lets the agent score when the ball hits the right wall
+        // below.
         if old_bx + BALL_R <= RIGHT_X
             && self.ball_x + BALL_R > RIGHT_X
             && self.ball_dx > 0.0

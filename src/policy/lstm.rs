@@ -1,10 +1,10 @@
 //! Burn-backend LSTM (recurrent) actor-critic policy.
 //!
 //! Phase 1 of the recurrent-policy epic (#262). Implements
-//! [`LstmBurnPolicy`](crate::policy::lstm::LstmBurnPolicy), a concrete
+//! [`LstmBurnPolicy`], a concrete
 //! `#[derive(Module)]` struct that mirrors
 //! [`crate::policy::mlp::MlpBurnPolicy`] but replaces the feedforward
-//! trunk with a Burn 0.21 [`Lstm`](burn::nn::Lstm) so the policy can carry
+//! trunk with a Burn 0.21 [`Lstm`] so the policy can carry
 //! memory across timesteps. As with the MLP policy there is **no** formal
 //! `Policy` trait — each policy is a standalone Burn module.
 //!
@@ -27,7 +27,7 @@
 //!
 //! # Seeded initialization
 //!
-//! Burn's [`LstmConfig`](burn::nn::LstmConfig) initializer takes no seed, so
+//! Burn's [`LstmConfig`] initializer takes no seed, so
 //! two constructions draw different weights. To honor the reproducibility
 //! contract shared with [`crate::policy::mlp::MlpBurnConfig::seed`], the seeded
 //! path overrides all **eight** gate `Linear` layers (four

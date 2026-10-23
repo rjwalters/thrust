@@ -235,7 +235,8 @@ fn main() -> Result<()> {
             let returns_b: Tensor<B, 1> =
                 Tensor::from_data(TensorData::new(returns, [batch]), &device);
 
-            // Closure: reshape flat obs back into [batch, C, H, W] and run forward.
+            // Closure: reshape flat obs back into [batch, C, H, W] and run
+            // forward.
             let evaluate_fn = |p: &SnakeCnnBurnPolicy<B>,
                                o_flat: Tensor<B, 2>,
                                a: Tensor<B, 1, Int>|

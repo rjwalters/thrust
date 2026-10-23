@@ -74,7 +74,7 @@
 //! NFSP builds on top of
 //! [`crate::multi_agent::joint::JointMultiAgentTrainer`], which records
 //! a *per-agent* observation stream in
-//! [`JointRollout::observations_per_agent`]. Agent `i`'s reservoir
+//! [`JointRollout::observations_per_agent`](crate::multi_agent::joint::JointRollout::observations_per_agent). Agent `i`'s reservoir
 //! receives agent `i`'s observation (not agent 0's), so partial-
 //! observability envs supervise the AP module on the correct view.
 //! Matching pennies returns identical observations to both agents,
@@ -727,7 +727,8 @@ where
         // of `probes` batch-1 forwards. The batched sampler draws one
         // `rng.random()` per row in ascending order — bit-identical to
         // the old per-probe loop — so the seeded marginal trace is
-        // unchanged (guarded by `test_nfsp_avg_marginal_trace_is_bit_identical`).
+        // unchanged (guarded by
+        // `test_nfsp_avg_marginal_trace_is_bit_identical`).
         let probes = 128usize;
         let obs_data: Vec<f32> = vec![0.0_f32; probes * obs_dim];
         let obs =
@@ -864,8 +865,9 @@ where
             }
 
             let result = env.step_joint(&joint_action);
-            // Index-based scan: mirrors `JointMultiAgentTrainer::collect_rollout`'s
-            // per-agent reward fan-out. Apply the optional reward scale
+            // Index-based scan: mirrors
+            // `JointMultiAgentTrainer::collect_rollout`'s per-agent
+            // reward fan-out. Apply the optional reward scale
             // (issue #199): scaling rewards uniformly is an affine
             // transform of the return and does not change the optimal
             // policy, but keeps the large-magnitude bucket-brigade band

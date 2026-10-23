@@ -20,13 +20,12 @@
 //!
 //! # What it does
 //!
-//! Provides pure-Rust, [`StdRng`](rand::rngs::StdRng)-driven ports of the two
+//! Provides pure-Rust, [`StdRng`]-driven ports of the two
 //! init recipes the MLP policies use:
 //!
-//! - [`seeded_orthogonal`](crate::policy::seeded_init::seeded_orthogonal) —
-//!   orthogonal init via Householder QR of a Gaussian matrix, scaled by `gain`
-//!   (PPO recipe: `sqrt(2)` trunk, `0.01` heads).
-//! - [`seeded_kaiming_uniform`](crate::policy::seeded_init::seeded_kaiming_uniform) — Kaiming-uniform init matching Burn's
+//! - [`seeded_orthogonal`] — orthogonal init via Householder QR of a Gaussian
+//!   matrix, scaled by `gain` (PPO recipe: `sqrt(2)` trunk, `0.01` heads).
+//! - [`seeded_kaiming_uniform`] — Kaiming-uniform init matching Burn's
 //!   `KaimingUniform { gain, fan_out_only: false }` formula (`bound = gain *
 //!   sqrt(3 / fan_in)`), the path [`crate::policy::mlp::MlpBurnPolicy::new`]
 //!   exercises.

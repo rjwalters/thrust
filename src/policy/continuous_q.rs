@@ -1,6 +1,6 @@
 //! Burn-backend continuous-action Q-critic for SAC (part of #136).
 //!
-//! [`ContinuousQNetwork`](crate::policy::continuous_q::ContinuousQNetwork) is
+//! [`ContinuousQNetwork`] is
 //! the `Q(s, a)` critic SAC uses for its twin critics and the two target
 //! critics. It is structurally close to the
 //! discrete [`crate::policy::q_network::QNetworkBurn`], but differs in two
@@ -24,7 +24,7 @@
 //!
 //! The trunk depth (2 or 3 layers), hidden width, activation, and init
 //! recipe are configurable via
-//! [`ContinuousQNetworkConfig`](crate::policy::continuous_q::ContinuousQNetworkConfig),
+//! [`ContinuousQNetworkConfig`],
 //! mirroring [`crate::policy::mlp::MlpBurnConfig`]. Construction can be seeded
 //! for bit-exact reproducibility (see [`crate::policy::seeded_init`]).
 //!

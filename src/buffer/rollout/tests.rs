@@ -79,8 +79,9 @@ mod gae_tests {
 
         // With gamma=1, gae_lambda=1, last_value=0:
         // Step 2 (terminal): delta = 1.0 + 0 - 2.0 = -1.0, gae = -1.0
-        // Step 1: delta = 1.0 + 2.0 - 2.0 = 1.0, gae = 1.0 + 1.0*1.0*(-1.0) = 0.0
-        // Step 0: delta = 1.0 + 2.0 - 2.0 = 1.0, gae = 1.0 + 1.0*1.0*0.0 = 1.0
+        // Step 1: delta = 1.0 + 2.0 - 2.0 = 1.0, gae = 1.0 + 1.0*1.0*(-1.0) =
+        // 0.0 Step 0: delta = 1.0 + 2.0 - 2.0 = 1.0, gae = 1.0 +
+        // 1.0*1.0*0.0 = 1.0
 
         println!("Simple episode advantages: {:?}", advantages);
         assert!(

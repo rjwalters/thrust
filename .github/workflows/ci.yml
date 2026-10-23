@@ -233,12 +233,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      checks: write
-      issues: write
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: rustsec/audit-check@v1.4.1
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install pinned audit tools
+        run: |
+          cargo install cargo-audit --version 0.22.2 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+      - name: Verify audit coverage and failure handling
+        run: python3 scripts/test_security_audit.py
+      - name: Audit every exposed feature and target
+        run: bash scripts/security-audit.sh
+      - name: Retain full-lock findings and supported-build report
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          name: security-audit
+          path: target/security-audit/
+          if-no-files-found: warn

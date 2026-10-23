@@ -343,8 +343,8 @@ impl AtariPreprocess {
     /// Propagates any [`AtariEnvError`](super::AtariEnvError) from the inner
     /// env.
     pub fn try_step(&mut self, action: i64) -> Result<StepResult, super::AtariEnvError> {
-        // 1. Sticky action: reuse the previous action with probability `sticky_p`,
-        //    rolled once per agent step.
+        // 1. Sticky action: reuse the previous action with probability
+        //    `sticky_p`, rolled once per agent step.
         let effective = if self.roll_sticky() {
             self.last_action
         } else {
@@ -352,8 +352,8 @@ impl AtariPreprocess {
         };
         self.last_action = effective;
 
-        // 2. Frame-skip loop, accumulating reward and retaining the last two raw frames
-        //    for max-pooling.
+        // 2. Frame-skip loop, accumulating reward and retaining the last two
+        //    raw frames for max-pooling.
         let mut reward = 0.0f32;
         let mut terminated = false;
         let mut truncated = false;
@@ -391,8 +391,8 @@ impl AtariPreprocess {
         };
         let frame = self.preprocess_frame(&pooled);
 
-        // 6. Frame-stack push and remember the newest raw frame for the next window's
-        //    max-pool.
+        // 6. Frame-stack push and remember the newest raw frame for the next
+        //    window's max-pool.
         self.push_frame(frame);
         self.prev_raw = last;
 
@@ -713,10 +713,10 @@ mod tests {
 
     #[test]
     fn sticky_action_fraction_near_p() {
-        // A worker that reports the *effective action* back in the reward, so we
-        // can count how often the wrapper substituted the sticky (previous)
-        // action. We alternate the requested action each step; a sticky repeat
-        // reuses the previous effective action.
+        // A worker that reports the *effective action* back in the reward, so
+        // we can count how often the wrapper substituted the sticky
+        // (previous) action. We alternate the requested action each
+        // step; a sticky repeat reuses the previous effective action.
         let cfg = PreprocessConfig {
             frame_skip: 1,
             frame_stack: 4,

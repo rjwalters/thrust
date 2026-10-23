@@ -209,11 +209,12 @@ fn main() -> Result<()> {
     // ≈ 512 samples/iteration against a reservoir that grows to ~9,800
     // entries/agent, which pinned `avg_ap_loss` at the uniform-entropy
     // floor `ln(40)` for the whole run. Two knobs address that:
-    //   * `avg_policy_min_reservoir_coverage` runs enough supervised steps to cover
-    //     the reservoir `coverage`× per iteration (overridable via `AP_COVERAGE`),
-    //     and
-    //   * `br_reward_scale` rescales the `[−700, 0]` payoff band into a numerically
-    //     friendlier range for the BR critic (overridable via `BR_REWARD_SCALE`).
+    //   * `avg_policy_min_reservoir_coverage` runs enough supervised steps to
+    //     cover the reservoir `coverage`× per iteration (overridable via
+    //     `AP_COVERAGE`), and
+    //   * `br_reward_scale` rescales the `[−700, 0]` payoff band into a
+    //     numerically friendlier range for the BR critic (overridable via
+    //     `BR_REWARD_SCALE`).
     let ap_coverage: f32 =
         std::env::var("AP_COVERAGE").ok().and_then(|s| s.parse().ok()).unwrap_or(2.0);
     // Issue #239: dropped 0.01 -> 0.001. The single-BR probe (#241) showed the
@@ -236,12 +237,12 @@ fn main() -> Result<()> {
     //     probe showed the critic fits BEST with the historical 0.5 (its shared
     //     trunk builds Adam momentum alongside the policy); the earlier 0.05
     //     hypothesis (H1: value gradient swamps the policy) was ruled out — at
-    //     scale 0.001 the value loss is ~8 yet the critic still needs the full 0.5
-    //     weight + more steps to start fitting. Default restored to 0.5.
+    //     scale 0.001 the value loss is ~8 yet the critic still needs the full
+    //     0.5 weight + more steps to start fitting. Default restored to 0.5.
     //   * `BR_TRAIN_STEPS` runs the PPO update N times per iteration. The probe
     //     needed 8 (not 1) before ev rose off 0 and entropy fell below 1.0.
-    //   * grad-clip (`max_grad_norm`, default 0.5) is now actually applied in the
-    //     joint update, and the update iterates ALL minibatches per epoch.
+    //   * grad-clip (`max_grad_norm`, default 0.5) is now actually applied in
+    //     the joint update, and the update iterates ALL minibatches per epoch.
     let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5);
     let br_train_steps: usize =
         std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);

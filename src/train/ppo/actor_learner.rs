@@ -567,15 +567,15 @@ where
 
     env.reset();
     loop {
-        // 1. Shutdown requested? (Other control messages are best-effort hints the
-        //    actor does not act on.)
+        // 1. Shutdown requested? (Other control messages are best-effort hints
+        //    the actor does not act on.)
         match channels.control_rx.try_recv() {
             Ok(ControlMessage::Shutdown) | Err(TryRecvError::Disconnected) => break,
             Ok(_) | Err(TryRecvError::Empty) => {}
         }
 
-        // 2. Non-blocking poll for policy broadcasts; keep only the newest when several
-        //    are queued.
+        // 2. Non-blocking poll for policy broadcasts; keep only the newest when
+        //    several are queued.
         let mut latest: Option<PolicyBroadcast> = None;
         while let Ok(broadcast) = channels.broadcast_rx.try_recv() {
             latest = Some(broadcast);

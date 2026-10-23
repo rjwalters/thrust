@@ -405,7 +405,8 @@ impl PrioritizedReplayBuffer {
             indices.push(leaf_idx);
 
             // P(i) = leaf_priority / total → w_i = (1 / (N * P(i)))^β
-            //                                   = (total / (N * leaf_priority))^β
+            //                                   = (total / (N *
+            // leaf_priority))^β
             let prob = leaf_priority.max(1e-12) / total;
             raw_weights[k] = (1.0 / (n * prob)).powf(beta);
         }

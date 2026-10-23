@@ -161,10 +161,11 @@ fn main() -> Result<()> {
     // #240 knobs — identical semantics and defaults to train_nfsp.rs so the
     // probe and the full trainer can be A/B'd against each other directly.
     // Defaults updated to the #239 empirical win: at these settings the critic
-    // explained-variance rises off ~0 on cell beta05 (onset ~iter 8, climbing to
-    // the ~0.48 #242 ceiling by ~iter 25), vs. flat ev=0 / entropy≈1.22 at the
-    // earlier 0.05 / 1 / 0.01 defaults. The entropy dips to the uniform 1.0 floor
-    // only transiently (~iter 8) and recovers above it (see the #252 sweep).
+    // explained-variance rises off ~0 on cell beta05 (onset ~iter 8, climbing
+    // to the ~0.48 #242 ceiling by ~iter 25), vs. flat ev=0 / entropy≈1.22
+    // at the earlier 0.05 / 1 / 0.01 defaults. The entropy dips to the
+    // uniform 1.0 floor only transiently (~iter 8) and recovers above it
+    // (see the #252 sweep).
     let vf_coef: f64 = std::env::var("VF_COEF").ok().and_then(|s| s.parse().ok()).unwrap_or(0.5);
     let br_train_steps: usize =
         std::env::var("BR_TRAIN_STEPS").ok().and_then(|s| s.parse().ok()).unwrap_or(8);

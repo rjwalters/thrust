@@ -1,6 +1,6 @@
 //! Burn-backend stochastic Gaussian actor for SAC (Soft Actor-Critic).
 //!
-//! This module implements [`SacActor`](crate::policy::sac_actor::SacActor),
+//! This module implements [`SacActor`],
 //! the policy network half of the
 //! SAC trainer for **continuous** control (parent proposal #136, PR C of
 //! the decomposition). SAC's actor is a *reparameterized, tanh-squashed
@@ -33,7 +33,7 @@
 //! # Reproducibility
 //!
 //! [`SacActor::sample`](crate::policy::sac_actor::SacActor::sample)
-//! consumes a caller-supplied [`StdRng`](rand::rngs::StdRng) for the
+//! consumes a caller-supplied [`StdRng`] for the
 //! Gaussian noise, mirroring the seeding contract of
 //! [`MlpBurnPolicy::get_action_host_seeded`](crate::policy::mlp::MlpBurnPolicy::get_action_host_seeded):
 //! two calls with the same actor state, same `obs`, and same-seeded RNG
