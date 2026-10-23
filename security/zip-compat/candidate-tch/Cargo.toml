@@ -1,0 +1,13 @@
+[package]
+name = "zip-parity-v6-tch"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+tch = { path = "../../candidate/tch-0.22.0" }
+
+[patch.crates-io]
+torch-sys = { path = "../../candidate/torch-sys-0.22.0" }
+
+zip = { path = "../../candidate/zip-9.0.5" }

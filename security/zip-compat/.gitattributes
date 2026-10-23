@@ -1,0 +1,4 @@
+# These are checksum-bound upstream/accepted bytes, including CRLF fixtures.
+accepted.patch -text
+fixtures/** -text
+zip-test-support/** -text

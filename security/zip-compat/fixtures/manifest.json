@@ -1,0 +1,366 @@
+{
+  "recorded_at": "2026-10-23T21:02:17.002683+00:00",
+  "description": "Observed original-consumer outputs, accepted in independent v6 review; compare stdout and exit status. Vulnerable baseline binaries are not shipped or run.",
+  "cases": [
+    {
+      "backend": "candle",
+      "file": "stored.npz",
+      "sha256": "239e0f2cf4c9e2208c403a3a2a1b94e1f93b06dfc361deacb72b6281a09d6a18",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "stored-zip64.npz",
+      "sha256": "c7316b821531b0bebd672f468dd44dae01fa0fc1c5e536383cb76b8fe537451a",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "deflate.npz",
+      "sha256": "d0fd87b99cdc7f902129e9bea9776c721cb1d071eed83d4a50eca8dd2b120649",
+      "exit_code": 1,
+      "stdout": "",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "deflate-zip64.npz",
+      "sha256": "8f2b8a9dc3f1fafe793bc2d76561f9d21b6c486e19b7b1277fc448d08b57e8c9",
+      "exit_code": 1,
+      "stdout": "",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "bzip2.npz",
+      "sha256": "0cc9f5bf3a4280f9a30507cd778bd5deadda04d0eb8858e2f480947c33d13e64",
+      "exit_code": 1,
+      "stdout": "",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "bzip2-zip64.npz",
+      "sha256": "afc0f92f014cc46ff1889e68f4bf5c2069e336726e10258f981c099ecc664c52",
+      "exit_code": 1,
+      "stdout": "",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "zstd.npz",
+      "sha256": "091c430ad628985b1dc569630f60697c12fe6dba74464b68b327d05dbcd5d6e6",
+      "exit_code": 1,
+      "stdout": "",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "zstd-zip64.npz",
+      "sha256": "ef0bfd51f1460228085bc15e4ba3662f3bfbd2292993b520bffd618f1a14c89f",
+      "exit_code": 1,
+      "stdout": "",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "cp437.npz",
+      "sha256": "df0537d99eea5385021c0755632bdbc60ab5dc05f882a583bef9d46bc7eadf62",
+      "exit_code": 0,
+      "stdout": "NAME=\"café\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"café\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "cp437-valid-utf8-bytes.npz",
+      "sha256": "95ac57b1f6c7ce5b05ed2a5e3d2376f72595fe0984587aaf7be1cd20b755fdd4",
+      "exit_code": 0,
+      "stdout": "NAME=\"caf├⌐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"caf├⌐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "cp437-high-half.npz",
+      "sha256": "8a5a16507384ec8240bdec7e3011e4d5b9617be9f844f1b505c7170b1bb461df",
+      "exit_code": 0,
+      "stdout": "NAME=\"char-128-Ç\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-129-ü\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-130-é\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-131-â\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-132-ä\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-133-à\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-134-å\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-135-ç\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-136-ê\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-137-ë\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-138-è\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-139-ï\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-140-î\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-141-ì\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-142-Ä\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-143-Å\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-144-É\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-145-æ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-146-Æ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-147-ô\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-148-ö\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-149-ò\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-150-û\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-151-ù\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-152-ÿ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-153-Ö\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-154-Ü\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-155-¢\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-156-£\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-157-¥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-158-₧\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-159-ƒ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-160-á\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-161-í\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-162-ó\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-163-ú\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-164-ñ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-165-Ñ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-166-ª\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-167-º\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-168-¿\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-169-⌐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-170-¬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-171-½\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-172-¼\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-173-¡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-174-«\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-175-»\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-176-░\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-177-▒\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-178-▓\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-179-│\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-180-┤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-181-╡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-182-╢\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-183-╖\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-184-╕\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-185-╣\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-186-║\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-187-╗\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-188-╝\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-189-╜\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-190-╛\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-191-┐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-192-└\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-193-┴\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-194-┬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-195-├\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-196-─\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-197-┼\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-198-╞\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-199-╟\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-200-╚\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-201-╔\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-202-╩\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-203-╦\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-204-╠\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-205-═\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-206-╬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-207-╧\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-208-╨\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-209-╤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-210-╥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-211-╙\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-212-╘\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-213-╒\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-214-╓\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-215-╫\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-216-╪\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-217-┘\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-218-┌\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-219-█\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-220-▄\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-221-▌\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-222-▐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-223-▀\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-224-α\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-225-ß\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-226-Γ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-227-π\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-228-Σ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-229-σ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-230-µ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-231-τ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-232-Φ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-233-Θ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-234-Ω\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-235-δ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-236-∞\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-237-φ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-238-ε\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-239-∩\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-240-≡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-241-±\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-242-≥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-243-≤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-244-⌠\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-245-⌡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-246-÷\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-247-≈\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-248-°\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-249-∙\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-250-·\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-251-√\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-252-ⁿ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-253-²\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-254-■\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-255-\\u{a0}\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"char-128-Ç\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-129-ü\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-130-é\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-131-â\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-132-ä\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-133-à\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-134-å\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-135-ç\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-136-ê\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-137-ë\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-138-è\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-139-ï\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-140-î\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-141-ì\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-142-Ä\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-143-Å\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-144-É\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-145-æ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-146-Æ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-147-ô\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-148-ö\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-149-ò\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-150-û\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-151-ù\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-152-ÿ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-153-Ö\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-154-Ü\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-155-¢\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-156-£\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-157-¥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-158-₧\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-159-ƒ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-160-á\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-161-í\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-162-ó\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-163-ú\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-164-ñ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-165-Ñ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-166-ª\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-167-º\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-168-¿\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-169-⌐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-170-¬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-171-½\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-172-¼\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-173-¡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-174-«\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-175-»\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-176-░\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-177-▒\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-178-▓\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-179-│\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-180-┤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-181-╡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-182-╢\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-183-╖\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-184-╕\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-185-╣\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-186-║\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-187-╗\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-188-╝\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-189-╜\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-190-╛\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-191-┐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-192-└\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-193-┴\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-194-┬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-195-├\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-196-─\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-197-┼\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-198-╞\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-199-╟\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-200-╚\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-201-╔\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-202-╩\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-203-╦\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-204-╠\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-205-═\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-206-╬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-207-╧\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-208-╨\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-209-╤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-210-╥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-211-╙\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-212-╘\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-213-╒\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-214-╓\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-215-╫\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-216-╪\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-217-┘\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-218-┌\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-219-█\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-220-▄\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-221-▌\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-222-▐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-223-▀\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-224-α\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-225-ß\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-226-Γ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-227-π\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-228-Σ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-229-σ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-230-µ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-231-τ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-232-Φ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-233-Θ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-234-Ω\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-235-δ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-236-∞\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-237-φ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-238-ε\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-239-∩\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-240-≡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-241-±\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-242-≥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-243-≤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-244-⌠\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-245-⌡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-246-÷\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-247-≈\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-248-°\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-249-∙\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-250-·\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-251-√\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-252-ⁿ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-253-²\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-254-■\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-255-\\u{a0}\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "cp437-fortran.pth",
+      "sha256": "e39fa5445e772d830dc1b5a493fd99dca532afba958f54ec28c77206ef84ff43",
+      "exit_code": 0,
+      "stdout": "PTH SHAPE=[2, 3, 4]; VALUES=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "PTH SHAPE=[2, 3, 4]; VALUES=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "dup-raw.npz",
+      "sha256": "44b418ed2c50e7825c227b7db69fa23bdd785856e9fba8f8482fec6aa2dd9282",
+      "exit_code": 0,
+      "stdout": "NAME=\"a\"; SHAPE=[1]; VALUES=[2.0]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"a\"; SHAPE=[1]; VALUES=[2.0]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "dup-mixed.npz",
+      "sha256": "2bff38579b0b60e2f10b0f7dda79673ce91b4ef560d1ba1426ed831183e6c9ab",
+      "exit_code": 0,
+      "stdout": "NAME=\"café\"; SHAPE=[1]; VALUES=[2.0]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"café\"; SHAPE=[1]; VALUES=[2.0]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "upath.npz",
+      "sha256": "9dd249ec0bbffad42bfef8dcc0d7e6efeae13b23ab137aae875a6cf4d0754c05",
+      "exit_code": 0,
+      "stdout": "NAME=\"naïve\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 0,
+        "stdout": "NAME=\"naïve\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "candle",
+      "file": "upath-badcrc.npz",
+      "sha256": "b2a792060e8c802ef26ef0c09b740f58c3d3456c8c79c14eaeeeb84ac730cd33",
+      "exit_code": 1,
+      "stdout": "",
+      "baseline_binary_sha256": "ffce0b6cedb5d289a227b0e45422a02d4bffb599f8995d4485f7fe3c4c8f931c",
+      "combined": {
+        "exit_code": 1,
+        "stdout": "",
+        "binary_sha256": "86eb9e64a2927e86a7caf9b3c9a880c74f58a3963b271b14f02e8d43ad539566",
+        "configuration": "ZIP7.2.0 aes-crypto,bzip2,deflate,time,zstd, default-features=false; published Candle0.10.2 unchanged",
+        "recorded_at": "2026-10-23T23:17:51.117160+00:00"
+      }
+    },
+    {
+      "backend": "tch",
+      "file": "stored.npz",
+      "sha256": "239e0f2cf4c9e2208c403a3a2a1b94e1f93b06dfc361deacb72b6281a09d6a18",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "stored-zip64.npz",
+      "sha256": "c7316b821531b0bebd672f468dd44dae01fa0fc1c5e536383cb76b8fe537451a",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "deflate.npz",
+      "sha256": "d0fd87b99cdc7f902129e9bea9776c721cb1d071eed83d4a50eca8dd2b120649",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "deflate-zip64.npz",
+      "sha256": "8f2b8a9dc3f1fafe793bc2d76561f9d21b6c486e19b7b1277fc448d08b57e8c9",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "bzip2.npz",
+      "sha256": "0cc9f5bf3a4280f9a30507cd778bd5deadda04d0eb8858e2f480947c33d13e64",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "bzip2-zip64.npz",
+      "sha256": "afc0f92f014cc46ff1889e68f4bf5c2069e336726e10258f981c099ecc664c52",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "zstd.npz",
+      "sha256": "091c430ad628985b1dc569630f60697c12fe6dba74464b68b327d05dbcd5d6e6",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "zstd-zip64.npz",
+      "sha256": "ef0bfd51f1460228085bc15e4ba3662f3bfbd2292993b520bffd618f1a14c89f",
+      "exit_code": 0,
+      "stdout": "NAME=\"alpha\"; SHAPE=[2, 3]; VALUES=[1.0, 2.0, -3.0, 0.0, -0.0, 0.5]\nNAME=\"日本語/δ\"; SHAPE=[2]; VALUES=[42.0, -13.0]\nNAME=\"café\"; SHAPE=[0]; VALUES=[]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "cp437.npz",
+      "sha256": "df0537d99eea5385021c0755632bdbc60ab5dc05f882a583bef9d46bc7eadf62",
+      "exit_code": 0,
+      "stdout": "NAME=\"café\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "cp437-valid-utf8-bytes.npz",
+      "sha256": "95ac57b1f6c7ce5b05ed2a5e3d2376f72595fe0984587aaf7be1cd20b755fdd4",
+      "exit_code": 0,
+      "stdout": "NAME=\"caf├⌐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "cp437-high-half.npz",
+      "sha256": "8a5a16507384ec8240bdec7e3011e4d5b9617be9f844f1b505c7170b1bb461df",
+      "exit_code": 0,
+      "stdout": "NAME=\"char-128-Ç\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-129-ü\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-130-é\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-131-â\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-132-ä\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-133-à\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-134-å\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-135-ç\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-136-ê\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-137-ë\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-138-è\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-139-ï\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-140-î\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-141-ì\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-142-Ä\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-143-Å\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-144-É\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-145-æ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-146-Æ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-147-ô\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-148-ö\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-149-ò\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-150-û\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-151-ù\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-152-ÿ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-153-Ö\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-154-Ü\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-155-¢\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-156-£\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-157-¥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-158-₧\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-159-ƒ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-160-á\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-161-í\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-162-ó\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-163-ú\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-164-ñ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-165-Ñ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-166-ª\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-167-º\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-168-¿\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-169-⌐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-170-¬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-171-½\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-172-¼\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-173-¡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-174-«\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-175-»\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-176-░\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-177-▒\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-178-▓\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-179-│\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-180-┤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-181-╡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-182-╢\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-183-╖\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-184-╕\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-185-╣\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-186-║\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-187-╗\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-188-╝\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-189-╜\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-190-╛\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-191-┐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-192-└\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-193-┴\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-194-┬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-195-├\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-196-─\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-197-┼\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-198-╞\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-199-╟\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-200-╚\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-201-╔\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-202-╩\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-203-╦\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-204-╠\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-205-═\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-206-╬\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-207-╧\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-208-╨\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-209-╤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-210-╥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-211-╙\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-212-╘\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-213-╒\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-214-╓\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-215-╫\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-216-╪\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-217-┘\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-218-┌\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-219-█\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-220-▄\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-221-▌\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-222-▐\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-223-▀\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-224-α\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-225-ß\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-226-Γ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-227-π\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-228-Σ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-229-σ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-230-µ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-231-τ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-232-Φ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-233-Θ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-234-Ω\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-235-δ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-236-∞\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-237-φ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-238-ε\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-239-∩\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-240-≡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-241-±\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-242-≥\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-243-≤\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-244-⌠\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-245-⌡\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-246-÷\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-247-≈\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-248-°\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-249-∙\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-250-·\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-251-√\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-252-ⁿ\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-253-²\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-254-■\"; SHAPE=[2]; VALUES=[1.0, 2.0]\nNAME=\"char-255-\\u{a0}\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "dup-raw.npz",
+      "sha256": "44b418ed2c50e7825c227b7db69fa23bdd785856e9fba8f8482fec6aa2dd9282",
+      "exit_code": 0,
+      "stdout": "NAME=\"a\"; SHAPE=[1]; VALUES=[1.0]\nNAME=\"a\"; SHAPE=[1]; VALUES=[2.0]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "dup-mixed.npz",
+      "sha256": "2bff38579b0b60e2f10b0f7dda79673ce91b4ef560d1ba1426ed831183e6c9ab",
+      "exit_code": 0,
+      "stdout": "NAME=\"café\"; SHAPE=[1]; VALUES=[1.0]\nNAME=\"café\"; SHAPE=[1]; VALUES=[2.0]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "upath.npz",
+      "sha256": "9dd249ec0bbffad42bfef8dcc0d7e6efeae13b23ab137aae875a6cf4d0754c05",
+      "exit_code": 0,
+      "stdout": "NAME=\"café\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    },
+    {
+      "backend": "tch",
+      "file": "upath-badcrc.npz",
+      "sha256": "b2a792060e8c802ef26ef0c09b740f58c3d3456c8c79c14eaeeeb84ac730cd33",
+      "exit_code": 0,
+      "stdout": "NAME=\"café\"; SHAPE=[2]; VALUES=[1.0, 2.0]\n",
+      "baseline_binary_sha256": "fa7ce71cb2b9bc30dbe5099da551965b76d5d65a8e7fb98c78528862d1fff2de"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+name: ZIP compatibility and security
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zip-compat-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  native-archive-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - name: Install checksum-pinned LibTorch 2.9 CPU archive
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            'https://download.pytorch.org/libtorch/cpu/libtorch-shared-with-deps-2.9.0%2Bcpu.zip' \
+            --output "$RUNNER_TEMP/libtorch.zip"
+          echo "22de42abde933be46ce843467930bd0190b72271bfa2c11f84db95591a9834f1  $RUNNER_TEMP/libtorch.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/libtorch.zip" -d "$RUNNER_TEMP/libtorch-install"
+      - name: Test shipped archive readers, unified features, and native extraction
+        run: |
+          python3 security/zip-compat/run.py \
+            --work-dir "$RUNNER_TEMP/zip-compat" \
+            --libtorch "$RUNNER_TEMP/libtorch-install/libtorch" \
+            --extract-archive "$RUNNER_TEMP/libtorch.zip" \
+            --extract-sha256 22de42abde933be46ce843467930bd0190b72271bfa2c11f84db95591a9834f1
+      - name: Retain test results and failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zip-compat-results
+          path: |
+            ${{ runner.temp }}/zip-compat/*.log
+            ${{ runner.temp }}/zip-compat/result.json

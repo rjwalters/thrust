@@ -1,0 +1,5 @@
+# Keep the checksum-verified published sources byte-identical on every platform.
+candle-core-0.10.2/** -text
+tch-0.22.0/** -text
+torch-sys-0.22.0/** -text
+zip-9.0.5/** -text
