@@ -225,7 +225,7 @@ impl MultiAgentEnvironment for SignalingGame {
 
     fn agent_action_space(&self, agent_id: usize) -> Vec<usize> {
         match agent_id {
-            // Speaker has no task action — only the message dim (see `message_vocab`).
+            // Speaker only has a message dimension (see `message_vocab`).
             SPEAKER => Vec::new(),
             // Listener's task action is its guess over the vocabulary.
             LISTENER => vec![self.vocab],
