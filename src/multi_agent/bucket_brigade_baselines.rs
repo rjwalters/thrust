@@ -107,9 +107,9 @@ pub fn specialist_action(
         "agent_id {agent_id} out of range for num_agents {num_agents}"
     );
 
-    // Round-robin ownership: agent `i` owns houses `h` where `h % num_agents == i`.
-    // Iterate ascending so `min(burning_owned)` and `min(owned)` come out by
-    // first-match.
+    // Round-robin ownership: agent `i` owns houses `h` where `h % num_agents ==
+    // i`. Iterate ascending so `min(burning_owned)` and `min(owned)` come
+    // out by first-match.
     let mut first_owned: Option<usize> = None;
     let mut first_burning_owned: Option<usize> = None;
     for h in 0..num_houses {

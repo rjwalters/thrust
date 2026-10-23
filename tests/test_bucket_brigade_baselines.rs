@@ -152,8 +152,8 @@ fn average_specialist(cell: BucketBrigadeCell) -> f32 {
 #[test]
 fn specialist_matches_python_handpicked_observation() {
     // From the Python reference:
-    //   houses = [SAFE, BURNING, SAFE, SAFE, BURNING, SAFE, SAFE, SAFE, SAFE, SAFE]
-    //   num_agents = 4, num_houses = 10
+    //   houses = [SAFE, BURNING, SAFE, SAFE, BURNING, SAFE, SAFE, SAFE, SAFE,
+    // SAFE]   num_agents = 4, num_houses = 10
     //   round-robin: agent 0 -> [0,4,8], agent 1 -> [1,5,9], agent 2 -> [2,6],
     // agent 3 -> [3,7] Expected:
     //   agent 0 owns house 4 (burning) -> [4, WORK, WORK] = [4, 1, 1]

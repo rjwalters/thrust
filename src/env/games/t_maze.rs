@@ -239,8 +239,9 @@ impl Environment for TMaze {
 
     fn reset(&mut self) {
         self.position = 0;
-        // Draw the cue uniformly at random from the seeded RNG (exactly one draw
-        // per episode, so the cue sequence is a pure function of the seed).
+        // Draw the cue uniformly at random from the seeded RNG (exactly one
+        // draw per episode, so the cue sequence is a pure function of
+        // the seed).
         self.cue = if self.rng.random::<bool>() {
             Cue::Up
         } else {
@@ -250,9 +251,10 @@ impl Environment for TMaze {
 
     fn get_observation(&self) -> Vec<f32> {
         // [cue, corridor, junction].
-        //   cue      : nonzero ONLY at step 0 (position 0) — the memory channel.
-        //   corridor : 1.0 while in the corridor (positions 0..N-1).
-        //   junction : 1.0 at the junction (position N); constant across cues.
+        //   cue      : nonzero ONLY at step 0 (position 0) — the memory
+        // channel.   corridor : 1.0 while in the corridor (positions
+        // 0..N-1).   junction : 1.0 at the junction (position N);
+        // constant across cues.
         let cue = if self.position == 0 {
             self.cue.signal()
         } else {

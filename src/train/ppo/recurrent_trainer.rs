@@ -260,7 +260,8 @@ where
                 let value_loss_val = scalar_f64(value_loss.clone());
                 let entropy_val = scalar_f64(entropy.mean());
 
-                // total_loss = policy_loss + vf_coef * value_loss + ent_coef * entropy_loss
+                // total_loss = policy_loss + vf_coef * value_loss + ent_coef *
+                // entropy_loss
                 let total_loss = policy_loss
                     + value_loss.mul_scalar(self.config.vf_coef as f32)
                     + entropy_loss.mul_scalar(self.config.ent_coef as f32);

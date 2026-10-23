@@ -43,7 +43,8 @@ impl Activation {
             Activation::Sigmoid => 1.0 / (1.0 + (-x).exp()),
             Activation::Identity => x,
             Activation::Gelu => {
-                // Approximate GELU: 0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x^3)))
+                // Approximate GELU: 0.5 * x * (1 + tanh(sqrt(2/π) * (x +
+                // 0.044715 * x^3)))
                 const SQRT_2_OVER_PI: f32 = 0.797_884_6;
                 0.5 * x * (1.0 + (SQRT_2_OVER_PI * (x + 0.044715 * x.powi(3))).tanh())
             }

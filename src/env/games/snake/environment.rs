@@ -210,7 +210,8 @@ impl SnakeEnv {
                 continue;
             }
 
-            // Note: no wall collision — game uses toroidal wraparound boundaries
+            // Note: no wall collision — game uses toroidal wraparound
+            // boundaries
 
             // Check self collision
             if self.snakes[i].collides_with_self() {
@@ -275,7 +276,8 @@ impl SnakeEnv {
                     total_reward += length_bonus;
                 }
 
-                // Distance-based reward shaping: reward getting closer to food (toroidal)
+                // Distance-based reward shaping: reward getting closer to food
+                // (toroidal)
                 if i < prev_distances.len() {
                     let current_distance = self.toroidal_distance(&self.snakes[i].head, &self.food);
                     let distance_delta = prev_distances[i] - current_distance;
@@ -403,13 +405,15 @@ impl SnakeEnv {
                 // Survival reward per step
                 agent_rewards[i] += 0.01;
 
-                // Strong reward for longer snakes (encourages aggressive eating)
+                // Strong reward for longer snakes (encourages aggressive
+                // eating)
                 if self.snakes[i].body.len() > 3 {
                     let length_bonus = 1.0 * ((self.snakes[i].body.len() - 3) as f32);
                     agent_rewards[i] += length_bonus;
                 }
 
-                // Distance-based reward shaping: reward getting closer to food (toroidal)
+                // Distance-based reward shaping: reward getting closer to food
+                // (toroidal)
                 if i < prev_distances.len() {
                     let current_distance = self.toroidal_distance(&self.snakes[i].head, &self.food);
                     let distance_delta = prev_distances[i] - current_distance;

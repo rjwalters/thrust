@@ -20,10 +20,10 @@
 //! ```
 //!
 //! The env slices the message dims off inside `step_multi`
-//! ([`split_action`](crate::multi_agent::comms::split_action)), applies
+//! ([`split_action`]), applies
 //! [`Delivery`], and writes the received tokens into the observation layout it
 //! already controls
-//! ([`place_message`](crate::multi_agent::comms::place_message)). No change to
+//! ([`place_message`]). No change to
 //! [`crate::multi_agent::environment::MultiAgentResult`] is required for Phase
 //! 1; a first-class `messages` field is deliberately deferred to Phase 3.
 //!

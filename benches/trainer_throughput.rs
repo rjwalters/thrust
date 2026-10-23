@@ -896,8 +896,9 @@ fn bench_nature_dqn_policy_forward<B: AutodiffBackend>(
                 |(policy, obs)| {
                     let (logits, values) = policy.forward(obs);
                     black_box((logits, values));
-                    // Drain the backend command queue so criterion times the full
-                    // GPU work, not just kernel enqueue. No-op on NdArray.
+                    // Drain the backend command queue so criterion times the
+                    // full GPU work, not just kernel
+                    // enqueue. No-op on NdArray.
                     let _ = B::sync(device);
                 },
                 criterion::BatchSize::SmallInput,
@@ -923,8 +924,9 @@ fn bench_nature_dqn_qnet_forward<B: AutodiffBackend>(
                 |(qnet, obs)| {
                     let q_values = qnet.forward(obs);
                     black_box(q_values);
-                    // Drain the backend command queue so criterion times the full
-                    // GPU work, not just kernel enqueue. No-op on NdArray.
+                    // Drain the backend command queue so criterion times the
+                    // full GPU work, not just kernel
+                    // enqueue. No-op on NdArray.
                     let _ = B::sync(device);
                 },
                 criterion::BatchSize::SmallInput,
@@ -960,15 +962,17 @@ fn bench_nature_dqn_policy_train_step<B: AutodiffBackend>(
                 |(policy, mut opt, obs, actions)| {
                     let (log_probs, entropy, values) = policy.evaluate_actions(obs, actions);
                     // Synthetic actor-critic loss: policy-gradient surrogate +
-                    // value MSE-to-zero + entropy bonus. Exercises both heads and
-                    // the full conv-trunk backward graph.
+                    // value MSE-to-zero + entropy bonus. Exercises both heads
+                    // and the full conv-trunk backward
+                    // graph.
                     let loss = log_probs.mean().neg() + values.powf_scalar(2.0).mean()
                         - entropy.mean().mul_scalar(CNN_ENTROPY_COEF);
                     let grads = GradientsParams::from_grads(loss.backward(), &policy);
                     let policy = opt.inner_mut().step(CNN_LR, policy, grads);
                     black_box(policy);
-                    // Drain the backend command queue so criterion times the full
-                    // GPU work, not just kernel enqueue. No-op on NdArray.
+                    // Drain the backend command queue so criterion times the
+                    // full GPU work, not just kernel
+                    // enqueue. No-op on NdArray.
                     let _ = B::sync(device);
                 },
                 criterion::BatchSize::SmallInput,
@@ -1005,8 +1009,9 @@ fn bench_nature_dqn_qnet_train_step<B: AutodiffBackend>(
                     let grads = GradientsParams::from_grads(loss.backward(), &qnet);
                     let qnet = opt.inner_mut().step(CNN_LR, qnet, grads);
                     black_box(qnet);
-                    // Drain the backend command queue so criterion times the full
-                    // GPU work, not just kernel enqueue. No-op on NdArray.
+                    // Drain the backend command queue so criterion times the
+                    // full GPU work, not just kernel
+                    // enqueue. No-op on NdArray.
                     let _ = B::sync(device);
                 },
                 criterion::BatchSize::SmallInput,
@@ -1074,13 +1079,15 @@ fn benches(c: &mut Criterion) {
     // the exact same generic `register_all` bench bodies with the backend's
     // float element pinned to `f16`, so they sit side-by-side with the `/cuda`
     // (or `/wgpu`) f32 groups in one criterion run — the paired f16-vs-f32
-    // comparison. Only compiled when `training-fp16` is enabled, which is opt-in
-    // (see the `training-fp16` feature in Cargo.toml). The signal is in the four
-    // `nature_dqn_*` CNN groups; the small-MLP groups register too (harmless)
-    // and serve as a sanity check where no f16 win is expected.
+    // comparison. Only compiled when `training-fp16` is enabled, which is
+    // opt-in (see the `training-fp16` feature in Cargo.toml). The signal is
+    // in the four `nature_dqn_*` CNN groups; the small-MLP groups register
+    // too (harmless) and serve as a sanity check where no f16 win is
+    // expected.
     //
-    // CUDA (NVIDIA Ampere+) is the runtime-verified f16 path — tensor cores make
-    // this the intended target. See #270 for the verified training run.
+    // CUDA (NVIDIA Ampere+) is the runtime-verified f16 path — tensor cores
+    // make this the intended target. See #270 for the verified training
+    // run.
     #[cfg(all(feature = "cuda", feature = "training-fp16"))]
     {
         type Fp16Cuda = Autodiff<Cuda<burn::tensor::f16, i32>>;

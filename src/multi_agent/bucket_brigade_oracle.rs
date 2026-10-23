@@ -32,7 +32,7 @@
 //! ## What the oracle searches over
 //!
 //! A single BR agent's only lever in this game is *how it fights fires*. The
-//! [`FirefighterParams`](crate::multi_agent::bucket_brigade_oracle::FirefighterParams)
+//! [`FirefighterParams`]
 //! family captures that lever:
 //!
 //! * `scope_owned_only` — fight only round-robin-owned houses (the specialist)
@@ -713,7 +713,8 @@ fn coalition_candidates(k: usize, search_best: FirefighterParams) -> Vec<(String
     ];
 
     if k >= 2 {
-        // One aggressive any-house "Hero" firefighter + (k−1) owned specialists.
+        // One aggressive any-house "Hero" firefighter + (k−1) owned
+        // specialists.
         let mut hero_plus_specialists = vec![ff(false)];
         hero_plus_specialists.extend(std::iter::repeat_n(BrPolicy::Specialist, k - 1));
         out.push(("hero[any]+specialists".to_string(), hero_plus_specialists));
@@ -788,7 +789,8 @@ pub fn run_coalition_oracle(
         per_episode_team_per_step: baseline_eval.per_episode_team_per_step,
     };
 
-    // --- Randomized search over the firefighter family (homogeneous over k). ---
+    // --- Randomized search over the firefighter family (homogeneous over k).
+    // ---
     let mut search_rng = StdRng::seed_from_u64(seed ^ 0xD1B54A32);
     let mut best_params = FirefighterParams { scope_owned_only: true, work_prob: 1.0 };
     let mut best_search_team = f64::NEG_INFINITY;
@@ -835,7 +837,8 @@ pub fn run_coalition_oracle(
         .map(|(i, _)| i)
         .unwrap_or(0);
 
-    // Episode-level paired per-step gap series (ceiling − baseline) → bootstrap CI.
+    // Episode-level paired per-step gap series (ceiling − baseline) → bootstrap
+    // CI.
     let gap_series: Vec<f64> = candidates[best_idx]
         .per_episode_team_per_step
         .iter()

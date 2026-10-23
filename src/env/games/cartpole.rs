@@ -372,8 +372,8 @@ mod tests {
         let x_before = env.x;
         env.step(0); // Action 0 = push left
 
-        // With leftward force, cart should generally move left (though dynamics are
-        // complex) Just verify physics ran without panicking
+        // With leftward force, cart should generally move left (though dynamics
+        // are complex) Just verify physics ran without panicking
         assert_ne!(env.x, x_before, "State should change after step");
     }
 

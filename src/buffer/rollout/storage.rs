@@ -175,7 +175,8 @@ impl RolloutBuffer {
     // All getters return a slice indexed as `[step][env]` (outer = time,
     // inner = parallel env). GAE, log-prob masking, and minibatch sampling
     // all rely on this layout; do not transpose at the call site without
-    // adjusting [`compute_advantages`](super::gae::compute_advantages) accordingly.
+    // adjusting [`compute_advantages`](super::gae::compute_advantages)
+    // accordingly.
 
     /// Borrow the per-step observations, indexed `[step][env]` and
     /// then by observation dimension (final inner `Vec<f32>` is one

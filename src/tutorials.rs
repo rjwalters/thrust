@@ -18,30 +18,25 @@
 //!
 //! # Landed tutorials
 //!
-//! - [`tutorial_01_first_agent`](crate::tutorials::tutorial_01_first_agent) —
-//!   Your first agent (SimpleBandit + actor-critic; the rollout → loss → update
-//!   loop).
-//! - [`tutorial_02_cartpole_ppo`](crate::tutorials::tutorial_02_cartpole_ppo) —
-//!   Solving CartPole with PPO (`EnvPool`, GAE, the config surface, reading
-//!   learning curves).
-//! - [`tutorial_03_dqn`](crate::tutorials::tutorial_03_dqn) — Off-policy
-//!   training with DQN (replay buffer, target network, ε-annealing, Double-DQN,
-//!   Polyak soft updates; when to prefer DQN over PPO).
-//! - [`tutorial_04_sac`](crate::tutorials::tutorial_04_sac) — Continuous
-//!   control with SAC (Box action spaces, tanh squashing, automatic entropy
-//!   tuning, twin critics; reusing the off-policy replay + Polyak machinery for
-//!   continuous actions).
-//! - [`tutorial_05_memory`](crate::tutorials::tutorial_05_memory) — Memory and
-//!   POMDPs with recurrent PPO (`FlickeringCartPole`, LSTM policy, recurrent
-//!   rollouts and hidden-state handling; when an LSTM earns its cost vs. a
-//!   memoryless MLP baseline).
-//! - [`tutorial_06_own_env`](crate::tutorials::tutorial_06_own_env) — Writing
-//!   your own environment (implementing the `Environment` trait from scratch;
-//!   the seeding/determinism contract behind `clone_state` / `restore_state`).
-//! - [`tutorial_07_wasm`](crate::tutorials::tutorial_07_wasm) — Train in Rust,
-//!   run in the browser (exporting a trained `MlpBurnPolicy` to the
-//!   `InferenceModel` JSON format, the Burn→inference weight transpose, and
-//!   wiring the JSON into the WASM demo).
+//! - [`tutorial_01_first_agent`] — Your first agent (SimpleBandit +
+//!   actor-critic; the rollout → loss → update loop).
+//! - [`tutorial_02_cartpole_ppo`] — Solving CartPole with PPO (`EnvPool`, GAE,
+//!   the config surface, reading learning curves).
+//! - [`tutorial_03_dqn`] — Off-policy training with DQN (replay buffer, target
+//!   network, ε-annealing, Double-DQN, Polyak soft updates; when to prefer DQN
+//!   over PPO).
+//! - [`tutorial_04_sac`] — Continuous control with SAC (Box action spaces, tanh
+//!   squashing, automatic entropy tuning, twin critics; reusing the off-policy
+//!   replay + Polyak machinery for continuous actions).
+//! - [`tutorial_05_memory`] — Memory and POMDPs with recurrent PPO
+//!   (`FlickeringCartPole`, LSTM policy, recurrent rollouts and hidden-state
+//!   handling; when an LSTM earns its cost vs. a memoryless MLP baseline).
+//! - [`tutorial_06_own_env`] — Writing your own environment (implementing the
+//!   `Environment` trait from scratch; the seeding/determinism contract behind
+//!   `clone_state` / `restore_state`).
+//! - [`tutorial_07_wasm`] — Train in Rust, run in the browser (exporting a
+//!   trained `MlpBurnPolicy` to the `InferenceModel` JSON format, the
+//!   Burn→inference weight transpose, and wiring the JSON into the WASM demo).
 
 /// Tutorial 1 — Your first agent.
 ///

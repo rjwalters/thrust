@@ -349,7 +349,8 @@ mod tests {
         let decoded = decode_response(payload_of(&frame)).unwrap();
         assert_eq!(decoded, Response::State(blob.clone()));
 
-        // A RestoreState command carries the same opaque bytes back the other way.
+        // A RestoreState command carries the same opaque bytes back the other
+        // way.
         let frame = encode_command(&Command::RestoreState(blob.clone()));
         assert_eq!(decode_command(payload_of(&frame)).unwrap(), Command::RestoreState(blob));
     }

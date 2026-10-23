@@ -52,7 +52,7 @@
 //! PSRO builds on top of
 //! [`crate::multi_agent::joint::JointMultiAgentTrainer`], which records
 //! a *per-agent* observation stream in
-//! [`JointRollout::observations_per_agent`]. Envs with distinct
+//! [`JointRollout::observations_per_agent`](crate::multi_agent::joint::JointRollout::observations_per_agent). Envs with distinct
 //! per-agent views (partial observability, asymmetric information)
 //! drop in without pre-concatenation. Matching pennies returns
 //! identical observations to both agents, which keeps the regression
@@ -2559,7 +2559,8 @@ mod tests {
         // cycle (0→2, 1→0, 2→1), loses (−1) if it loses to both, and
         // gets 0 otherwise (mixed outcome).
         //
-        // Standard RPS beats: 0(R) beats 2(S), 1(P) beats 0(R), 2(S) beats 1(P).
+        // Standard RPS beats: 0(R) beats 2(S), 1(P) beats 0(R), 2(S) beats
+        // 1(P).
         fn beats(a: usize, b: usize) -> bool {
             (a == 0 && b == 2) || (a == 1 && b == 0) || (a == 2 && b == 1)
         }
@@ -3243,8 +3244,8 @@ mod tests {
         // should equal the cumulative number of new boundary cells in
         // the N-tensor cache:
         // - Initial 1^N seed (each agent has 1 policy): 1 eval.
-        // - Iteration k (k=1..K): cache grows from k^N to (k+1)^N, adding (k+1)^N − k^N
-        //   new boundary cells.
+        // - Iteration k (k=1..K): cache grows from k^N to (k+1)^N, adding
+        //   (k+1)^N − k^N new boundary cells.
         // For N=2 this collapses to (k+1)² − k² = 2k + 1, recovering
         // the pre-refactor formula `1 + K² + 2K`.
         let k = 3;

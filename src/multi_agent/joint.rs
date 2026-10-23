@@ -955,12 +955,13 @@ where
         for _epoch in 0..self.config.n_epochs {
             // Build this epoch's minibatch index-sets.
             //
-            // * `iterate_all_minibatches == false` (default): one shuffled `minibatch_size`
-            //   draw per epoch — the historical #100 behaviour, kept bit-identical so
-            //   existing NFSP/PSRO determinism tests are unaffected.
+            // * `iterate_all_minibatches == false` (default): one shuffled
+            //   `minibatch_size` draw per epoch — the historical #100
+            //   behaviour, kept bit-identical so existing NFSP/PSRO determinism
+            //   tests are unaffected.
             // * `iterate_all_minibatches == true`: shuffle once and walk every
-            //   `minibatch_size` chunk so the BR consumes the full rollout instead of
-            //   discarding ~97% of it (issue #239).
+            //   `minibatch_size` chunk so the BR consumes the full rollout
+            //   instead of discarding ~97% of it (issue #239).
             //
             // Both branches draw their shuffle randomness from the
             // caller-supplied RNG so PSRO / NFSP runs stay reproducible
@@ -1060,8 +1061,8 @@ where
                     let entropy_mean = entropy.mean();
 
                     // Host-side stats. We pull scalars from each per-agent loss
-                    // tensor *before* moving them into the joint sum so we don't
-                    // need to clone twice.
+                    // tensor *before* moving them into the joint sum so we
+                    // don't need to clone twice.
                     policy_loss_hosts[i] = scalar_f64(policy_loss.clone());
                     value_loss_hosts[i] = scalar_f64(value_loss.clone());
                     entropy_hosts[i] = scalar_f64(entropy_mean.clone());
@@ -1087,7 +1088,8 @@ where
                     features.push(feat);
                 }
 
-                // Aggregate per-agent losses, then add the cross-agent aux term.
+                // Aggregate per-agent losses, then add the cross-agent aux
+                // term.
                 let mut joint_loss: Option<Tensor<B, 1>> = None;
                 for l in per_agent_losses {
                     joint_loss = Some(match joint_loss.take() {
@@ -1135,9 +1137,9 @@ where
                 let joint_loss = joint_loss.ok_or_else(|| anyhow!("no losses to backprop"))?;
                 stats.total_loss += scalar_f64(joint_loss.clone());
 
-                // Single backward over the joint loss; the resulting `Gradients`
-                // carry grads for every policy's parameters. Sliced per-policy
-                // below.
+                // Single backward over the joint loss; the resulting
+                // `Gradients` carry grads for every policy's
+                // parameters. Sliced per-policy below.
                 //
                 // Burn's `Gradients` container is *consumed* per param when we
                 // call `from_module(&mut grads, policy_i)` — each visit removes
@@ -1214,8 +1216,9 @@ where
                         critic_joint.ok_or_else(|| anyhow!("no value losses to backprop"))?;
                     let mut critic_grads = critic_joint.backward();
 
-                    // Indexing `self.policies` / `self.critic_optimizers` by `i`
-                    // is load-bearing (`.take()` mutates the `Option` slot), so
+                    // Indexing `self.policies` / `self.critic_optimizers` by
+                    // `i` is load-bearing (`.take()`
+                    // mutates the `Option` slot), so
                     // the range loop cannot be rewritten as an iterator over a
                     // single slice; mirrors the actor step loop above.
                     #[allow(clippy::needless_range_loop)]

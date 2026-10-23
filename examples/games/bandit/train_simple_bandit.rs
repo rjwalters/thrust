@@ -195,10 +195,11 @@ fn main() -> Result<()> {
 
             // FRICTION: gradient extraction is two-step:
             //   1. loss.backward() -> B::Gradients (one tensor per param)
-            //   2. GradientsParams::from_grads(grads, &module) ties each gradient back to
-            //      its parameter id by walking the module tree. Then optim.step consumes
-            //      the module + grads together. The "from_grads + step" pair has no direct
-            //      analog in tch's `optim.backward_step(&loss)`.
+            //   2. GradientsParams::from_grads(grads, &module) ties each
+            //      gradient back to its parameter id by walking the module
+            //      tree. Then optim.step consumes the module + grads together.
+            //      The "from_grads + step" pair has no direct analog in tch's
+            //      `optim.backward_step(&loss)`.
             let grads = loss.backward();
             let grads = GradientsParams::from_grads(grads, &p);
             policy = Some(optim.step(LEARNING_RATE.into(), p, grads));

@@ -264,8 +264,8 @@ fn main() -> Result<()> {
     // The trainer takes the device by value; the action-selection closure below
     // needs it too. Clone here so both hold a device. `clone_on_copy` is
     // silenced because on the CPU (`NdArray`) backend the device is `Copy` and
-    // the clone is a no-op, whereas the `cuda`/`wgpu` devices are not `Copy` and
-    // genuinely require it — one source across all three backends.
+    // the clone is a no-op, whereas the `cuda`/`wgpu` devices are not `Copy`
+    // and genuinely require it — one source across all three backends.
     #[allow(clippy::clone_on_copy)]
     let trainer_device = device.clone();
     let mut trainer =

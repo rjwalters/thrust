@@ -127,8 +127,8 @@ fn nfsp_n4_smoke_runs_and_is_finite() {
     assert_eq!(stats.iterations.len(), max_iterations, "smoke run records 2 iterations");
 
     let last = stats.iterations.last().unwrap();
-    for agent in 0..num_agents {
-        let m = last.avg_action_marginal[agent]
+    for (agent, marginal) in last.avg_action_marginal[..num_agents].iter().enumerate() {
+        let m = marginal
             .as_ref()
             .expect("AP marginal should be present on N-player matching pennies");
         let mut sum = 0.0_f32;
