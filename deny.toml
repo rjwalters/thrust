@@ -1,0 +1,13 @@
+# Audit every dependency that any exposed Thrust configuration can build.
+# No target filter or package exclusions: include all targets and dev/build deps.
+[graph]
+all-features = true
+exclude-dev = false
+exclude-unpublished = false
+
+[advisories]
+db-urls = ["https://github.com/RustSec/advisory-db"]
+ignore = []
+unsound = "all"
+# Maintenance notices remain visible warnings via `-W unmaintained` in the
+# audit command, matching cargo-audit. Vulnerabilities and unsoundness fail.
