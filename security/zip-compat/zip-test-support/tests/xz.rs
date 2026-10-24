@@ -1,0 +1,22 @@
+#![cfg(feature = "xz")]
+
+use std::io::{self, Read};
+use zip::ZipArchive;
+
+#[test]
+pub fn decompress_xz() {
+    let zip_data = include_bytes!("data/xz.zip");
+    let mut archive =
+        ZipArchive::new(io::Cursor::new(zip_data)).expect("couldn't open test zip file");
+
+    let mut file = archive
+        .by_name("hello.txt")
+        .expect("couldn't find hello.txt in archive");
+    let file_name = file.name().expect("failed to get file name");
+    assert_eq!("hello.txt", file_name);
+
+    let mut content = Vec::new();
+    file.read_to_end(&mut content)
+        .expect("failed to read content from hello.txt");
+    assert_eq!(content, b"Hello world\n",);
+}

@@ -1,0 +1,11 @@
+[package]
+name = "zip-parity-v6-candle"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+candle-core = { path = "../../candidate/candle-core-0.10.2" }
+
+[patch.crates-io]
+zip = { path = "../../candidate/zip-9.0.5" }

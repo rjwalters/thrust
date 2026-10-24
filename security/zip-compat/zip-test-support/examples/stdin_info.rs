@@ -1,0 +1,35 @@
+use std::{
+    error::Error,
+    io::{self, Read},
+};
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let stdin = io::stdin();
+    let mut stdin_handle = stdin.lock();
+    let mut buf = [0u8; 16];
+
+    loop {
+        match zip::read::read_zipfile_from_stream(&mut stdin_handle) {
+            Ok(Some(mut file)) => {
+                let file_name = file.name()?;
+                println!(
+                    "{}: {} bytes ({} bytes packed)",
+                    file_name,
+                    file.size(),
+                    file.compressed_size()
+                );
+                match file.read(&mut buf) {
+                    Ok(n) => println!("The first {} bytes are: {:?}", n, &buf[0..n]),
+                    Err(e) => println!("Could not read the file: {e:?}"),
+                };
+            }
+            Ok(None) => break,
+            Err(e) => {
+                println!("Error encountered while reading zip: {e:?}");
+                return Err(e.into());
+            }
+        }
+    }
+
+    Ok(())
+}

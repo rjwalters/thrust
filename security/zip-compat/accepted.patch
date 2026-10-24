@@ -1,0 +1,676 @@
+diff --git a/baseline/candle-core-0.10.2/Cargo.toml b/candidate/candle-core-0.10.2/Cargo.toml
+index 97339e1..db3c93a 100644
+--- a/baseline/candle-core-0.10.2/Cargo.toml
++++ b/candidate/candle-core-0.10.2/Cargo.toml
+@@ -241,7 +241,7 @@ version = "0.8.1"
+ features = ["derive"]
+ 
+ [dependencies.zip]
+-version = "7.2.0"
++version = "=9.0.5"
+ default-features = false
+ 
+ [dev-dependencies.anyhow]
+diff --git a/baseline/candle-core-0.10.2/src/lib.rs b/candidate/candle-core-0.10.2/src/lib.rs
+index 791933d..8df97c4 100644
+--- a/baseline/candle-core-0.10.2/src/lib.rs
++++ b/candidate/candle-core-0.10.2/src/lib.rs
+@@ -87,6 +87,7 @@ mod tensor_cat;
+ pub mod test_utils;
+ pub mod utils;
+ mod variable;
++mod zip_compat_v5;
+ 
+ #[cfg(feature = "cudnn")]
+ pub use cuda_backend::cudnn;
+diff --git a/baseline/candle-core-0.10.2/src/npy.rs b/candidate/candle-core-0.10.2/src/npy.rs
+index 496465e..c8c3853 100644
+--- a/baseline/candle-core-0.10.2/src/npy.rs
++++ b/candidate/candle-core-0.10.2/src/npy.rs
+@@ -283,13 +283,13 @@ impl Tensor {
+     /// Reads a npz file and returns the stored multi-dimensional arrays together with their names.
+     pub fn read_npz<T: AsRef<Path>>(path: T) -> Result<Vec<(String, Self)>> {
+         let zip_reader = BufReader::new(File::open(path.as_ref())?);
+-        let mut zip = zip::ZipArchive::new(zip_reader)?;
++        let mut zip = crate::zip_compat_v5::Archive::new(zip_reader)?;
+         let mut result = vec![];
+         for i in 0..zip.len() {
+             let mut reader = zip.by_index(i)?;
+             let name = {
+-                let name = reader.name();
+-                name.strip_suffix(NPY_SUFFIX).unwrap_or(name).to_owned()
++                let name = reader.name()?;
++                name.strip_suffix(NPY_SUFFIX).unwrap_or(&name).to_owned()
+             };
+             let header = read_header(&mut reader)?;
+             let header = Header::parse(&header)?;
+@@ -305,7 +305,7 @@ impl Tensor {
+     /// Reads a npz file and returns the stored multi-dimensional arrays for some specified names.
+     pub fn read_npz_by_name<T: AsRef<Path>>(path: T, names: &[&str]) -> Result<Vec<Self>> {
+         let zip_reader = BufReader::new(File::open(path.as_ref())?);
+-        let mut zip = zip::ZipArchive::new(zip_reader)?;
++        let mut zip = crate::zip_compat_v5::Archive::new(zip_reader)?;
+         let mut result = vec![];
+         for name in names.iter() {
+             let mut reader = match zip.by_name(&format!("{name}{NPY_SUFFIX}")) {
+@@ -380,13 +380,13 @@ impl NpzTensors {
+     pub fn new<T: AsRef<Path>>(path: T) -> Result<Self> {
+         let path = path.as_ref().to_owned();
+         let zip_reader = BufReader::new(File::open(&path)?);
+-        let mut zip = zip::ZipArchive::new(zip_reader)?;
++        let mut zip = crate::zip_compat_v5::Archive::new(zip_reader)?;
+         let mut index_per_name = HashMap::new();
+         for i in 0..zip.len() {
+             let file = zip.by_index(i)?;
+             let name = {
+-                let name = file.name();
+-                name.strip_suffix(NPY_SUFFIX).unwrap_or(name).to_owned()
++                let name = file.name()?;
++                name.strip_suffix(NPY_SUFFIX).unwrap_or(&name).to_owned()
+             };
+             index_per_name.insert(name, i);
+         }
+@@ -408,7 +408,7 @@ impl NpzTensors {
+             Some(index) => *index,
+         };
+         let zip_reader = BufReader::new(File::open(&self.path)?);
+-        let mut zip = zip::ZipArchive::new(zip_reader)?;
++        let mut zip = crate::zip_compat_v5::Archive::new(zip_reader)?;
+         let mut reader = zip.by_index(index)?;
+         let header = read_header(&mut reader)?;
+         let header = Header::parse(&header)?;
+@@ -422,7 +422,7 @@ impl NpzTensors {
+         };
+         // We hope that the file has not changed since first reading it.
+         let zip_reader = BufReader::new(File::open(&self.path)?);
+-        let mut zip = zip::ZipArchive::new(zip_reader)?;
++        let mut zip = crate::zip_compat_v5::Archive::new(zip_reader)?;
+         let mut reader = zip.by_index(index)?;
+         let header = read_header(&mut reader)?;
+         let header = Header::parse(&header)?;
+diff --git a/baseline/candle-core-0.10.2/src/pickle.rs b/candidate/candle-core-0.10.2/src/pickle.rs
+index dd65b9d..3c86181 100644
+--- a/baseline/candle-core-0.10.2/src/pickle.rs
++++ b/candidate/candle-core-0.10.2/src/pickle.rs
+@@ -674,11 +674,13 @@ pub fn read_pth_tensor_info<P: AsRef<std::path::Path>>(
+ ) -> Result<Vec<TensorInfo>> {
+     let file = std::fs::File::open(file)?;
+     let zip_reader = std::io::BufReader::new(file);
+-    let mut zip = zip::ZipArchive::new(zip_reader)?;
+-    let zip_file_names = zip
+-        .file_names()
+-        .map(|f| f.to_string())
+-        .collect::<Vec<String>>();
++    let mut zip = crate::zip_compat_v5::Archive::new(zip_reader)?;
++    let zip_file_names = (0..zip.len())
++        .map(|index| {
++            let entry = zip.by_index_data(index)?;
++            Ok(entry.name()?.into_owned())
++        })
++        .collect::<zip::result::ZipResult<Vec<String>>>()?;
+ 
+     let mut tensor_infos = vec![];
+     for file_name in zip_file_names.iter() {
+@@ -770,7 +772,7 @@ impl PthTensors {
+         };
+         // We hope that the file has not changed since first reading it.
+         let zip_reader = std::io::BufReader::new(std::fs::File::open(&self.path)?);
+-        let mut zip = zip::ZipArchive::new(zip_reader)?;
++        let mut zip = crate::zip_compat_v5::Archive::new(zip_reader)?;
+         let mut reader = zip.by_name(&tensor_info.path)?;
+         let is_fortran_contiguous = tensor_info.layout.is_fortran_contiguous();
+         let rank = tensor_info.layout.shape().rank();
+diff --git a/candidate/candle-core-0.10.2/src/zip_compat_v5.rs b/candidate/candle-core-0.10.2/src/zip_compat_v5.rs
+new file mode 100644
+index 0000000..b242c7f
+--- /dev/null
++++ b/candidate/candle-core-0.10.2/src/zip_compat_v5.rs
+@@ -0,0 +1,56 @@
++//! Preserve ZIP7's decoded-name index while using the patched ZIP9 parser.
++
++use std::collections::{HashMap, hash_map::Entry};
++use std::io::{Read, Seek};
++use zip::read::{EntryArchive, UnicodeExtraFieldPolicy, ZipFile, ZipFileEntry};
++use zip::result::{ZipError, ZipResult};
++
++pub(crate) struct Archive<R> {
++    entries: EntryArchive<R>,
++    // Preserve the first insertion position, replacing its value on duplicates,
++    // as ZIP7's IndexMap did. Names are decoded exactly once.
++    indices: Vec<usize>,
++    by_name: HashMap<String, usize>,
++}
++
++impl<R: Read + Seek> Archive<R> {
++    pub(crate) fn new(reader: R) -> ZipResult<Self> {
++        let entries = EntryArchive::new(reader, UnicodeExtraFieldPolicy::RequireValid)?;
++        let mut indices = Vec::with_capacity(entries.len());
++        let mut by_name = HashMap::with_capacity(entries.len());
++        for index in 0..entries.len() {
++            let name = entries.by_index_data(index)?.name()?.into_owned();
++            match by_name.entry(name) {
++                Entry::Vacant(slot) => {
++                    slot.insert(indices.len());
++                    indices.push(index);
++                }
++                Entry::Occupied(slot) => indices[*slot.get()] = index,
++            }
++        }
++        Ok(Self {
++            entries,
++            indices,
++            by_name,
++        })
++    }
++
++    pub(crate) fn len(&self) -> usize {
++        self.indices.len()
++    }
++
++    pub(crate) fn by_index(&mut self, index: usize) -> ZipResult<ZipFile<'_, R>> {
++        let index = *self.indices.get(index).ok_or(ZipError::FileNotFound)?;
++        self.entries.by_index(index)
++    }
++
++    pub(crate) fn by_index_data(&self, index: usize) -> ZipResult<ZipFileEntry<'_>> {
++        let index = *self.indices.get(index).ok_or(ZipError::FileNotFound)?;
++        self.entries.by_index_data(index)
++    }
++
++    pub(crate) fn by_name(&mut self, name: &str) -> ZipResult<ZipFile<'_, R>> {
++        let index = *self.by_name.get(name).ok_or(ZipError::FileNotFound)?;
++        self.by_index(index)
++    }
++}
+diff --git a/baseline/tch-0.22.0/Cargo.toml b/candidate/tch-0.22.0/Cargo.toml
+index 282b7a0..4e22c36 100644
+--- a/baseline/tch-0.22.0/Cargo.toml
++++ b/candidate/tch-0.22.0/Cargo.toml
+@@ -240,7 +240,9 @@ version = "1"
+ version = "0.22.0"
+ 
+ [dependencies.zip]
+-version = "0.6"
++version = "=9.0.5"
++default-features = false
++features = ["aes-crypto", "bzip2", "deflate", "time", "zstd"]
+ 
+ [dev-dependencies.anyhow]
+ version = "^1.0.60"
+diff --git a/baseline/tch-0.22.0/src/tensor/npy.rs b/candidate/tch-0.22.0/src/tensor/npy.rs
+index 2447c95..665ebde 100644
+--- a/baseline/tch-0.22.0/src/tensor/npy.rs
++++ b/candidate/tch-0.22.0/src/tensor/npy.rs
+@@ -183,13 +183,14 @@ impl crate::Tensor {
+     /// Reads a npz file and returns some named tensors.
+     pub fn read_npz<T: AsRef<Path>>(path: T) -> Result<Vec<(String, Tensor)>, TchError> {
+         let zip_reader = BufReader::new(File::open(path.as_ref())?);
+-        let mut zip = zip::ZipArchive::new(zip_reader)?;
++        let mut zip =
++            zip::read::EntryArchive::new(zip_reader, zip::read::UnicodeExtraFieldPolicy::Ignore)?;
+         let mut result = vec![];
+         for i in 0..zip.len() {
+             let mut reader = zip.by_index(i).unwrap();
+             let name = {
+-                let name = reader.name();
+-                name.strip_suffix(NPY_SUFFIX).unwrap_or(name).to_owned()
++                let name = reader.name()?;
++                name.strip_suffix(NPY_SUFFIX).unwrap_or(&name).to_owned()
+             };
+             let header = read_header(&mut reader)?;
+             let header = Header::parse(&header)?;
+@@ -235,8 +236,8 @@ impl crate::Tensor {
+         path: P,
+     ) -> Result<(), TchError> {
+         let mut zip = zip::ZipWriter::new(File::create(path.as_ref())?);
+-        let options =
+-            zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
++        let options = zip::write::SimpleFileOptions::default()
++            .compression_method(zip::CompressionMethod::Stored);
+ 
+         for (name, tensor) in ts.iter() {
+             zip.start_file(format!("{}.npy", name.as_ref()), options)?;
+diff --git a/baseline/torch-sys-0.22.0/Cargo.toml b/candidate/torch-sys-0.22.0/Cargo.toml
+index 80b47ee..10e9655 100644
+--- a/baseline/torch-sys-0.22.0/Cargo.toml
++++ b/candidate/torch-sys-0.22.0/Cargo.toml
+@@ -76,4 +76,6 @@ features = ["json"]
+ optional = true
+ 
+ [build-dependencies.zip]
+-version = "0.6"
++version = "=9.0.5"
++default-features = false
++features = ["aes-crypto", "bzip2", "deflate", "time", "zstd"]
+diff --git a/baseline/torch-sys-0.22.0/build.rs b/candidate/torch-sys-0.22.0/build.rs
+index 79c2e67..7e604ac 100644
+--- a/baseline/torch-sys-0.22.0/build.rs
++++ b/candidate/torch-sys-0.22.0/build.rs
+@@ -120,11 +120,12 @@ fn get_pypi_wheel_url_for_aarch64_macosx() -> anyhow::Result<String> {
+ fn extract<P: AsRef<Path>>(filename: P, outpath: P) -> anyhow::Result<()> {
+     let file = fs::File::open(&filename)?;
+     let buf = io::BufReader::new(file);
+-    let mut archive = zip::ZipArchive::new(buf)?;
++    let mut archive =
++        zip::read::EntryArchive::new(buf, zip::read::UnicodeExtraFieldPolicy::Ignore)?;
+     for i in 0..archive.len() {
+         let mut file = archive.by_index(i)?;
+-        let outpath = outpath.as_ref().join(file.mangled_name());
+-        if !file.name().ends_with('/') {
++        let outpath = outpath.as_ref().join(file.mangled_name()?);
++        if !file.name()?.ends_with('/') {
+             println!(
+                 "File {} extracted to \"{}\" ({} bytes)",
+                 i,
+diff --git a/baseline/zip-9.0.5/src/extra_fields/extra_field.rs b/candidate/zip-9.0.5/src/extra_fields/extra_field.rs
+index 10b2947..1813f21 100644
+--- a/baseline/zip-9.0.5/src/extra_fields/extra_field.rs
++++ b/candidate/zip-9.0.5/src/extra_fields/extra_field.rs
+@@ -53,11 +53,21 @@ impl ExtraFields {
+         buff: &[u8],
+         block: &B,
+         is_local_header: bool,
++    ) -> ZipResult<Self> {
++        Self::parse_with_unicode_policy(buff, block, is_local_header, false)
++    }
++
++    pub(crate) fn parse_with_unicode_policy<B: ZipEntryBlock>(
++        buff: &[u8],
++        block: &B,
++        is_local_header: bool,
++        ignore_unicode: bool,
+     ) -> ZipResult<Self> {
+         let mut reader = Cursor::new(buff);
+         let mut extra_fields = Vec::new();
+         while (reader.position() as usize) < buff.len() {
+-            let parsed_extra_field = ExtraField::parse(&mut reader, block, is_local_header)?;
++            let parsed_extra_field =
++                ExtraField::parse(&mut reader, block, is_local_header, ignore_unicode)?;
+             let Some(parsed_extra_field) = parsed_extra_field else {
+                 break;
+             };
+@@ -92,6 +102,7 @@ impl ExtraField {
+         reader: &mut R,
+         file: &B,
+         is_local_header: bool,
++        ignore_unicode: bool,
+     ) -> ZipResult<Option<Self>> {
+         let extra_field_header_id = match reader.read_u16_le() {
+             Ok(value) => value,
+@@ -147,13 +158,13 @@ impl ExtraField {
+             Ok(UsedExtraField::ExtendedTimestamp) => ExtraField::ExtendedTimestamp(
+                 ExtendedTimestamp::try_from_reader(reader, len, is_local_header)?,
+             ),
+-            Ok(UsedExtraField::UnicodeComment) => {
++            Ok(UsedExtraField::UnicodeComment) if !ignore_unicode => {
+                 // Info-ZIP Unicode Comment Extra Field
+                 // APPNOTE 4.6.8 and https://libzip.org/specifications/extrafld.txt
+                 let unicode = UnicodeExtraField::try_from_reader(reader, len)?;
+                 ExtraField::UnicodeComment(unicode)
+             }
+-            Ok(UsedExtraField::UnicodePath) => {
++            Ok(UsedExtraField::UnicodePath) if !ignore_unicode => {
+                 // Info-ZIP Unicode Path Extra Field
+                 // APPNOTE 4.6.9 and https://libzip.org/specifications/extrafld.txt
+                 let unicode = UnicodeExtraField::try_from_reader(reader, len)?;
+@@ -239,12 +250,34 @@ impl ExtraField {
+ 
+ impl ZipFileData {
+     pub(crate) fn apply_extra_fields(&mut self, file_name_raw: &mut Vec<u8>) -> ZipResult<()> {
++        self.apply_extra_fields_with_policy(
++            file_name_raw,
++            crate::read::UnicodeExtraFieldPolicy::Standard,
++        )
++    }
++
++    pub(crate) fn apply_extra_fields_with_policy(
++        &mut self,
++        file_name_raw: &mut Vec<u8>,
++        policy: crate::read::UnicodeExtraFieldPolicy,
++    ) -> ZipResult<()> {
++        use crate::read::UnicodeExtraFieldPolicy;
+         #[cfg(feature = "aes-crypto")]
+         let mut has_aes = false;
+         let mut orig_name_crc = None;
+         let mut orig_comment_crc = None;
+ 
+         for one_extra_field in &self.extra_fields.inner {
++            // ZIP64, compression and encryption metadata always use the patched
++            // parser. This option only controls Unicode name/comment overrides.
++            if policy == UnicodeExtraFieldPolicy::Ignore
++                && matches!(
++                    one_extra_field,
++                    ExtraField::UnicodePath(_) | ExtraField::UnicodeComment(_)
++                )
++            {
++                continue;
++            }
+             match one_extra_field {
+                 // Zip64 extended information extra field
+                 ExtraField::Zip64ExtendedInformation(zip64_block) => {
+@@ -274,6 +307,15 @@ impl ZipFileData {
+                     self.compression_method = *compression_method;
+                 }
+                 ExtraField::UnicodeComment(unicode) => {
++                    if policy == UnicodeExtraFieldPolicy::RequireValid {
++                        if unicode.crc32 != crc32fast::hash(self.file_comment.as_bytes()) {
++                            return Err(invalid!("CRC32 checksum failed on Unicode extra field"));
++                        }
++                        self.file_comment = std::str::from_utf8(&unicode.content)
++                            .map_err(|_| invalid!("Invalid UTF-8 in Unicode comment extra field"))?
++                            .into();
++                        continue;
++                    }
+                     // Info-ZIP Unicode Comment Extra Field
+                     // APPNOTE 4.6.8 and https://libzip.org/specifications/extrafld.txt
+                     // If the CRC check fails, this Unicode Comment extra field SHOULD be ignored and
+@@ -289,6 +331,16 @@ impl ZipFileData {
+                 }
+                 #[allow(clippy::collapsible_match)]
+                 ExtraField::UnicodePath(unicode) => {
++                    if policy == UnicodeExtraFieldPolicy::RequireValid {
++                        if unicode.crc32 != crc32fast::hash(file_name_raw) {
++                            return Err(invalid!("CRC32 checksum failed on Unicode extra field"));
++                        }
++                        std::str::from_utf8(&unicode.content)
++                            .map_err(|_| invalid!("Invalid UTF-8 in Unicode path extra field"))?;
++                        *file_name_raw = unicode.content.to_vec();
++                        self.flags |= ZipFlags::LanguageEncoding.as_u16();
++                        continue;
++                    }
+                     // Info-ZIP Unicode Path Extra Field
+                     // APPNOTE 4.6.9 and https://libzip.org/specifications/extrafld.txt
+                     // If the CRC check fails, this UTF-8 Path Extra Field SHOULD be ignored and
+diff --git a/candidate/zip-9.0.5/src/read/entry_archive.rs b/candidate/zip-9.0.5/src/read/entry_archive.rs
+new file mode 100644
+index 0000000..d3d764d
+--- /dev/null
++++ b/candidate/zip-9.0.5/src/read/entry_archive.rs
+@@ -0,0 +1,78 @@
++//! Central-directory-order reader for consumers that must retain duplicate entries.
++//!
++//! The regular `ZipArchive` API and its default filename behavior are unchanged.
++
++use super::{Config, ZipArchive, ZipFile, ZipFileEntry, ZipReadOptions};
++use crate::result::{ZipError, ZipResult};
++use crate::types::ZipFileData;
++use std::borrow::Cow;
++use std::io::{Read, Seek};
++
++/// Treatment of Info-ZIP Unicode path/comment overrides.
++#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
++pub enum UnicodeExtraFieldPolicy {
++    /// ZIP9 behavior: use valid overrides, ignoring invalid CRC or UTF-8.
++    #[default]
++    Standard,
++    /// Treat Unicode overrides as opaque extra fields, validating their outer
++    /// lengths but not interpreting their contents. Honor the original declared
++    /// filename encoding.
++    /// Used by consumers migrating from ZIP0.6.
++    Ignore,
++    /// Require valid CRC and UTF-8 for overrides, honoring declared encoding otherwise.
++    /// Used by consumers migrating from ZIP7.
++    RequireValid,
++}
++
++/// A reader that retains every central-directory entry in its original order.
++///
++/// It shares ZIP9's central-directory parser, checked offsets, decompression
++/// bounds and CRC readers. Consumers choose their own duplicate-name lookup
++/// policy; iteration does not silently discard an earlier duplicate.
++pub struct EntryArchive<R> {
++    reader: R,
++    files: Vec<(Box<[u8]>, ZipFileData)>,
++}
++
++impl<R: Read + Seek> EntryArchive<R> {
++    /// Read entries using the given Unicode override policy.
++    pub fn new(mut reader: R, policy: UnicodeExtraFieldPolicy) -> ZipResult<Self> {
++        let (shared, _, _) = ZipArchive::read_directory(Config::default(), &mut reader, policy)?;
++        Ok(Self {
++            reader,
++            files: shared.files,
++        })
++    }
++
++    /// Number of entries, including duplicate names.
++    pub fn len(&self) -> usize {
++        self.files.len()
++    }
++
++    /// Whether there are no entries.
++    pub fn is_empty(&self) -> bool {
++        self.files.is_empty()
++    }
++
++    /// Read entry metadata without accessing compressed file contents.
++    pub fn by_index_data(&self, index: usize) -> ZipResult<ZipFileEntry<'_>> {
++        let (name, data) = self.files.get(index).ok_or(ZipError::FileNotFound)?;
++        Ok(ZipFileEntry {
++            file_name_raw: Cow::Borrowed(name),
++            data: Cow::Borrowed(data),
++        })
++    }
++
++    /// Read an entry through the same bounded decompressor and CRC checks used
++    /// by `ZipArchive::by_index`.
++    pub fn by_index(&mut self, index: usize) -> ZipResult<ZipFile<'_, R>> {
++        let (name, data) = self.files.get(index).ok_or(ZipError::FileNotFound)?;
++        let content = data.find_content(&mut self.reader)?;
++        let reader = data.make_reader(content, ZipReadOptions::new())?;
++        Ok(ZipFile {
++            file_name_raw: Cow::Borrowed(name),
++            data: Cow::Borrowed(data),
++            reader,
++        })
++    }
++}
+diff --git a/baseline/zip-9.0.5/src/read/mod.rs b/candidate/zip-9.0.5/src/read/mod.rs
+index 62b3458..ad2f092 100644
+--- a/baseline/zip-9.0.5/src/read/mod.rs
++++ b/candidate/zip-9.0.5/src/read/mod.rs
+@@ -13,6 +13,9 @@ use indexmap::IndexMap;
+ use std::io::{self, Read, Seek};
+ use std::sync::OnceLock;
+ 
++mod entry_archive;
++pub use entry_archive::{EntryArchive, UnicodeExtraFieldPolicy};
++
+ mod config;
+ pub use config::{ArchiveOffset, Config};
+ 
+@@ -177,6 +180,7 @@ fn central_header_to_zip_file_inner<R: Read>(
+     archive_offset: u64,
+     central_header_start: u64,
+     block: ZipCentralEntryBlock,
++    unicode_policy: UnicodeExtraFieldPolicy,
+ ) -> ZipResult<(ZipFileData, Vec<u8>)> {
+     let ZipCentralEntryBlock {
+         // magic,
+@@ -211,7 +215,12 @@ fn central_header_to_zip_file_inner<R: Read>(
+     };
+ 
+     let (version_made_by, system) = System::extract_bytes(version_made_by);
+-    let extra_fields = ExtraFields::parse(&extra_fields_raw, &block, false)?;
++    let extra_fields = ExtraFields::parse_with_unicode_policy(
++        &extra_fields_raw,
++        &block,
++        false,
++        unicode_policy == UnicodeExtraFieldPolicy::Ignore,
++    )?;
+     // Construct the result
+     let mut result = ZipFileData {
+         system,
+@@ -229,8 +238,9 @@ fn central_header_to_zip_file_inner<R: Read>(
+         external_attributes: external_file_attributes,
+         large_file: false,
+         extra_fields,
++        declared_filename_encoding: unicode_policy != UnicodeExtraFieldPolicy::Standard,
+     };
+-    result.apply_extra_fields(&mut file_name_raw)?;
++    result.apply_extra_fields_with_policy(&mut file_name_raw, unicode_policy)?;
+ 
+     // Account for shifted zip offsets.
+     result.header_start = result
+diff --git a/baseline/zip-9.0.5/src/read/stream.rs b/candidate/zip-9.0.5/src/read/stream.rs
+index e95feb2..d6cd9d1 100644
+--- a/baseline/zip-9.0.5/src/read/stream.rs
++++ b/candidate/zip-9.0.5/src/read/stream.rs
+@@ -59,8 +59,13 @@ fn parse_central_directory<R: Read>(reader: &mut R) -> ZipResult<ZipFileEntry<'s
+ 
+     // Parse central header
+     let block = ZipCentralEntryBlock::parse(reader)?;
+-    let (file, file_name_raw) =
+-        central_header_to_zip_file_inner(reader, archive_offset, central_header_start, block)?;
++    let (file, file_name_raw) = central_header_to_zip_file_inner(
++        reader,
++        archive_offset,
++        central_header_start,
++        block,
++        crate::read::UnicodeExtraFieldPolicy::Standard,
++    )?;
+     Ok(ZipFileEntry {
+         file_name_raw: Cow::Owned(file_name_raw),
+         data: Cow::Owned(file),
+diff --git a/baseline/zip-9.0.5/src/read/zip_archive.rs b/candidate/zip-9.0.5/src/read/zip_archive.rs
+index 9f60cdb..7082de1 100644
+--- a/baseline/zip-9.0.5/src/read/zip_archive.rs
++++ b/candidate/zip-9.0.5/src/read/zip_archive.rs
+@@ -11,8 +11,8 @@ use crate::read::magic_finder::MagicFinder;
+ use crate::read::readers::{ZipFileReader, ZipFileSeekReader};
+ use crate::read::zipfile::{ZipFileEntry, ZipFileEntryWithDataDescriptor};
+ use crate::read::{
+-    ArchiveOffset, CentralDirectoryInfo, ZipFile, ZipFileSeek, ZipReadOptions,
+-    central_header_to_zip_file_inner,
++    ArchiveOffset, CentralDirectoryInfo, UnicodeExtraFieldPolicy, ZipFile, ZipFileSeek,
++    ZipReadOptions, central_header_to_zip_file_inner,
+ };
+ use crate::result::{ZipError, ZipResult};
+ use crate::types::ZipFileData;
+@@ -176,6 +176,18 @@ impl<R: Read + Seek> ZipArchive<R> {
+     /// Get the directory start offset and number of files. This is done in a
+     /// separate function to ease the control flow design.
+     pub(crate) fn get_metadata(config: Config, reader: &mut R) -> ZipResult<ZipArchiveMetadata> {
++        let (shared, comment, zip64) =
++            Self::read_directory(config, reader, UnicodeExtraFieldPolicy::Standard)?;
++        Ok(shared.build(comment, zip64))
++    }
++
++    // Shared central-directory parser; the entry-preserving API must not replace
++    // its EOCD search, checked offsets, ZIP64 validation or bounded readers.
++    pub(super) fn read_directory(
++        config: Config,
++        reader: &mut R,
++        unicode_policy: UnicodeExtraFieldPolicy,
++    ) -> ZipResult<(SharedBuilder, Box<[u8]>, Option<Box<[u8]>>)> {
+         // End of the probed region, initially set to the end of the file
+         let file_len = reader.seek(SeekFrom::End(0))?;
+         let mut last_err = None;
+@@ -214,18 +226,20 @@ impl<R: Read + Seek> ZipArchive<R> {
+             };
+ 
+             // Turn EOCD into internal representation.
+-            match CentralDirectoryInfo::try_from(&cde)
+-                .and_then(|info| Self::read_central_header(&info, config, reader, &mut cd_chains))
+-            {
++            match CentralDirectoryInfo::try_from(&cde).and_then(|info| {
++                Self::read_central_header(&info, config, reader, &mut cd_chains, unicode_policy)
++            }) {
+                 Ok(shared) => {
+                     let zip64_extensible_data_sector = if let Some(eocd64) = cde.eocd64 {
+                         eocd64.data.zip64_extensible_data_sector
+                     } else {
+                         None
+                     };
+-                    return Ok(
+-                        shared.build(cde.eocd.data.zip_file_comment, zip64_extensible_data_sector)
+-                    );
++                    return Ok((
++                        shared,
++                        cde.eocd.data.zip_file_comment,
++                        zip64_extensible_data_sector,
++                    ));
+                 }
+                 Err(e) => {
+                     last_err = Some(e);
+@@ -241,6 +255,7 @@ impl<R: Read + Seek> ZipArchive<R> {
+         config: Config,
+         reader: &mut R,
+         cd_chains: &mut std::collections::HashMap<u64, CentralDirectoryChain>,
++        unicode_policy: UnicodeExtraFieldPolicy,
+     ) -> Result<SharedBuilder, ZipError> {
+         // If the parsed number of files is greater than the offset then
+         // something fishy is going on and we shouldn't trust number_of_files.
+@@ -300,15 +315,20 @@ impl<R: Read + Seek> ZipArchive<R> {
+             let variable_fields_start = central_header_start
+                 + (size_of::<Magic>() + size_of::<ZipCentralEntryBlock>()) as u64;
+             reader.seek(SeekFrom::Start(variable_fields_start))?;
+-            let (mut file, file_name_raw) =
+-                match central_header_to_zip_file_inner(reader, 0, central_header_start, block) {
+-                    Ok(f) => f,
+-                    Err(e) => {
+-                        chain.terminal_error = Some(e.clone());
+-                        chain.next_offset = central_header_start;
+-                        return Err(e);
+-                    }
+-                };
++            let (mut file, file_name_raw) = match central_header_to_zip_file_inner(
++                reader,
++                0,
++                central_header_start,
++                block,
++                unicode_policy,
++            ) {
++                Ok(f) => f,
++                Err(e) => {
++                    chain.terminal_error = Some(e.clone());
++                    chain.next_offset = central_header_start;
++                    return Err(e);
++                }
++            };
+             file.header_start = file
+                 .header_start
+                 .checked_add(dir_info.archive_offset)
+diff --git a/baseline/zip-9.0.5/src/types.rs b/candidate/zip-9.0.5/src/types.rs
+index 5b46b95..78742a3 100644
+--- a/baseline/zip-9.0.5/src/types.rs
++++ b/candidate/zip-9.0.5/src/types.rs
+@@ -73,6 +73,8 @@ pub struct ZipFileData {
+     pub large_file: bool,
+     /// extra fields, see <https://libzip.org/specifications/extrafld.txt>
+     pub extra_fields: ExtraFields,
++    // Opt-in entry reader: honor the declared encoding instead of guessing UTF-8.
++    pub(crate) declared_filename_encoding: bool,
+ }
+ 
+ impl ZipFileData {
+@@ -122,6 +124,13 @@ impl ZipFileData {
+     #[inline]
+     pub(crate) fn name<'a>(&self, file_name_raw: &'a [u8]) -> ZipResult<Cow<'a, str>> {
+         use crate::cp437::FromCp437;
++        if self.declared_filename_encoding {
++            return if self.flags.as_u16() & ZipFlags::LanguageEncoding.as_u16() != 0 {
++                Ok(String::from_utf8_lossy(file_name_raw))
++            } else {
++                file_name_raw.from_cp437().map_err(Into::into)
++            };
++        }
+         Ok(
+             if let Ok(file_name_utf8) = std::str::from_utf8(file_name_raw) {
+                 file_name_utf8.into()
+@@ -455,6 +464,7 @@ impl ZipFileData {
+             external_attributes,
+             large_file: options.large_file,
+             extra_fields,
++            declared_filename_encoding: false,
+         };
+         local_block.version_made_by = local_block.version_needed() as u8;
+         local_block
+@@ -499,6 +509,7 @@ impl ZipFileData {
+             external_attributes: 0,
+             large_file: false,
+             extra_fields,
++            declared_filename_encoding: false,
+         };
+         Ok(data)
+     }

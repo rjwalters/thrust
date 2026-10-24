@@ -20,6 +20,9 @@ readme = "README.md"
 # bucket-brigade submodule, training scripts, optimization result JSON,
 # screenshots, and other non-library assets.
 exclude = [
+    # Checkout-local security overrides and native qualification corpus.
+    "vendor/**",
+    "security/**",
     # Trained model checkpoints (tens of MB) -- consumers build their own.
     "*.pt",
     "*.safetensors",
@@ -75,7 +78,7 @@ burn = { version = "0.21", default-features = false, features = ["std", "ndarray
 burn-ndarray = { version = "0.21", default-features = false, optional = true }
 
 # Async runtime for vectorization (not available in WASM)
-tokio = { version = "1", features = ["full", "rt-multi-thread"], optional = true }
+tokio = { version = "1.53.3", features = ["full", "rt-multi-thread"], optional = true }
 
 # Data parallelism (not available in WASM)
 rayon = { version = "1.8", optional = true }
@@ -437,3 +440,10 @@ required-features = ["training"]
 name = "br_oracle"
 path = "examples/games/bucket_brigade/br_oracle.rs"
 required-features = ["training", "env-bucket-brigade"]
+
+# Checkout-local archive security overrides; see security/zip-compat/README.md.
+[patch.crates-io]
+candle-core = { path = "vendor/candle-core-0.10.2" }
+tch = { path = "vendor/tch-0.22.0" }
+torch-sys = { path = "vendor/torch-sys-0.22.0" }
+zip = { path = "vendor/zip-9.0.5" }

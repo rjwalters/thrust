@@ -1,0 +1,21 @@
+[package]
+name = "zip-parity-combined"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+candle-core = { path = "../../candidate/candle-core-0.10.2" }
+tch = { path = "../../candidate/tch-0.22.0" }
+
+[patch.crates-io]
+zip = { path = "../../candidate/zip-9.0.5" }
+torch-sys = { path = "../../candidate/torch-sys-0.22.0" }
+
+[[bin]]
+name = "zip-parity-combined-candle"
+path = "../candidate-candle/src/main.rs"
+
+[[bin]]
+name = "zip-parity-combined-tch"
+path = "../candidate-tch/src/main.rs"
